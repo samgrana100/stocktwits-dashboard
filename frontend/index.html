@@ -153,6 +153,7 @@
     }
     .filter-item select:focus, .filter-item input:focus { border-color: var(--blue); }
     .filter-item input { width: 72px; }
+    #filter-avgvol { width: 90px; }
     .filter-sep { width: 1px; height: 16px; background: var(--border-subtle); margin: 0 2px; }
     .filter-reset {
       margin-left: auto; font-size: 10px; font-weight: 600; color: var(--text-muted);
@@ -237,9 +238,24 @@
     .signals-panel-count { font-size: 10px; color: var(--text-dimmed); }
     .signal-card { padding: 11px 14px; border-bottom: 1px solid var(--border-faint); transition: background var(--t-fast); }
     .signal-card:hover { background: var(--bg-hover); }
-    .signal-card-hdr  { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; }
+    .signal-card-hdr  { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; flex-wrap: wrap; }
     .signal-ticker-tag { font-size: 12px; font-weight: 700; color: var(--blue); }
     .signal-score-tag  { font-size: 10px; color: #4ade80; font-weight: 600; }
+    .finviz-confirmed-tag {
+      font-size: 9px; font-weight: 700; color: #3b82f6;
+      background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.3);
+      border-radius: 3px; padding: 1px 5px; letter-spacing: 0.03em; white-space: nowrap;
+    }
+    .catalyst-countdown {
+      display: inline-flex; align-items: center;
+      font-size: 9px; font-weight: 700; border-radius: 3px;
+      padding: 1px 5px; margin-left: 4px; white-space: nowrap; border: 1px solid;
+      vertical-align: middle; cursor: default;
+    }
+    .catalyst-countdown.pdufa    { color: #a855f7; background: rgba(168,85,247,0.12); border-color: rgba(168,85,247,0.4); }
+    .catalyst-countdown.earnings { color: #eab308; background: rgba(234,179,8,0.12);  border-color: rgba(234,179,8,0.4);  }
+    .catalyst-countdown.urgent   { animation: catalyst-pulse 1.4s ease-in-out infinite; }
+    @keyframes catalyst-pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
     .signal-chart-btn  {
       margin-left: auto; font-size: 9px; padding: 2px 8px;
       border: 1px solid var(--border-subtle); border-radius: 4px;
@@ -448,6 +464,71 @@
     .popup-news-item-meta {
       font-size: 10px; color: var(--text-muted); margin-top: 3px;
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+
+    /* ── NEWS CARD — FINVIZ CONFIRMED NEWS SECTION ── */
+    .news-fv-section {
+      border-top: 1px solid var(--border-subtle);
+      padding: 10px 18px 14px;
+    }
+    .news-fv-hdr {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      letter-spacing: 0.07em; text-transform: uppercase;
+    }
+    .news-fv-item {
+      padding: 5px 0; border-bottom: 1px solid var(--border-faint);
+    }
+    .news-fv-item:last-child { border-bottom: none; }
+    .news-fv-item-title a {
+      font-size: 12px; color: var(--blue); text-decoration: none; line-height: 1.4; display: block;
+    }
+    .news-fv-item-title a:hover { text-decoration: underline; }
+    .news-fv-item-meta {
+      font-size: 10px; color: var(--text-muted); margin-top: 2px;
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    }
+
+    /* ── NEWS CARD — RECENT NEWS SECTION (Yahoo + SEC) ── */
+    .news-recent-section {
+      border-top: 1px solid var(--border-subtle);
+      padding: 10px 18px 14px;
+    }
+    .news-recent-hdr {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      letter-spacing: 0.07em; text-transform: uppercase;
+    }
+    .news-recent-cols {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px;
+    }
+    .news-recent-col-hdr {
+      font-size: 9px; font-weight: 700; color: var(--text-dimmed);
+      letter-spacing: 0.06em; text-transform: uppercase;
+      margin-bottom: 6px; padding-bottom: 4px;
+      border-bottom: 1px solid var(--border-faint);
+    }
+    .news-recent-item {
+      padding: 5px 0; border-bottom: 1px solid var(--border-faint);
+    }
+    .news-recent-item:last-child { border-bottom: none; }
+    .news-recent-item a {
+      font-size: 12px; color: var(--text-primary); text-decoration: none;
+      line-height: 1.4; display: block;
+    }
+    .news-recent-item a:hover { color: var(--blue); text-decoration: underline; }
+    .news-recent-item-meta {
+      font-size: 10px; color: var(--text-muted); margin-top: 2px;
+    }
+    .news-source-tag-sec {
+      font-size: 9px; font-weight: 600; color: #f97316;
+      background: rgba(249,115,22,0.08); border: 1px solid rgba(249,115,22,0.25);
+      border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em;
+    }
+    .news-source-tag-yf {
+      font-size: 9px; font-weight: 600; color: #a855f7;
+      background: rgba(168,85,247,0.08); border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em;
     }
 
     /* ── EVENT MESSAGE POPOVER ── */
@@ -661,26 +742,13 @@
   </div>
   <div class="filter-sep"></div>
   <div class="filter-item">
-    <span>Rel Vol</span>
-    <select id="filter-relvol" onchange="applyFiltersAndRender()">
-      <option value="all">Any</option>
-      <option value="over_10">Over 10</option>
-      <option value="over_5">Over 5</option>
-      <option value="over_3">Over 3</option>
-      <option value="over_2">Over 2</option>
-      <option value="over_1.5">Over 1.5</option>
-      <option value="over_1">Over 1</option>
-      <option value="over_0.75">Over 0.75</option>
-      <option value="over_0.5">Over 0.5</option>
-      <option value="over_0.25">Over 0.25</option>
-      <option value="under_2">Under 2</option>
-      <option value="under_1.5">Under 1.5</option>
-      <option value="under_1">Under 1</option>
-      <option value="under_0.75">Under 0.75</option>
-      <option value="under_0.5">Under 0.5</option>
-      <option value="under_0.25">Under 0.25</option>
-      <option value="under_0.1">Under 0.1</option>
-    </select>
+    <span>Avg Vol ≥</span>
+    <input type="number" id="filter-avgvol" placeholder="e.g. 500000" min="0" step="1000" oninput="applyFiltersAndRender()">
+  </div>
+  <div class="filter-sep"></div>
+  <div class="filter-item">
+    <span>Rel Vol ≥</span>
+    <input type="number" id="filter-relvol" placeholder="e.g. 2" min="0" step="0.1" oninput="applyFiltersAndRender()">
   </div>
   <div class="filter-sep"></div>
   <div class="filter-item">
@@ -914,6 +982,19 @@
     tickerWindows[ticker] = w;
     saveTickerWindows();
     updateTableRowWindow(ticker, w);
+    // If the news view is open, reload that ticker's card so it reflects the new window
+    if (newsViewActive) {
+      const card = document.querySelector(`.news-card[data-ticker="${ticker}"]`);
+      if (card) {
+        if (newsCardCharts[ticker]) { newsCardCharts[ticker].destroy(); delete newsCardCharts[ticker]; }
+        card.querySelector(".news-chart-col").innerHTML =
+          '<div class="news-loading-placeholder">Loading chart…</div><canvas class="news-chart-canvas" style="display:none"></canvas>';
+        card.querySelector(".news-messages-col").innerHTML =
+          '<div class="news-loading-placeholder">Loading messages…</div>';
+        card.dataset.loaded = "false";
+        if (newsObserver) { newsObserver.unobserve(card); newsObserver.observe(card); }
+      }
+    }
   }
 
   async function applyTickerWindowOverrides() {
@@ -952,6 +1033,7 @@
   function parseVal(v) {
     if (v == null || v === "--") return -Infinity;
     const s = String(v).replace(/,/g, "").replace(/\$/g, "").replace(/%/g, "").trim();
+    if (s.toUpperCase().endsWith("T")) return parseFloat(s) * 1e12;
     if (s.toUpperCase().endsWith("B")) return parseFloat(s) * 1e9;
     if (s.toUpperCase().endsWith("M")) return parseFloat(s) * 1e6;
     if (s.toUpperCase().endsWith("K")) return parseFloat(s) * 1e3;
@@ -980,33 +1062,41 @@
   const NUM_SORT_KEYS  = ["avg_composite_score","scored_messages","total_messages","message_count","pe","surge_ratio"];
 
   const EVENT_META = {
-    "FDA Approval":  { color: "#f59e0b", pill: "FDA ✓"    },
-    "FDA Rejection": { color: "#ef4444", pill: "FDA ✗"    },
-    "Merger/Acq":    { color: "#a855f7", pill: "M&A"      },
-    "Earnings Beat": { color: "#22c55e", pill: "EPS ✓"    },
-    "Earnings Miss": { color: "#ef4444", pill: "EPS ✗"    },
-    "Phase Trial":   { color: "#06b6d4", pill: "Phase"    },
-    "Trading Halt":  { color: "#f97316", pill: "HALT"     },
-    "Guidance Up":   { color: "#4ade80", pill: "Guide ↑"  },
-    "Short Squeeze": { color: "#eab308", pill: "Squeeze"  },
-    "Partnership":   { color: "#3b82f6", pill: "Partner"  },
-    "Dilution":      { color: "#f87171", pill: "Dilution" },
-    "Patent":        { color: "#14b8a6", pill: "Patent"   },
+    "FDA Final Approval":  { color: "#22c55e", pill: "FDA ✓✓"  },
+    "FDA Breakthrough":    { color: "#a855f7", pill: "FDA BT"  },
+    "FDA Accel Approval":  { color: "#f97316", pill: "FDA Acc" },
+    "FDA Priority Review": { color: "#06b6d4", pill: "FDA PR"  },
+    "FDA Approval":        { color: "#f59e0b", pill: "FDA ✓"   },
+    "FDA Rejection":       { color: "#ef4444", pill: "FDA ✗"   },
+    "Merger/Acq":          { color: "#a855f7", pill: "M&A"     },
+    "Earnings Beat":       { color: "#22c55e", pill: "EPS ✓"   },
+    "Earnings Miss":       { color: "#ef4444", pill: "EPS ✗"   },
+    "Phase Trial":         { color: "#06b6d4", pill: "Phase"   },
+    "Trading Halt":        { color: "#f97316", pill: "HALT"    },
+    "Guidance Up":         { color: "#4ade80", pill: "Guide ↑" },
+    "Short Squeeze":       { color: "#eab308", pill: "Squeeze" },
+    "Partnership":         { color: "#3b82f6", pill: "Partner" },
+    "Dilution":            { color: "#f87171", pill: "Dilution"},
+    "Patent":              { color: "#14b8a6", pill: "Patent"  },
   };
 
   const EVENT_DESC = {
-    "FDA Approval":  "gained FDA approval",
-    "FDA Rejection": "received an FDA rejection (CRL)",
-    "Merger/Acq":    "involved in a merger or acquisition",
-    "Earnings Beat": "reported an earnings beat",
-    "Earnings Miss": "reported an earnings miss",
-    "Phase Trial":   "reported clinical trial results",
-    "Trading Halt":  "halted from trading",
-    "Guidance Up":   "raised forward guidance",
-    "Short Squeeze": "showing short squeeze activity",
-    "Partnership":   "announced a strategic partnership",
-    "Dilution":      "share dilution or offering detected",
-    "Patent":        "granted a patent",
+    "FDA Final Approval":  "received full FDA approval (NDA/BLA granted)",
+    "FDA Breakthrough":    "received FDA Breakthrough Therapy Designation",
+    "FDA Accel Approval":  "on FDA Accelerated Approval pathway",
+    "FDA Priority Review": "granted FDA Priority Review",
+    "FDA Approval":        "gained FDA approval",
+    "FDA Rejection":       "received an FDA rejection (CRL)",
+    "Merger/Acq":          "involved in a merger or acquisition",
+    "Earnings Beat":       "reported an earnings beat",
+    "Earnings Miss":       "reported an earnings miss",
+    "Phase Trial":         "reported clinical trial results",
+    "Trading Halt":        "halted from trading",
+    "Guidance Up":         "raised forward guidance",
+    "Short Squeeze":       "showing short squeeze activity",
+    "Partnership":         "announced a strategic partnership",
+    "Dilution":            "share dilution or offering detected",
+    "Patent":              "granted a patent",
   };
 
   function eventBadgeHTML(eventType, cls, confirmed) {
@@ -1084,7 +1174,8 @@
 
   function applyFiltersAndRender() {
     const fChange  = document.getElementById("filter-change").value;
-    const fRelVol  = document.getElementById("filter-relvol").value;
+    const fRelVol  = parseFloat(document.getElementById("filter-relvol").value)  || 0;
+    const fAvgVol  = parseFloat(document.getElementById("filter-avgvol").value)  || 0;
     const fMktCap  = document.getElementById("filter-mktcap").value;
     const fScore   = parseFloat(document.getElementById("filter-score").value);
     const fPrice   = parseFloat(document.getElementById("filter-price").value)   || 0;
@@ -1094,14 +1185,10 @@
       if (fChange === "up"   && chg <= 0) return false;
       if (fChange === "down" && chg >= 0) return false;
 
-      if (fRelVol !== "all") {
-        const rv  = parseVal(t.rel_volume);
-        const num = parseFloat(fRelVol.replace("over_","").replace("under_",""));
-        if (fRelVol.startsWith("over_")  && rv < num)  return false;
-        if (fRelVol.startsWith("under_") && rv >= num) return false;
-      }
-      if (fPrice  > 0 && parseVal(t.price)      < fPrice)  return false;
-      if (!isNaN(fScore) && (t.avg_composite_score ?? 0)  < fScore) return false;
+      if (fRelVol > 0 && parseVal(t.rel_volume) < fRelVol)  return false;
+      if (fAvgVol > 0 && parseVal(t.avg_volume)  < fAvgVol)  return false;
+      if (fPrice  > 0 && parseVal(t.price)        < fPrice)   return false;
+      if (!isNaN(fScore) && (t.avg_composite_score ?? 0)     < fScore) return false;
 
       if (fMktCap !== "all") {
         const mc = parseMktCap(t.market_cap);
@@ -1145,12 +1232,12 @@
 
   function resetFilters() {
     document.getElementById("filter-change").value  = "all";
-    document.getElementById("filter-relvol").value  = "all";
+    document.getElementById("filter-relvol").value  = "";
+    document.getElementById("filter-avgvol").value  = "";
     document.getElementById("filter-mktcap").value  = "all";
     document.getElementById("filter-score").value   = "";
     document.getElementById("filter-price").value   = "";
-    sortKey  = "avg_composite_score";
-    sortAsc  = false;
+    sortKeys = [{ key: "avg_composite_score", asc: false }];
     updateSortHeaders();
     applyFiltersAndRender();
   }
@@ -1180,7 +1267,42 @@
     currentWindow = key;
     document.querySelectorAll(".topbar-right .window-btn").forEach(b => b.classList.remove("active"));
     btn.classList.add("active");
-    fetchScores();
+
+    if (newsViewActive) {
+      // Re-fetch batch with new window, then reset all cards so visible ones reload
+      const tickerList = lastFilteredTickers.map(t => t.ticker).join(",");
+      newsViewBatchPromise = fetch(
+        "/api/tickers/batch?tickers=" + tickerList + "&window=" + currentWindow + "&rolling=5m"
+      ).then(r => r.ok ? r.json() : {}).catch(() => ({}));
+
+      document.querySelectorAll(".news-card").forEach(c => {
+        const tk = c.dataset.ticker;
+        // Destroy existing chart instance
+        if (newsCardCharts[tk]) { newsCardCharts[tk].destroy(); delete newsCardCharts[tk]; }
+        // Reset chart col
+        const chartCol = c.querySelector(".news-chart-col");
+        const canvas   = c.querySelector(".news-chart-canvas");
+        if (canvas) canvas.style.display = "none";
+        if (chartCol && !chartCol.querySelector(".news-loading-placeholder")) {
+          const ph = document.createElement("div");
+          ph.className   = "news-loading-placeholder";
+          ph.textContent = "Loading chart…";
+          chartCol.insertBefore(ph, canvas);
+        }
+        // Reset messages + news sections
+        const msgCol = c.querySelector(".news-messages-col");
+        if (msgCol) msgCol.innerHTML = '<div class="news-loading-placeholder">Loading messages…</div>';
+        const fvSec = c.querySelector(".news-fv-section");
+        const rnSec = c.querySelector(".news-recent-section");
+        if (fvSec) fvSec.style.display = "none";
+        if (rnSec) rnSec.style.display = "none";
+        // Mark unloaded and re-observe so IntersectionObserver fires for visible cards
+        c.dataset.loaded = "false";
+        if (newsObserver) { newsObserver.unobserve(c); newsObserver.observe(c); }
+      });
+    } else {
+      fetchScores();
+    }
   }
 
   function startMinuteAlignedRefresh() {
@@ -1217,7 +1339,7 @@
         "Last updated: " + data.timestamp;
       allTickers = data.tickers || [];
       updateSortHeaders();
-      applyFiltersAndRender();
+      fetchCatalysts(allTickers).then(() => applyFiltersAndRender());
       applyTickerWindowOverrides();
       renderSilentTickers(data.no_message_tickers || []);
       if (signalsPanelOpen) fetchSignals();
@@ -1285,12 +1407,13 @@
         </select>
       </td>`;
 
-      const catalystPills = (t.catalyst_events || [])
+      const catalystPills    = (t.catalyst_events || [])
         .map(e => eventBadgeHTML(e, "catalyst-pill")).join("");
+      const catalystCountdown = catalystCountdownHTML(t.ticker);
 
       return `<tr onclick="openPopup('${safeTicker}','${safeCompany}','${safeSector}','${safeIndustry}')">
         <td class="rank">${i+1}</td>
-        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}</td>
+        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}</td>
         <td style="color:#aaa">${t.company||"--"}</td>
         <td style="color:#666">${t.industry||"--"}</td>
         <td style="color:#777">${cleanVal(t.market_cap)}</td>
@@ -1394,12 +1517,14 @@
       const meta       = [user, time, delay].filter(Boolean).join(" · ");
       const body       = escHtml((m.body || "").slice(0, 220)) + ((m.body || "").length > 220 ? "…" : "");
       const safeTk     = (m.ticker || "").replace(/'/g, "\\'");
-      const evBadge    = eventBadgeHTML(m.event_type, "event-badge");
+      const evBadge    = eventBadgeHTML(m.event_type, "event-badge", m.finviz_confirmed);
+      const fvTag      = m.finviz_confirmed ? `<span class="finviz-confirmed-tag">✓ Finviz</span>` : "";
       return `<div class="signal-card">
         <div class="signal-card-hdr">
           <span class="signal-ticker-tag">${m.ticker}</span>
           <span class="signal-score-tag">${score}</span>
           ${evBadge}
+          ${fvTag}
           <button class="signal-chart-btn" onclick="event.stopPropagation();openPopup('${safeTk}')">View Chart →</button>
         </div>
         <div class="signal-meta">${meta}</div>
@@ -1638,7 +1763,7 @@
             label: "Price",
             data: normP, rawData: rawP,
             borderColor: "#ef4444", borderWidth: 2,
-            pointRadius: 0, fill: false, tension: 0, spanGaps: true,
+            pointRadius: 0, fill: false, tension: 0, spanGaps: false,
             yAxisID: "y"
           },
           {
@@ -1691,7 +1816,7 @@
                   if (!raw) return null;
                   const lines = ["▲ " + raw.event_type];
                   if (raw.username) lines.push("@" + raw.username);
-                  if (raw.body)     lines.push(raw.body.length > 110 ? raw.body.slice(0, 110) + "…" : raw.body);
+                  if (raw.body)     lines.push(raw.body);
                   return lines;
                 }
                 if (raw == null) return ctx.dataset.label + ": --";
@@ -1792,11 +1917,45 @@
   }
 
   // ── NEWS VIEW ──────────────────────────────────────────────────────────
-  let lastFilteredTickers = [];
-  let newsViewActive      = false;
-  const newsCardCharts    = {};
-  const newsCardEvents    = {};   // ticker -> event_history (with body+username)
-  let newsObserver        = null;
+  let lastFilteredTickers  = [];
+  let newsViewActive       = false;
+  const newsCardCharts     = {};
+  const newsCardEvents     = {};
+  let newsObserver         = null;
+  let newsViewBatchPromise = null;
+
+  // ── Catalyst calendar (PDUFA + earnings) ──────────────────────────────────
+  let catalystData = {};  // { TICKER: { pdufa: {...}, earnings: {...} } }
+
+  function catalystCountdownHTML(ticker) {
+    const cat = catalystData[ticker];
+    if (!cat) return "";
+    let html = "";
+    if (cat.pdufa) {
+      const d = cat.pdufa.days_until;
+      const label  = d === 0 ? "FDA: TODAY" : d === 1 ? "FDA: 1d" : `FDA: ${d}d`;
+      const urgent = d <= 2 ? " urgent" : "";
+      html += `<span class="catalyst-countdown pdufa${urgent}" title="${escHtml(cat.pdufa.description)}">${label}</span>`;
+    }
+    if (cat.earnings) {
+      const d = cat.earnings.days_until;
+      if (d >= -2) {  // show up to 2 days after (post-earnings suppression window)
+        const label  = d <= 0 ? "EPS: LIVE" : d === 1 ? "EPS: 1d" : `EPS: ${d}d`;
+        const urgent = d <= 2 ? " urgent" : "";
+        html += `<span class="catalyst-countdown earnings${urgent}" title="Earnings Report">${label}</span>`;
+      }
+    }
+    return html;
+  }
+
+  async function fetchCatalysts(tickers) {
+    if (!tickers || !tickers.length) return;
+    try {
+      const tkList = tickers.map(t => t.ticker || t).join(",");
+      const res = await fetch("/api/upcoming-catalysts?tickers=" + tkList);
+      if (res.ok) catalystData = await res.json();
+    } catch(e) { console.error("[catalysts]", e); }
+  }
 
   function setupNewsObserver() {
     if (newsObserver) return;
@@ -1826,6 +1985,7 @@
       setupNewsObserver();
       buildNewsView();
     } else {
+      newsViewBatchPromise = null;
       Object.values(newsCardCharts).forEach(ch => { try { ch.destroy(); } catch(e) {} });
       Object.keys(newsCardCharts).forEach(k => delete newsCardCharts[k]);
       if (newsObserver) document.querySelectorAll(".news-card").forEach(c => newsObserver.unobserve(c));
@@ -1841,9 +2001,21 @@
       container.innerHTML = '<div class="news-empty">No tickers loaded. Start the pipeline and wait for data.</div>';
       return;
     }
+
+    // Fire batch (MongoDB) and catalyst calendar in parallel — both are shared
+    // across all cards and don't need to be re-fetched per card.
+    const tickerList = tickers.map(t => t.ticker).join(",");
+    newsViewBatchPromise = fetch(
+      "/api/tickers/batch?tickers=" + tickerList + "&window=" + currentWindow + "&rolling=5m"
+    )
+      .then(r => r.ok ? r.json() : {})
+      .catch(() => ({}));
+
+    fetchCatalysts(tickers);
+
     tickers.forEach(t => {
       const card = document.createElement("div");
-      card.className    = "news-card";
+      card.className      = "news-card";
       card.dataset.ticker = t.ticker;
       card.dataset.loaded = "false";
       card.innerHTML = buildNewsCardHTML(t);
@@ -1868,6 +2040,8 @@
                     onclick="showEventPopover('${safeTk}','${safeE}',event)">${m.pill}</span>`;
     }).join("");
 
+    const countdownBadge = catalystCountdownHTML(t.ticker);
+
     return `
       <div class="news-card-hdr">
         <div class="news-hdr-left">
@@ -1875,6 +2049,7 @@
           <span class="news-company">${t.company || ""}</span>
           <span class="news-industry">${t.sector ? t.sector + (t.industry ? " · " + t.industry : "") : (t.industry || "")}</span>
           ${catalystPills}
+          ${countdownBadge}
         </div>
         <div class="news-hdr-right">
           <span class="news-price">${t.price ? "$" + t.price : "--"}</span>
@@ -1895,6 +2070,25 @@
         <div class="news-messages-col">
           <div class="news-loading-placeholder">Loading messages…</div>
         </div>
+      </div>
+      <div class="news-fv-section" style="display:none">
+        <div class="news-fv-hdr">
+          Confirmed News <span class="popup-news-source-tag">Finviz</span>
+        </div>
+        <div class="news-fv-list"></div>
+      </div>
+      <div class="news-recent-section" style="display:none">
+        <div class="news-recent-hdr">Recent News</div>
+        <div class="news-recent-cols">
+          <div class="news-recent-yf-col">
+            <div class="news-recent-col-hdr"><span class="news-source-tag-yf">Yahoo Finance</span></div>
+            <div class="news-recent-yf-list"></div>
+          </div>
+          <div class="news-recent-sec-col">
+            <div class="news-recent-col-hdr"><span class="news-source-tag-sec">SEC 8-K Filings</span></div>
+            <div class="news-recent-sec-list"></div>
+          </div>
+        </div>
       </div>`;
   }
 
@@ -1903,50 +2097,139 @@
     const ticker  = card.dataset.ticker;
     const rollingW = tickerWindows[ticker] || "5m";
     try {
-      const [chartRes, msgRes] = await Promise.all([
-        fetch("/api/ticker/" + ticker + "?window=" + currentWindow + "&rolling=" + rollingW),
-        fetch("/api/ticker-messages/" + ticker + "?limit=15&window=1440")
-      ]);
-      if (!chartRes.ok || !msgRes.ok) { card.dataset.loaded = "false"; return; }
-      const chartData = await chartRes.json();
-      const msgData   = await msgRes.json();
+      // Fire all independent fetches immediately in parallel
+      const msgPromise        = fetch("/api/ticker-messages/" + ticker + "?limit=15&window=1440");
+      const fvNewsPromise     = fetch("/api/finviz-news/"  + ticker);
+      const tickerNewsPromise = fetch("/api/ticker-news/"  + ticker);
 
-      const chartCol   = card.querySelector(".news-chart-col");
+      // Resolve MongoDB chart data from batch; fall back to full individual fetch
+      let chartData = null;
+      if (newsViewBatchPromise) {
+        const batch = await newsViewBatchPromise;
+        chartData = batch[ticker] || null;
+      }
+
+      if (!chartData) {
+        // Full fallback: MongoDB + price in one call
+        const r = await fetch("/api/ticker/" + ticker + "?window=" + currentWindow + "&rolling=" + rollingW);
+        if (!r.ok) { card.dataset.loaded = "false"; return; }
+        chartData = await r.json();
+      } else {
+        // Batch gave us MongoDB data (no price). Fetch price lazily — one request
+        // per visible card, so Finviz only ever sees 2-3 concurrent requests.
+        try {
+          const priceRes = await fetch("/api/price/" + ticker + "?window=" + currentWindow);
+          if (priceRes.ok) {
+            const pd = await priceRes.json();
+            chartData = Object.assign({}, chartData, {
+              price_history: pd.price_history,
+              time_axis:     pd.time_axis,
+            });
+          }
+        } catch(_) {}
+      }
+
+      const msgRes = await msgPromise;
+      if (!msgRes.ok) { card.dataset.loaded = "false"; return; }
+      const msgData = await msgRes.json();
+
+      const chartCol    = card.querySelector(".news-chart-col");
       const placeholder = chartCol.querySelector(".news-loading-placeholder");
-      const canvas     = chartCol.querySelector(".news-chart-canvas");
+      const canvas      = chartCol.querySelector(".news-chart-canvas");
       if (placeholder) placeholder.remove();
       canvas.style.display = "";
 
-      const rk = chartData.rolling_key || rollingW;
+      const rk = rollingW || chartData.rolling_key;
       newsCardEvents[ticker] = chartData.event_history || [];
       const chartInst = renderCombinedChart(chartData, rk, canvas);
       newsCardCharts[ticker] = chartInst;
 
       const msgCol = card.querySelector(".news-messages-col");
-      msgCol.innerHTML = renderNewsMessages(msgData.messages || []);
+      msgCol.innerHTML = renderNewsMessages(msgData.messages || [], ticker);
+
+      // ── Finviz confirmed news section ────────────────────────────────────
+      try {
+        const fvRes = await fvNewsPromise;
+        if (fvRes.ok) {
+          const fvData = await fvRes.json();
+          const articles = fvData.articles || [];
+          if (articles.length > 0) {
+            const fvSection = card.querySelector(".news-fv-section");
+            const fvList    = card.querySelector(".news-fv-list");
+            fvList.innerHTML = articles.map(a => {
+              const evBadge = a.event_type ? eventBadgeHTML(a.event_type, "event-badge", true) : "";
+              const dateStr = (a.date || "").slice(0, 10);
+              return `<div class="news-fv-item">
+                <div class="news-fv-item-title">
+                  <a href="${escHtml(a.url || "")}" target="_blank" rel="noopener noreferrer">${escHtml(a.title)}</a>
+                </div>
+                <div class="news-fv-item-meta">
+                  ${escHtml(a.source || "")}${dateStr ? " &middot; " + escHtml(dateStr) : ""}${evBadge ? " " + evBadge : ""}
+                </div>
+              </div>`;
+            }).join("");
+            fvSection.style.display = "";
+          }
+        }
+      } catch(_) {}
+
+      // ── Yahoo Finance + SEC 8-K news section ─────────────────────────────
+      try {
+        const tnRes = await tickerNewsPromise;
+        if (tnRes.ok) {
+          const tnData   = await tnRes.json();
+          const articles = tnData.articles || [];
+          const yfItems  = articles.filter(a => a.source_type === "news");
+          const secItems = articles.filter(a => a.source_type === "filing");
+          if (yfItems.length > 0 || secItems.length > 0) {
+            const recentSection = card.querySelector(".news-recent-section");
+            const yfList        = card.querySelector(".news-recent-yf-list");
+            const secList       = card.querySelector(".news-recent-sec-list");
+            const renderItem = a => `<div class="news-recent-item">
+              <a href="${escHtml(a.url || "")}" target="_blank" rel="noopener noreferrer">${escHtml(a.title)}</a>
+              ${a.source && a.source !== "Yahoo Finance" && a.source !== "SEC 8-K"
+                ? `<div class="news-recent-item-meta">${escHtml(a.source)}${a.date ? " &middot; " + escHtml(a.date) : ""}</div>`
+                : a.date ? `<div class="news-recent-item-meta">${escHtml(a.date)}</div>` : ""}
+            </div>`;
+            yfList.innerHTML  = yfItems.length  ? yfItems.map(renderItem).join("")  : '<div class="news-recent-item" style="color:var(--text-dimmed);font-size:11px">No recent articles</div>';
+            secList.innerHTML = secItems.length ? secItems.map(renderItem).join("") : '<div class="news-recent-item" style="color:var(--text-dimmed);font-size:11px">No recent filings</div>';
+            recentSection.style.display = "";
+          }
+        }
+      } catch(_) {}
+
     } catch(e) {
       console.error("[news-view]", card.dataset.ticker, e);
       card.dataset.loaded = "false";
     }
   }
 
-  function renderNewsMessages(messages) {
+  const POST_EARNINGS_SUPPRESS = new Set(["Earnings Beat","Earnings Miss","Guidance Up","Dilution"]);
+
+  function renderNewsMessages(messages, ticker) {
     if (!messages.length) {
       return '<div class="news-loading-placeholder">No recent messages</div>';
     }
+    // Suppress noisy-but-expected event badges for 48 h after an earnings report
+    const earnCat = ticker && catalystData[ticker] && catalystData[ticker].earnings;
+    const postEarnings = earnCat && earnCat.days_until <= 0 && earnCat.days_until >= -2;
+
     return messages.map(m => {
       const score     = m.composite_score;
       const scoreStr  = score != null ? (score > 0 ? "+" : "") + score.toFixed(4) : "";
       const scoreClass = score > 0.05 ? "up" : score < -0.05 ? "down" : "neutral";
       const time      = fmtPostedTime(m.posted_et);
       const user      = m.username ? "@" + m.username : "";
-      const evBadge   = eventBadgeHTML(m.event_type, "event-badge");
+      const suppressBadge = postEarnings && POST_EARNINGS_SUPPRESS.has(m.event_type);
+      const evBadge   = suppressBadge ? "" : eventBadgeHTML(m.event_type, "event-badge", m.finviz_confirmed);
+      const fvTag     = (!suppressBadge && m.finviz_confirmed) ? `<span class="finviz-confirmed-tag">✓ Finviz</span>` : "";
       const body      = escHtml((m.body || "").slice(0, 200)) + ((m.body || "").length > 200 ? "…" : "");
       return `<div class="news-msg-card">
         <div class="news-msg-hdr">
           ${scoreStr ? `<span class="news-msg-score ${scoreClass}">${scoreStr}</span>` : ""}
           ${user ? `<span class="news-msg-user">${user}</span>` : ""}
           ${evBadge}
+          ${fvTag}
         </div>
         ${time ? `<div class="news-msg-time">${time}</div>` : ""}
         <div class="news-msg-body">${body}</div>

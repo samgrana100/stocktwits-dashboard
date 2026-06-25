@@ -3,6 +3,34 @@ import re
 # Each key is the display label. Patterns are case-insensitive.
 # Order matters — more specific patterns first within each category.
 EVENT_PATTERNS = {
+    # ── FDA sub-types (most specific first; generic "FDA Approval" is the catch-all) ──
+    "FDA Final Approval": [
+        r"\b(nda|bla)\b.{0,40}approv",
+        r"approv.{0,40}\b(nda|bla)\b",
+        r"new drug application.{0,20}approv",
+        r"biologics? license.{0,20}approv",
+        r"(full|traditional).{0,20}(fda.{0,10}approv|approv.{0,10}fda)",
+        r"fda.{0,10}(grants?|grant(ed)?).{0,10}approv",
+    ],
+    "FDA Breakthrough": [
+        r"breakthrough therapy designation",
+        r"breakthrough designation",
+        r"\bfda\b.{0,30}breakthrough",
+        r"breakthrough.{0,30}\bfda\b",
+    ],
+    "FDA Accel Approval": [
+        r"accelerated approval",
+        r"accelerated pathway",
+        r"\bfda\b.{0,30}accelerat",
+        r"surrogate endpoint.{0,30}approv",
+        r"accelerat.{0,30}approv",
+    ],
+    "FDA Priority Review": [
+        r"priority review",
+        r"\bpdufa\b",
+        r"6.month review",
+        r"\bfda\b.{0,20}priority",
+    ],
     "FDA Approval": [
         r"fda.{0,40}approv",
         r"approv.{0,40}fda",
@@ -41,7 +69,6 @@ EVENT_PATTERNS = {
         r"\bphase (3|iii)\b.{0,60}(result|data|success|positive|meet|primary|endpoint)",
         r"(result|data|success|positive).{0,60}\bphase (3|iii)\b",
         r"\bphase (2|ii)\b.{0,60}(result|data|success|positive)",
-        r"\bpdufa\b",
         r"primary endpoint.{0,30}(met|achieved|reached)",
         r"(met|achieved).{0,30}primary endpoint",
     ],
@@ -85,8 +112,12 @@ EVENT_PATTERNS = {
 
 # Maps event label → (hex color, short code for table pill)
 EVENT_META = {
-    "FDA Approval":  ("#f59e0b", "FDA ✓"),
-    "FDA Rejection": ("#ef4444", "FDA ✗"),
+    "FDA Final Approval":  ("#22c55e", "FDA ✓✓"),
+    "FDA Breakthrough":    ("#a855f7", "FDA BT"),
+    "FDA Accel Approval":  ("#f97316", "FDA Acc"),
+    "FDA Priority Review": ("#06b6d4", "FDA PR"),
+    "FDA Approval":        ("#f59e0b", "FDA ✓"),
+    "FDA Rejection":       ("#ef4444", "FDA ✗"),
     "Merger/Acq":    ("#a855f7", "M&A"),
     "Earnings Beat": ("#22c55e", "EPS ✓"),
     "Earnings Miss": ("#ef4444", "EPS ✗"),

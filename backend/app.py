@@ -10,18 +10,21 @@ import re
 import threading
 import time
 import requests
+import xml.etree.ElementTree as ET
+from collections import defaultdict
 from io import StringIO
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, date, timezone, timedelta
 import pandas as pd
 from curl_cffi import requests as cffi_requests
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, message_density, ensure_indexes
+from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
+from calendar_fetcher import start_calendar_threads
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -30,6 +33,90 @@ app = Flask(__name__, template_folder="../frontend")
 
 FINVIZ_API_TOKEN  = os.getenv("FINVIZ_API_TOKEN", "")
 FINVIZ_EXPORT_URL = os.getenv("FINVIZ_EXPORT_URL", "")
+_FINVIZ_EMAIL    = os.getenv("FINVIZ_EMAIL", "")
+_FINVIZ_PASSWORD = os.getenv("FINVIZ_PASSWORD", "")
+
+_token_refresh_lock  = threading.Lock()
+_last_token_refresh  = 0.0
+_TOKEN_REFRESH_COOLDOWN = 300  # seconds between re-login attempts
+
+
+def refresh_finviz_token() -> bool:
+    """
+    Logs into Finviz with stored credentials, scrapes elite.finviz.com/api_explanation
+    to get the current auth token, then hot-swaps it in memory and rewrites .env.
+    Returns True if a token was found (changed or unchanged).
+    """
+    global FINVIZ_API_TOKEN, _last_token_refresh
+
+    if not _FINVIZ_EMAIL or not _FINVIZ_PASSWORD:
+        print("[TOKEN] FINVIZ_EMAIL / FINVIZ_PASSWORD not set — skipping refresh")
+        return False
+
+    if time.time() - _last_token_refresh < _TOKEN_REFRESH_COOLDOWN:
+        return False
+
+    with _token_refresh_lock:
+        if time.time() - _last_token_refresh < _TOKEN_REFRESH_COOLDOWN:
+            return False
+        _last_token_refresh = time.time()
+        try:
+            session = cffi_requests.Session()
+            login_resp = session.post(
+                "https://finviz.com/login_submit.ashx",
+                data={"email": _FINVIZ_EMAIL, "password": _FINVIZ_PASSWORD, "remember": "1"},
+                impersonate="chrome120",
+                timeout=15,
+            )
+            if login_resp.status_code not in (200, 302):
+                print(f"[TOKEN] Login failed — HTTP {login_resp.status_code}")
+                return False
+
+            # Token is shown on the API explanation page inside &auth=<uuid>
+            api_page = session.get(
+                "https://elite.finviz.com/api_explanation",
+                impersonate="chrome120",
+                timeout=15,
+            )
+            # Token is embedded as userToken in the page's JSON data
+            token_match = re.search(
+                r'"userToken"\s*:\s*"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"',
+                api_page.text,
+                re.IGNORECASE,
+            )
+            if not token_match:
+                print("[TOKEN] Could not find token on api_explanation page")
+                return False
+
+            new_token = token_match.group(1).lower()
+            if new_token == FINVIZ_API_TOKEN:
+                print(f"[TOKEN] Token is current ({new_token[:8]}…)")
+                return True
+
+            FINVIZ_API_TOKEN = new_token
+            print(f"[TOKEN] Refreshed token → {new_token[:8]}…")
+
+            # Skip .env rewrite on Railway — filesystem is ephemeral there.
+            # In-memory hot-swap above is sufficient for the current process.
+            if not os.getenv("RAILWAY_ENVIRONMENT"):
+                env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+                try:
+                    with open(env_path, "r") as f:
+                        env_lines = f.readlines()
+                    with open(env_path, "w") as f:
+                        for line in env_lines:
+                            if line.startswith("FINVIZ_API_TOKEN="):
+                                f.write(f"FINVIZ_API_TOKEN={new_token}\n")
+                            else:
+                                f.write(line)
+                except Exception as e:
+                    print(f"[TOKEN] Could not write .env: {e}")
+
+            return True
+
+        except Exception as e:
+            print(f"[TOKEN] Refresh failed: {e}")
+            return False
 
 # Pipeline control
 pipeline_thread    = None
@@ -49,10 +136,20 @@ price_cache     = {}
 PRICE_CACHE_TTL = 60  # seconds
 _price_lock     = threading.Lock()
 
+# Per-ticker detail cache: shared by /api/ticker and /api/tickers/batch
+# Short TTL keeps the dashboard real-time while avoiding redundant aggregations
+ticker_detail_cache = {}
+TICKER_DETAIL_TTL   = 30  # seconds
+_ticker_detail_lock = threading.Lock()
+
 # Finviz Stocks News cache (v=3 + v=4) — keyed by ticker
 finviz_news_cache      = {}
 finviz_news_cache_time = 0
 _finviz_news_lock      = threading.Lock()
+
+# Per-ticker news cache (Yahoo Finance + SEC 8-K) — independent of pipeline
+_ticker_news_cache     = {}   # {ticker: {"articles": [...], "ts": float}}
+_TICKER_NEWS_TTL       = 1800  # 30 minutes
 
 WINDOW_CONFIG = {
     "1m":  {"minutes": 1,     "finviz_param": "i1"},
@@ -129,10 +226,18 @@ def get_finviz_data() -> dict:
         s = str(val).strip()
         return "--" if s in ("nan", "None", "NaN", "", "inf") else s
 
+    refreshed = [False]  # shared flag — only refresh once across both v=111 and v=151
+
     def fetch_df(v):
         url = re.sub(r'v=\d+', f'v={v}', FINVIZ_EXPORT_URL) + "&auth=" + FINVIZ_API_TOKEN
         try:
-            r = requests.get(url, timeout=15)
+            r = cffi_requests.get(url, impersonate="chrome120", timeout=15)
+            if r.status_code == 401 and not refreshed[0]:
+                print(f"[FINVIZ] 401 on v={v} — refreshing token")
+                refreshed[0] = True
+                if refresh_finviz_token():
+                    url = re.sub(r'v=\d+', f'v={v}', FINVIZ_EXPORT_URL) + "&auth=" + FINVIZ_API_TOKEN
+                    r   = cffi_requests.get(url, impersonate="chrome120", timeout=15)
             if r.status_code != 200:
                 print(f"[FINVIZ] HTTP {r.status_code} for v={v}")
                 return None
@@ -380,6 +485,79 @@ def get_finviz_stocks_news() -> dict:
     return result
 
 
+def get_ticker_news(ticker: str) -> list:
+    """
+    Returns recent news for a ticker from two free sources:
+      1. Yahoo Finance search API  — general news headlines
+      2. SEC EDGAR 8-K Atom feed   — material event filings
+
+    Cached per ticker for 30 minutes. Fires only when a News View card
+    loads — completely independent of the Stocktwits pipeline.
+    """
+    now    = time.time()
+    cached = _ticker_news_cache.get(ticker)
+    if cached and (now - cached["ts"]) < _TICKER_NEWS_TTL:
+        return cached["articles"]
+
+    articles = []
+    _YF_HEADERS  = {"User-Agent": "Mozilla/5.0"}
+    _SEC_HEADERS = {"User-Agent": "stocktwits-dashboard samgrana100@gmail.com"}
+
+    # ── 1. Yahoo Finance news ─────────────────────────────────────────────────
+    try:
+        url = (
+            f"https://query2.finance.yahoo.com/v1/finance/search"
+            f"?q={ticker}&newsCount=6&enableFuzzyQuery=false&quotesCount=0"
+        )
+        r = requests.get(url, headers=_YF_HEADERS, timeout=8)
+        if r.status_code == 200:
+            for item in r.json().get("news", []):
+                pub_ts   = item.get("providerPublishTime", 0)
+                pub_date = (
+                    datetime.utcfromtimestamp(pub_ts).strftime("%Y-%m-%d")
+                    if pub_ts else ""
+                )
+                articles.append({
+                    "title":  item.get("title", "").strip(),
+                    "url":    item.get("link",  ""),
+                    "source": item.get("publisher", "Yahoo Finance"),
+                    "date":   pub_date,
+                    "source_type": "news",
+                })
+    except Exception as e:
+        print(f"[TICKER NEWS] Yahoo {ticker}: {e}")
+
+    # ── 2. SEC EDGAR 8-K filings ──────────────────────────────────────────────
+    try:
+        atom_url = (
+            f"https://www.sec.gov/cgi-bin/browse-edgar"
+            f"?action=getcompany&CIK={ticker}&type=8-K"
+            f"&dateb=&owner=include&count=5&output=atom"
+        )
+        r = requests.get(atom_url, headers=_SEC_HEADERS, timeout=10)
+        if r.status_code == 200 and r.content:
+            ns   = {"atom": "http://www.w3.org/2005/Atom"}
+            root = ET.fromstring(r.content)
+            for entry in root.findall("atom:entry", ns)[:5]:
+                title   = (entry.findtext("atom:title",   "", ns) or "").strip()
+                updated = (entry.findtext("atom:updated", "", ns) or "")[:10]
+                link_el = entry.find("atom:link", ns)
+                link    = link_el.get("href", "") if link_el is not None else ""
+                if title:
+                    articles.append({
+                        "title":       title,
+                        "url":         link,
+                        "source":      "SEC 8-K",
+                        "date":        updated,
+                        "source_type": "filing",
+                    })
+    except Exception as e:
+        print(f"[TICKER NEWS] SEC {ticker}: {e}")
+
+    _ticker_news_cache[ticker] = {"articles": articles, "ts": now}
+    return articles
+
+
 # ─── ROUTES ───
 
 @app.route("/")
@@ -443,15 +621,37 @@ def get_scores():
     })
 
 
+def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label):
+    if price_hist and finviz_param == "i1":
+        sort_keys = sorted(set(p["sort_key"] for p in price_hist))
+        return [sk + " " + tz_label for sk in sort_keys]
+    axis = []
+    step = 1 if window_min <= 60 else (5 if window_min <= 1440 else (60 if window_min <= 10080 else 1440))
+    current = window_start_dt.replace(tzinfo=timezone.utc)
+    while current <= now_utc:
+        axis.append(utc_to_et(current.strftime("%Y-%m-%dT%H:%M:%SZ")))
+        current += timedelta(minutes=step)
+    axis.append(utc_to_et(now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")))
+    return axis
+
+
 @app.route("/api/ticker/<ticker>")
 def get_ticker_detail(ticker):
-    window_key    = request.args.get("window", "1h")
-    rolling_key   = request.args.get("rolling", window_key)   # rolling window for score/density stats
+    window_key  = request.args.get("window", "1h")
+    rolling_key = request.args.get("rolling", window_key)
+    ticker      = ticker.upper()
+
+    cache_key = f"{ticker}|{window_key}|{rolling_key}"
+    now_ts    = time.time()
+    with _ticker_detail_lock:
+        cached = ticker_detail_cache.get(cache_key)
+        if cached and (now_ts - cached["ts"]) < TICKER_DETAIL_TTL:
+            return jsonify(cached["data"])
+
     config        = WINDOW_CONFIG.get(window_key, WINDOW_CONFIG["1h"])
     window_min    = config["minutes"]
     finviz_param  = config["finviz_param"]
     window_start  = get_window_start_iso(window_min)
-    ticker        = ticker.upper()
 
     rolling_config = WINDOW_CONFIG.get(rolling_key, config)
     rolling_min    = rolling_config["minutes"]
@@ -512,29 +712,9 @@ def get_ticker_detail(ticker):
     # Frontend matches by HH:MM so past-session dates align with today's axis.
     price_hist = get_finviz_price_history(ticker, finviz_param, window_min)
 
-    # ─── Build time axis ───
-    # For intraday windows (p=i1): use the price data's actual time range so the
-    # price line is always visible. Score/density match to this axis by HH:MM.
-    # For daily/weekly/monthly windows: fall back to the rolling window range.
-    time_axis = []
     month    = datetime.now(timezone.utc).month
     tz_label = "EDT" if 3 <= month <= 11 else "EST"
-
-    if price_hist and finviz_param == "i1":
-        sort_keys   = [p["sort_key"] for p in price_hist]
-        axis_start  = datetime.strptime(min(sort_keys), "%Y-%m-%dT%H:%M:%S")
-        axis_end    = datetime.strptime(max(sort_keys), "%Y-%m-%dT%H:%M:%S")
-        current     = axis_start
-        while current <= axis_end:
-            time_axis.append(current.strftime("%Y-%m-%dT%H:%M:%S") + " " + tz_label)
-            current += timedelta(minutes=1)
-    else:
-        step = 1 if window_min <= 60 else (5 if window_min <= 1440 else (60 if window_min <= 10080 else 1440))
-        current = window_start_dt.replace(tzinfo=timezone.utc)
-        while current <= now_utc:
-            time_axis.append(utc_to_et(current.strftime("%Y-%m-%dT%H:%M:%SZ")))
-            current += timedelta(minutes=step)
-        time_axis.append(utc_to_et(now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")))
+    time_axis = _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label)
 
     # ─── Rolling window aggregate scores (independent of chart window) ───
     # Uses rolling_start so the header cards reflect the per-ticker rolling window,
@@ -581,7 +761,7 @@ def get_ticker_detail(ticker):
         for d in event_docs
     ]
 
-    return jsonify({
+    out = {
         "status":                 "ok",
         "ticker":                 ticker,
         "window_key":             window_key,
@@ -599,7 +779,274 @@ def get_ticker_detail(ticker):
         "event_history":          event_history,
         "confirmed_news":         confirmed_articles,
         "confirmed_event_types":  confirmed_event_types,
-    })
+    }
+    with _ticker_detail_lock:
+        stale = [k for k, v in ticker_detail_cache.items() if (now_ts - v["ts"]) >= TICKER_DETAIL_TTL]
+        for k in stale:
+            del ticker_detail_cache[k]
+        ticker_detail_cache[cache_key] = {"data": out, "ts": now_ts}
+    return jsonify(out)
+
+
+@app.route("/api/tickers/batch")
+def get_tickers_batch():
+    """
+    Returns chart data for multiple tickers in one request.
+    Runs 4 MongoDB queries total instead of N×2, then builds per-ticker
+    responses. Results are stored in ticker_detail_cache so subsequent
+    popup opens for the same tickers are served instantly.
+    """
+    tickers_param = request.args.get("tickers", "")
+    window_key    = request.args.get("window",  "1h")
+    rolling_key   = request.args.get("rolling", "5m")
+
+    tickers = [t.strip().upper() for t in tickers_param.split(",") if t.strip()][:100]
+    if not tickers:
+        return jsonify({}), 400
+
+    config        = WINDOW_CONFIG.get(window_key, WINDOW_CONFIG["1h"])
+    window_min    = config["minutes"]
+    finviz_param  = config["finviz_param"]
+    window_start  = get_window_start_iso(window_min)
+
+    rolling_config = WINDOW_CONFIG.get(rolling_key, WINDOW_CONFIG["5m"])
+    rolling_min    = rolling_config["minutes"]
+    rolling_start  = get_window_start_iso(rolling_min)
+
+    now_utc         = datetime.now(timezone.utc)
+    window_start_dt = now_utc - timedelta(minutes=window_min)
+    month           = now_utc.month
+    tz_label        = "EDT" if 3 <= month <= 11 else "EST"
+    now_ts          = time.time()
+
+    # Serve from cache where available; only query MongoDB for the rest
+    results   = {}
+    uncached  = []
+    for t in tickers:
+        ck = f"{t}|{window_key}|{rolling_key}"
+        with _ticker_detail_lock:
+            cached = ticker_detail_cache.get(ck)
+            if cached and (now_ts - cached["ts"]) < TICKER_DETAIL_TTL:
+                results[t] = cached["data"]
+            else:
+                uncached.append(t)
+
+    if not uncached:
+        return jsonify(results)
+
+    # ── 1. Score history (all uncached tickers, one query) ──
+    all_score_docs = list(scored_messages.find(
+        {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": window_start},
+         "composite_score": {"$ne": None}},
+        {"ticker": 1, "composite_score": 1, "sentiment_score": 1,
+         "trust_score": 1, "impact_score": 1, "created_at_utc": 1, "_id": 0}
+    ).sort("created_at_utc", 1).limit(100_000))
+
+    # ── 2. Message density (one aggregation) ──
+    density_docs = list(scored_messages.aggregate([
+        {"$match": {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": window_start}}},
+        {"$group": {
+            "_id":   {"ticker": "$ticker", "minute": {"$substr": ["$created_at_utc", 0, 16]}},
+            "count": {"$sum": 1}
+        }},
+        {"$sort": {"_id.minute": 1}}
+    ]))
+
+    # ── 3. Rolling-window scores ──
+    rolling_docs = list(scored_messages.find(
+        {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": rolling_start},
+         "composite_score": {"$ne": None}},
+        {"ticker": 1, "composite_score": 1, "sentiment_score": 1,
+         "trust_score": 1, "impact_score": 1, "_id": 0}
+    ).limit(100_000))
+
+    # ── 4. Rolling message totals (one aggregation instead of N count_documents) ──
+    total_docs = list(scored_messages.aggregate([
+        {"$match": {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": rolling_start}}},
+        {"$group": {"_id": "$ticker", "total": {"$sum": 1}}}
+    ]))
+
+    # ── 5. Event markers ──
+    event_docs = list(scored_messages.find(
+        {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": window_start},
+         "event_type": {"$ne": None}},
+        {"ticker": 1, "event_type": 1, "created_at_utc": 1, "body": 1, "user": 1, "_id": 0}
+    ).sort("created_at_utc", 1).limit(10_000))
+
+    # Split results by ticker
+    score_by_ticker   = defaultdict(list)
+    density_by_ticker = defaultdict(list)
+    rolling_by_ticker = defaultdict(list)
+    total_by_ticker   = {}
+    events_by_ticker  = defaultdict(list)
+
+    for d in all_score_docs:
+        score_by_ticker[d["ticker"]].append(d)
+    for d in density_docs:
+        density_by_ticker[d["_id"]["ticker"]].append(d)
+    for d in rolling_docs:
+        rolling_by_ticker[d["ticker"]].append(d)
+    for d in total_docs:
+        total_by_ticker[d["_id"]] = d["total"]
+    for d in event_docs:
+        events_by_ticker[d["ticker"]].append(d)
+
+    finviz    = get_finviz_data()
+    news_data = get_finviz_stocks_news()
+
+    # ── Build per-ticker response ──
+    # Price is intentionally omitted here — the frontend fetches it lazily
+    # per-card via /api/price/<ticker> so Finviz is never hammered all at once.
+    for t in uncached:
+        score_docs_t   = score_by_ticker[t]
+        density_docs_t = density_by_ticker[t]
+        rolling_docs_t = rolling_by_ticker[t]
+        event_docs_t   = events_by_ticker[t]
+        price_hist     = []
+
+        score_history = [
+            {"time": utc_to_et(d["created_at_utc"]), "score": d["composite_score"],
+             "sort_key": d["created_at_utc"]}
+            for d in score_docs_t
+        ]
+        density_history = [
+            {"time": utc_to_et(d["_id"]["minute"] + ":00Z"),
+             "count": d["count"], "sort_key": d["_id"]["minute"]}
+            for d in density_docs_t
+        ]
+        time_axis = _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label)
+
+        latest_scores = {}
+        if rolling_docs_t:
+            n = len(rolling_docs_t)
+            latest_scores = {
+                "composite_score": round(sum(d["composite_score"]            for d in rolling_docs_t) / n, 4),
+                "sentiment_score": round(sum((d.get("sentiment_score") or 0) for d in rolling_docs_t) / n, 4),
+                "trust_score":     round(sum((d.get("trust_score")     or 0) for d in rolling_docs_t) / n, 4),
+                "impact_score":    round(sum((d.get("impact_score")    or 0) for d in rolling_docs_t) / n, 4),
+                "scored_count":    n,
+            }
+
+        fv                    = finviz.get(t, {})
+        confirmed_articles    = news_data.get(t, [])[:10]
+        confirmed_event_types = list({a["event_type"] for a in confirmed_articles if a["event_type"]})
+
+        event_history = [
+            {
+                "time":       utc_to_et(d["created_at_utc"]),
+                "event_type": d["event_type"],
+                "body":       (d.get("body") or "").strip(),
+                "username":   (d.get("user") or {}).get("username", "")
+                              if isinstance(d.get("user"), dict) else "",
+            }
+            for d in event_docs_t
+        ]
+
+        out = {
+            "status":                "ok",
+            "ticker":                t,
+            "window_key":            window_key,
+            "window_minutes":        window_min,
+            "rolling_key":           rolling_key,
+            "rolling_message_total": total_by_ticker.get(t, 0),
+            "company":               fv.get("company",  "--"),
+            "sector":                fv.get("sector",   "--"),
+            "industry":              fv.get("industry", "--"),
+            "latest_scores":         latest_scores,
+            "score_history":         score_history,
+            "density_history":       density_history,
+            "price_history":         price_hist,
+            "time_axis":             time_axis,
+            "event_history":         event_history,
+            "confirmed_news":        confirmed_articles,
+            "confirmed_event_types": confirmed_event_types,
+        }
+
+        results[t] = out
+
+    return jsonify(results)
+
+
+@app.route("/api/price/<ticker>")
+def get_price_endpoint(ticker):
+    """Lightweight price-only endpoint — no MongoDB queries. Used by News View cards."""
+    ticker     = ticker.upper()
+    window_key = request.args.get("window", "1h")
+    config     = WINDOW_CONFIG.get(window_key, WINDOW_CONFIG["1h"])
+    window_min = config["minutes"]
+    finviz_param = config["finviz_param"]
+
+    now_utc        = datetime.now(timezone.utc)
+    window_start_dt = now_utc - timedelta(minutes=window_min)
+    month          = now_utc.month
+    tz_label       = "EDT" if 3 <= month <= 11 else "EST"
+
+    price_hist = get_finviz_price_history(ticker, finviz_param, window_min)
+    time_axis  = _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label)
+
+    return jsonify({"price_history": price_hist, "time_axis": time_axis})
+
+
+@app.route("/api/finviz-news/<ticker>")
+def get_finviz_news_endpoint(ticker):
+    """Lightweight endpoint — returns cached Finviz news articles for one ticker."""
+    ticker    = ticker.upper()
+    news_data = get_finviz_stocks_news()
+    articles  = news_data.get(ticker, [])[:10]
+    return jsonify({"articles": articles})
+
+
+@app.route("/api/ticker-news/<ticker>")
+def get_ticker_news_endpoint(ticker):
+    """Returns Yahoo Finance news + SEC 8-K filings for one ticker (cached 30 min)."""
+    ticker   = ticker.upper()
+    articles = get_ticker_news(ticker)
+    return jsonify({"articles": articles})
+
+
+@app.route("/api/upcoming-catalysts")
+def get_upcoming_catalysts():
+    """
+    Returns PDUFA and earnings dates for the requested tickers.
+    Query param: tickers=AAPL,MRNA,NVDA  (comma-separated)
+
+    Response shape:
+    {
+      "MRNA": {"pdufa":    {"date": "2026-07-18", "days_until": 24, "description": "mRNA-1283 ..."}},
+      "AAPL": {"earnings": {"date": "2026-07-31", "days_until": 37, "description": "Earnings Report"}},
+    }
+    """
+    raw_tickers = request.args.get("tickers", "")
+    tickers     = [t.strip().upper() for t in raw_tickers.split(",") if t.strip()]
+    if not tickers:
+        return jsonify({})
+
+    today = datetime.now(timezone.utc).date()
+    docs  = list(upcoming_catalysts.find(
+        {
+            "ticker":     {"$in": tickers},
+            "date":       {"$gte": (today - timedelta(days=3)).isoformat()},
+        },
+        {"_id": 0, "ticker": 1, "event_type": 1, "date": 1, "description": 1},
+    ))
+
+    result = {}
+    for doc in docs:
+        ticker     = doc["ticker"]
+        event_type = doc["event_type"]
+        try:
+            cat_date   = date.fromisoformat(doc["date"])
+        except ValueError:
+            continue
+        days_until = (cat_date - today).days
+
+        result.setdefault(ticker, {})[event_type] = {
+            "date":        doc["date"],
+            "days_until":  days_until,
+            "description": doc.get("description", ""),
+        }
+
+    return jsonify(result)
 
 
 @app.route("/api/quickscore/<ticker>")
@@ -650,6 +1097,13 @@ def get_bullish_feed():
          "user": 1, "event_type": 1, "_id": 0}
     ).sort("created_at_utc", -1).limit(limit))
 
+    # Build confirmed event type sets per ticker from Finviz news (cached 10 min)
+    news_data = get_finviz_stocks_news()
+    confirmed_by_ticker = {
+        t: {a["event_type"] for a in articles if a["event_type"]}
+        for t, articles in news_data.items()
+    }
+
     result = []
     for d in docs:
         created = d.get("created_at_utc", "")
@@ -665,21 +1119,26 @@ def get_bullish_feed():
         user     = d.get("user") or {}
         username = user.get("username", "") if isinstance(user, dict) else ""
         body     = (d.get("body") or "").strip()
+        ticker   = d.get("ticker", "")
 
         # Use stored event_type if present; fall back to inline detection for older docs
         event_type = d.get("event_type") or detect_event(body)
+        finviz_confirmed = bool(
+            event_type and event_type in confirmed_by_ticker.get(ticker, set())
+        )
 
         result.append({
-            "ticker":          d.get("ticker", ""),
-            "body":            body,
-            "composite_score": round(d.get("composite_score") or 0, 4),
-            "sentiment_score": round(d.get("sentiment_score") or 0, 4),
-            "trust_score":     round(d.get("trust_score")     or 0, 4),
-            "impact_score":    round(d.get("impact_score")    or 0, 4),
-            "posted_et":       utc_to_et(created) if created else "",
-            "delay_seconds":   delay_sec,
-            "username":        username,
-            "event_type":      event_type,
+            "ticker":            ticker,
+            "body":              body,
+            "composite_score":   round(d.get("composite_score") or 0, 4),
+            "sentiment_score":   round(d.get("sentiment_score") or 0, 4),
+            "trust_score":       round(d.get("trust_score")     or 0, 4),
+            "impact_score":      round(d.get("impact_score")    or 0, 4),
+            "posted_et":         utc_to_et(created) if created else "",
+            "delay_seconds":     delay_sec,
+            "username":          username,
+            "event_type":        event_type,
+            "finviz_confirmed":  finviz_confirmed,
         })
 
     return jsonify({"messages": result, "threshold": threshold})
@@ -703,6 +1162,9 @@ def get_ticker_messages(ticker):
         {"body": 1, "user": 1, "created_at_utc": 1, "composite_score": 1, "event_type": 1, "_id": 0}
     ).sort("created_at_utc", -1).limit(limit))
 
+    news_data      = get_finviz_stocks_news()
+    confirmed_types = {a["event_type"] for a in news_data.get(ticker, []) if a["event_type"]}
+
     result = []
     for d in docs:
         user     = d.get("user") or {}
@@ -711,11 +1173,12 @@ def get_ticker_messages(ticker):
         score    = d.get("composite_score")
         event_type = d.get("event_type") or detect_event(body)
         result.append({
-            "body":            body,
-            "username":        username,
-            "posted_et":       utc_to_et(d.get("created_at_utc", "")),
-            "composite_score": round(score, 4) if score is not None else None,
-            "event_type":      event_type,
+            "body":              body,
+            "username":          username,
+            "posted_et":         utc_to_et(d.get("created_at_utc", "")),
+            "composite_score":   round(score, 4) if score is not None else None,
+            "event_type":        event_type,
+            "finviz_confirmed":  bool(event_type and event_type in confirmed_types),
         })
 
     return jsonify({"ticker": ticker, "messages": result})
@@ -828,18 +1291,37 @@ def run_scorer_loop(stop_flag: list):
     print("[SCORER THREAD] Stopped.")
 
 
-if __name__ == "__main__":
+def _start_background_services():
+    """
+    Initialises DB indexes, refreshes the Finviz token, and starts the
+    scorer + calendar background threads.  Called once at process startup —
+    works for both `python app.py` (dev) and gunicorn (production).
+    """
     ensure_indexes()
 
-    scorer_stop_flag = [False]
-    scorer_thread    = threading.Thread(
-        target=run_scorer_loop,
-        args=(scorer_stop_flag,),
-        daemon=True
-    )
-    scorer_thread.start()
-    print("[APP] Score calculator started automatically.")
-    print("[APP] Starting Stocktwits Sentiment Dashboard...")
-    print("[APP] Open your browser at http://localhost:5000")
+    if _FINVIZ_EMAIL and _FINVIZ_PASSWORD:
+        refresh_finviz_token()
+    else:
+        print("[TOKEN] No FINVIZ_EMAIL/PASSWORD in .env — using static token")
 
-    app.run(debug=False, port=5000)
+    _scorer_stop = [False]
+    threading.Thread(target=run_scorer_loop, args=(_scorer_stop,), daemon=True).start()
+    print("[APP] Score calculator started automatically.")
+
+    def _screener_tickers():
+        with _finviz_lock:
+            return list(finviz_cache.keys())
+
+    start_calendar_threads(_screener_tickers)
+    print("[APP] Background services started.")
+
+
+# Start once at import time (covers gunicorn workers that never enter __main__)
+_start_background_services()
+
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 5000))
+    print("[APP] Starting Stocktwits Sentiment Dashboard...")
+    print(f"[APP] Open your browser at http://localhost:{port}")
+    app.run(debug=False, host="0.0.0.0", port=port)

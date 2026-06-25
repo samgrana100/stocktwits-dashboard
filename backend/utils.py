@@ -11,8 +11,9 @@ from io import StringIO
 
 load_dotenv()
 
-# Finviz credentials from .env
-FINVIZ_API_TOKEN = os.getenv("FINVIZ_API_TOKEN", "")
+# Read at import time as defaults; fetch_tickers_from_finviz re-reads on each
+# call so a token written to .env by app.py is picked up without a restart.
+FINVIZ_API_TOKEN  = os.getenv("FINVIZ_API_TOKEN",  "")
 FINVIZ_EXPORT_URL = os.getenv("FINVIZ_EXPORT_URL", "")
 
 
@@ -76,13 +77,18 @@ def load_tickers_from_finviz() -> list:
     Falls back to local CSV if the fetch fails.
     """
 
-    if not FINVIZ_EXPORT_URL or not FINVIZ_API_TOKEN:
+    # Re-read from .env on every call so a refreshed token written by app.py
+    # is picked up without restarting the process.
+    load_dotenv(override=True)
+    token      = os.getenv("FINVIZ_API_TOKEN",  "") or FINVIZ_API_TOKEN
+    export_url = os.getenv("FINVIZ_EXPORT_URL", "") or FINVIZ_EXPORT_URL
+
+    if not export_url or not token:
         print("[TICKERS] Finviz credentials missing. Falling back to local CSV.")
         return []
 
     try:
-        # Append token directly to URL as Finviz expects
-        url = FINVIZ_EXPORT_URL + "&auth=" + FINVIZ_API_TOKEN
+        url = export_url + "&auth=" + token
 
         print("[TICKERS] Fetching ticker list from Finviz...")
 

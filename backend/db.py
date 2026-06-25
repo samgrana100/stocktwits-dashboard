@@ -15,9 +15,10 @@ client = MongoClient(MONGO_URI)
 db     = client[DB_NAME]
 
 # Collection handles
-scored_messages = db["scored_messages"]
-message_density = db["message_density"]
-price_history   = db["price_history"]
+scored_messages    = db["scored_messages"]
+message_density    = db["message_density"]
+price_history      = db["price_history"]
+upcoming_catalysts = db["upcoming_catalysts"]
 
 
 def ensure_indexes():
@@ -49,6 +50,11 @@ def ensure_indexes():
         [("ticker", ASCENDING), ("timestamp", DESCENDING)]
     )
     price_history.create_index("ts", expireAfterSeconds=604800)  # 7-day TTL
+
+    # upcoming_catalysts indexes
+    upcoming_catalysts.create_index([("ticker", ASCENDING), ("event_type", ASCENDING)])
+    upcoming_catalysts.create_index("date")
+    upcoming_catalysts.create_index("fetched_at", expireAfterSeconds=2592000)  # 30-day TTL
 
     print("[DB] All indexes verified successfully.")
 
