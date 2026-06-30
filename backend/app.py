@@ -559,7 +559,9 @@ def _get_wire_articles(url, source_name, cache, lock):
                 "date_dt": pub_dt,
                 "tickers": tickers,
             })
-        print(f"[WIRE] {source_name}: {len(items)} items in feed, {len(articles)} ticker-tagged")
+        sample = [item.findtext("title") or "" for item in items[:3]]
+        print(f"[WIRE] {source_name}: {len(items)} items in feed, {len(articles)} ticker-tagged | sample: {sample}")
+
         with lock:
             cache["articles"] = articles
             cache["ts"]       = now
