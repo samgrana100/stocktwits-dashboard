@@ -524,7 +524,7 @@ def _get_wire_articles(url, source_name, cache, lock):
             return cache["articles"]
 
     try:
-        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        r = cffi_requests.get(url, impersonate="chrome120", timeout=15)
         if r.status_code != 200:
             print(f"[WIRE] {source_name}: HTTP {r.status_code}")
             return cache["articles"]
@@ -565,7 +565,7 @@ _bzn_lock  = threading.Lock()
 def _get_benzinga_articles(ticker: str) -> list:
     """Filters the global Benzinga RSS cache for articles mentioning this ticker."""
     all_articles = _get_wire_articles(
-        "https://feeds.benzinga.com/benzinga",
+        "https://www.benzinga.com/feed",
         "Benzinga", _bzn_cache, _bzn_lock,
     )
     return [a for a in all_articles if ticker in a["tickers"]]
@@ -594,7 +594,7 @@ def get_ticker_news(ticker: str) -> list:
 
     # ── 1. PR Newswire ────────────────────────────────────────────────────────
     for item in _get_wire_articles(
-        "https://www.prnewswire.com/rss/news-releases-list.rss",
+        "https://www.prnewswire.com/rss/financial-news-list.rss",
         "PR Newswire", _prn_cache, _prn_lock,
     ):
         if ticker not in item["tickers"]:
@@ -609,7 +609,7 @@ def get_ticker_news(ticker: str) -> list:
 
     # ── 2. BusinessWire ───────────────────────────────────────────────────────
     for item in _get_wire_articles(
-        "https://www.businesswire.com/rss/home/20061204005906/en/rss.xml",
+        "https://feed.businesswire.com/rss/home/20061204005906/en/rss.xml",
         "Business Wire", _bw_cache, _bw_lock,
     ):
         if ticker not in item["tickers"]:
