@@ -4,10 +4,10 @@
 
 from datetime import datetime, timezone, timedelta
 import pandas as pd
-import requests
 import os
 from dotenv import load_dotenv
 from io import StringIO
+from curl_cffi import requests as cffi_requests
 
 load_dotenv()
 
@@ -92,7 +92,7 @@ def load_tickers_from_finviz() -> list:
 
         print("[TICKERS] Fetching ticker list from Finviz...")
 
-        response = requests.get(url, timeout=15)
+        response = cffi_requests.get(url, impersonate="chrome120", timeout=15)
 
         if response.status_code != 200:
             print("[TICKERS] Finviz returned error " + str(response.status_code) + ". Falling back to local CSV.")

@@ -94,12 +94,13 @@ def refresh_finviz_token() -> bool:
                 return True
 
             FINVIZ_API_TOKEN = new_token
+            os.environ["FINVIZ_API_TOKEN"] = new_token
             print(f"[TOKEN] Refreshed token → {new_token[:8]}…")
 
             # Skip .env rewrite on Railway — filesystem is ephemeral there.
             # In-memory hot-swap above is sufficient for the current process.
             if not os.getenv("RAILWAY_ENVIRONMENT"):
-                env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
+                env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
                 try:
                     with open(env_path, "r") as f:
                         env_lines = f.readlines()
@@ -1297,7 +1298,10 @@ def _start_background_services():
     scorer + calendar background threads.  Called once at process startup —
     works for both `python app.py` (dev) and gunicorn (production).
     """
-    ensure_indexes()
+    try:
+        ensure_indexes()
+    except Exception as e:
+        print(f"[DB] Warning: could not create indexes at startup: {e}")
 
     if _FINVIZ_EMAIL and _FINVIZ_PASSWORD:
         refresh_finviz_token()
