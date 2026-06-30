@@ -12,6 +12,7 @@ MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGO_URL") or "mongodb://local
 DB_NAME   = os.getenv("MONGO_DB_NAME", "stocktwits_dashboard")
 
 print(f"[DB] MONGO_URI={MONGO_URI[:40]}...")
+print(f"[DB] ENV CHECK: MONGO_URI_RAW={os.getenv('MONGO_URI','MISSING')} MONGO_URL_RAW={os.getenv('MONGO_URL','MISSING')} RAILWAY_ENV={os.getenv('RAILWAY_ENVIRONMENT_NAME','MISSING')}")
 
 client = MongoClient(MONGO_URI)
 db     = client[DB_NAME]
