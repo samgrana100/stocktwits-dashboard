@@ -489,7 +489,25 @@
       display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
     }
 
-    /* ── NEWS CARD — RECENT NEWS SECTION (Yahoo + SEC) ── */
+    /* ── NEWS VIEW — SOURCE FILTER BAR ── */
+    .news-source-filter-bar {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      margin-bottom: 14px; padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .news-source-filter-label {
+      color: var(--text-muted); font-size: 11px; font-weight: 500; margin-right: 2px;
+    }
+    .news-source-filter-btn {
+      background: transparent; border: 1px solid var(--border-subtle);
+      color: var(--text-muted); font-size: 11px; font-weight: 500;
+      padding: 4px 10px; border-radius: var(--r-sm); cursor: pointer;
+      transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
+    }
+    .news-source-filter-btn:hover  { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border-mid); }
+    .news-source-filter-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 0 12px var(--blue-glow); }
+
+    /* ── NEWS CARD — RECENT NEWS SECTION ── */
     .news-recent-section {
       border-top: 1px solid var(--border-subtle);
       padding: 10px 18px 14px;
@@ -498,15 +516,6 @@
       display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
       font-size: 10px; font-weight: 700; color: var(--text-muted);
       letter-spacing: 0.07em; text-transform: uppercase;
-    }
-    .news-recent-cols {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px;
-    }
-    .news-recent-col-hdr {
-      font-size: 9px; font-weight: 700; color: var(--text-dimmed);
-      letter-spacing: 0.06em; text-transform: uppercase;
-      margin-bottom: 6px; padding-bottom: 4px;
-      border-bottom: 1px solid var(--border-faint);
     }
     .news-recent-item {
       padding: 5px 0; border-bottom: 1px solid var(--border-faint);
@@ -519,17 +528,17 @@
     .news-recent-item a:hover { color: var(--blue); text-decoration: underline; }
     .news-recent-item-meta {
       font-size: 10px; color: var(--text-muted); margin-top: 2px;
+      display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
     }
-    .news-source-tag-sec {
-      font-size: 9px; font-weight: 600; color: #f97316;
-      background: rgba(249,115,22,0.08); border: 1px solid rgba(249,115,22,0.25);
-      border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em;
+    .news-source-tag {
+      font-size: 9px; font-weight: 600; border-radius: 4px;
+      padding: 1px 6px; letter-spacing: 0.04em; border: 1px solid;
     }
-    .news-source-tag-yf {
-      font-size: 9px; font-weight: 600; color: #a855f7;
-      background: rgba(168,85,247,0.08); border: 1px solid rgba(168,85,247,0.25);
-      border-radius: 4px; padding: 1px 6px; letter-spacing: 0.04em;
-    }
+    .news-source-tag-pr_newswire  { color: #a855f7; background: rgba(168,85,247,0.08); border-color: rgba(168,85,247,0.25); }
+    .news-source-tag-businesswire { color: #06b6d4; background: rgba(6,182,212,0.08);  border-color: rgba(6,182,212,0.25); }
+    .news-source-tag-benzinga     { color: #eab308; background: rgba(234,179,8,0.08);  border-color: rgba(234,179,8,0.25); }
+    .news-source-tag-fda          { color: #ef4444; background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.25); }
+    .news-source-tag-sec          { color: #f97316; background: rgba(249,115,22,0.08); border-color: rgba(249,115,22,0.25); }
 
     /* ── EVENT MESSAGE POPOVER ── */
     #event-msg-popover {
@@ -837,6 +846,14 @@
 </div><!-- /content-layout -->
 
 <div id="news-view" class="news-view">
+  <div class="news-source-filter-bar">
+    <span class="news-source-filter-label">News sources:</span>
+    <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('pr_newswire',this)">PR Newswire</button>
+    <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('businesswire',this)">Business Wire</button>
+    <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('benzinga',this)">Benzinga</button>
+    <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('fda',this)">FDA</button>
+    <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('sec',this)">SEC</button>
+  </div>
   <div id="news-ticker-list"></div>
 </div>
 
@@ -1921,6 +1938,49 @@
   let newsViewActive       = false;
   const newsCardCharts     = {};
   const newsCardEvents     = {};
+  const newsCardArticles   = {};
+  let   newsSourceFilters  = new Set(["pr_newswire","businesswire","benzinga","fda","sec"]);
+
+  const NEWS_SOURCE_LABELS = {
+    pr_newswire:  "PR Newswire",
+    businesswire: "Business Wire",
+    benzinga:     "Benzinga",
+    fda:          "FDA",
+    sec:          "SEC 8-K",
+  };
+
+  function toggleNewsSourceFilter(source, btn) {
+    if (newsSourceFilters.has(source)) {
+      newsSourceFilters.delete(source);
+      btn.classList.remove("active");
+    } else {
+      newsSourceFilters.add(source);
+      btn.classList.add("active");
+    }
+    document.querySelectorAll(".news-card").forEach(card => {
+      const tk = card.dataset.ticker;
+      if (newsCardArticles[tk]) renderNewsRecentSection(card, newsCardArticles[tk]);
+    });
+  }
+
+  function renderNewsRecentSection(card, articles) {
+    const filtered      = articles.filter(a => newsSourceFilters.has(a.source_category));
+    const recentSection = card.querySelector(".news-recent-section");
+    const recentList    = card.querySelector(".news-recent-list");
+    if (!filtered.length) { recentSection.style.display = "none"; return; }
+    recentList.innerHTML = filtered.map(a => {
+      const label   = NEWS_SOURCE_LABELS[a.source_category] || a.source_category;
+      const dateStr = (a.date || "").slice(0, 10);
+      return `<div class="news-recent-item">
+        <a href="${escHtml(a.url || "")}" target="_blank" rel="noopener noreferrer">${escHtml(a.title)}</a>
+        <div class="news-recent-item-meta">
+          <span class="news-source-tag news-source-tag-${a.source_category}">${label}</span>
+          ${dateStr ? "&middot; " + escHtml(dateStr) : ""}
+        </div>
+      </div>`;
+    }).join("");
+    recentSection.style.display = "";
+  }
   let newsObserver         = null;
   let newsViewBatchPromise = null;
 
@@ -2079,16 +2139,7 @@
       </div>
       <div class="news-recent-section" style="display:none">
         <div class="news-recent-hdr">Recent News</div>
-        <div class="news-recent-cols">
-          <div class="news-recent-yf-col">
-            <div class="news-recent-col-hdr"><span class="news-source-tag-yf">Yahoo Finance</span></div>
-            <div class="news-recent-yf-list"></div>
-          </div>
-          <div class="news-recent-sec-col">
-            <div class="news-recent-col-hdr"><span class="news-source-tag-sec">SEC 8-K Filings</span></div>
-            <div class="news-recent-sec-list"></div>
-          </div>
-        </div>
+        <div class="news-recent-list"></div>
       </div>`;
   }
 
@@ -2173,28 +2224,13 @@
         }
       } catch(_) {}
 
-      // ── Yahoo Finance + SEC 8-K news section ─────────────────────────────
+      // ── Recent news (PR Newswire / Business Wire / Benzinga / FDA / SEC) ────
       try {
         const tnRes = await tickerNewsPromise;
         if (tnRes.ok) {
-          const tnData   = await tnRes.json();
-          const articles = tnData.articles || [];
-          const yfItems  = articles.filter(a => a.source_type === "news");
-          const secItems = articles.filter(a => a.source_type === "filing");
-          if (yfItems.length > 0 || secItems.length > 0) {
-            const recentSection = card.querySelector(".news-recent-section");
-            const yfList        = card.querySelector(".news-recent-yf-list");
-            const secList       = card.querySelector(".news-recent-sec-list");
-            const renderItem = a => `<div class="news-recent-item">
-              <a href="${escHtml(a.url || "")}" target="_blank" rel="noopener noreferrer">${escHtml(a.title)}</a>
-              ${a.source && a.source !== "Yahoo Finance" && a.source !== "SEC 8-K"
-                ? `<div class="news-recent-item-meta">${escHtml(a.source)}${a.date ? " &middot; " + escHtml(a.date) : ""}</div>`
-                : a.date ? `<div class="news-recent-item-meta">${escHtml(a.date)}</div>` : ""}
-            </div>`;
-            yfList.innerHTML  = yfItems.length  ? yfItems.map(renderItem).join("")  : '<div class="news-recent-item" style="color:var(--text-dimmed);font-size:11px">No recent articles</div>';
-            secList.innerHTML = secItems.length ? secItems.map(renderItem).join("") : '<div class="news-recent-item" style="color:var(--text-dimmed);font-size:11px">No recent filings</div>';
-            recentSection.style.display = "";
-          }
+          const tnData = await tnRes.json();
+          newsCardArticles[ticker] = tnData.articles || [];
+          renderNewsRecentSection(card, newsCardArticles[ticker]);
         }
       } catch(_) {}
 

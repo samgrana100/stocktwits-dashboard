@@ -486,11 +486,24 @@ def get_finviz_stocks_news() -> dict:
     return result
 
 
+def _parse_news_date(date_str: str):
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %I:%M%p", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(date_str, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def get_ticker_news(ticker: str) -> list:
     """
-    Returns recent news for a ticker from two free sources:
-      1. Yahoo Finance search API  — general news headlines
-      2. SEC EDGAR 8-K Atom feed   — material event filings
+    Returns recent news for a ticker, limited to the last 14 days, from:
+      1. Finviz Stocks News — filtered down to PR Newswire, Business Wire,
+         and Benzinga articles, plus anything tagged as an FDA catalyst
+      2. SEC EDGAR 8-K Atom feed — material event filings
+
+    Each article carries a `source_category` (pr_newswire, businesswire,
+    benzinga, fda, sec) so the frontend can let users filter by source.
 
     Cached per ticker for 30 minutes. Fires only when a News View card
     loads — completely independent of the Stocktwits pipeline.
@@ -500,60 +513,77 @@ def get_ticker_news(ticker: str) -> list:
     if cached and (now - cached["ts"]) < _TICKER_NEWS_TTL:
         return cached["articles"]
 
-    articles = []
-    _YF_HEADERS  = {"User-Agent": "Mozilla/5.0"}
-    _SEC_HEADERS = {"User-Agent": "stocktwits-dashboard samgrana100@gmail.com"}
+    articles  = []
+    cutoff_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=14)
 
-    # ── 1. Yahoo Finance news ─────────────────────────────────────────────────
-    try:
-        url = (
-            f"https://query2.finance.yahoo.com/v1/finance/search"
-            f"?q={ticker}&newsCount=6&enableFuzzyQuery=false&quotesCount=0"
-        )
-        r = requests.get(url, headers=_YF_HEADERS, timeout=8)
-        if r.status_code == 200:
-            for item in r.json().get("news", []):
-                pub_ts   = item.get("providerPublishTime", 0)
-                pub_date = (
-                    datetime.utcfromtimestamp(pub_ts).strftime("%Y-%m-%d")
-                    if pub_ts else ""
-                )
-                articles.append({
-                    "title":  item.get("title", "").strip(),
-                    "url":    item.get("link",  ""),
-                    "source": item.get("publisher", "Yahoo Finance"),
-                    "date":   pub_date,
-                    "source_type": "news",
-                })
-    except Exception as e:
-        print(f"[TICKER NEWS] Yahoo {ticker}: {e}")
+    # ── 1. Financial newswires + FDA catalysts (from Finviz Stocks News) ──────
+    for item in get_finviz_stocks_news().get(ticker, []):
+        source_lower = (item.get("source") or "").lower()
+        event_type   = item.get("event_type") or ""
+
+        if "pr newswire" in source_lower or "prnewswire" in source_lower:
+            category = "pr_newswire"
+        elif "business wire" in source_lower or "businesswire" in source_lower:
+            category = "businesswire"
+        elif "benzinga" in source_lower:
+            category = "benzinga"
+        elif event_type.startswith("FDA"):
+            category = "fda"
+        else:
+            continue
+
+        article_dt = _parse_news_date(item.get("date", ""))
+        if article_dt and article_dt < cutoff_dt:
+            continue
+
+        articles.append({
+            "title":           item.get("title", ""),
+            "url":             item.get("url", ""),
+            "source":          item.get("source", ""),
+            "date":            item.get("date", ""),
+            "source_type":     "news",
+            "source_category": category,
+        })
 
     # ── 2. SEC EDGAR 8-K filings ──────────────────────────────────────────────
     try:
         atom_url = (
             f"https://www.sec.gov/cgi-bin/browse-edgar"
             f"?action=getcompany&CIK={ticker}&type=8-K"
-            f"&dateb=&owner=include&count=5&output=atom"
+            f"&dateb=&owner=include&count=10&output=atom"
         )
-        r = requests.get(atom_url, headers=_SEC_HEADERS, timeout=10)
+        r = requests.get(
+            atom_url,
+            headers={"User-Agent": "stocktwits-dashboard samgrana100@gmail.com"},
+            timeout=10,
+        )
         if r.status_code == 200 and r.content:
             ns   = {"atom": "http://www.w3.org/2005/Atom"}
             root = ET.fromstring(r.content)
-            for entry in root.findall("atom:entry", ns)[:5]:
+            for entry in root.findall("atom:entry", ns)[:10]:
                 title   = (entry.findtext("atom:title",   "", ns) or "").strip()
                 updated = (entry.findtext("atom:updated", "", ns) or "")[:10]
                 link_el = entry.find("atom:link", ns)
                 link    = link_el.get("href", "") if link_el is not None else ""
-                if title:
-                    articles.append({
-                        "title":       title,
-                        "url":         link,
-                        "source":      "SEC 8-K",
-                        "date":        updated,
-                        "source_type": "filing",
-                    })
+                if not title:
+                    continue
+
+                article_dt = _parse_news_date(updated)
+                if article_dt and article_dt < cutoff_dt:
+                    continue
+
+                articles.append({
+                    "title":           title,
+                    "url":             link,
+                    "source":          "SEC 8-K",
+                    "date":            updated,
+                    "source_type":     "filing",
+                    "source_category": "sec",
+                })
     except Exception as e:
         print(f"[TICKER NEWS] SEC {ticker}: {e}")
+
+    articles.sort(key=lambda a: a.get("date", ""), reverse=True)
 
     _ticker_news_cache[ticker] = {"articles": articles, "ts": now}
     return articles
