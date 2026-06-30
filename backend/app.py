@@ -148,9 +148,21 @@ finviz_news_cache      = {}
 finviz_news_cache_time = 0
 _finviz_news_lock      = threading.Lock()
 
-# Per-ticker news cache (Yahoo Finance + SEC 8-K) — independent of pipeline
+# Per-ticker news cache — independent of pipeline
 _ticker_news_cache     = {}   # {ticker: {"articles": [...], "ts": float}}
 _TICKER_NEWS_TTL       = 1800  # 30 minutes
+
+# Global wire-service RSS caches (PR Newswire, BusinessWire)
+_prn_cache      = {"articles": [], "ts": 0.0}
+_prn_lock       = threading.Lock()
+_bw_cache       = {"articles": [], "ts": 0.0}
+_bw_lock        = threading.Lock()
+_WIRE_TTL       = 900   # 15 minutes
+
+# Regex to extract ticker from wire-service titles like "(NASDAQ: TICK)"
+_TICKER_RE = re.compile(
+    r'\b(?:NYSE(?:AMERICAN)?|NASDAQ|AMEX|OTCQX|OTCQB|OTC(?:\s+Pink)?|TSX(?:[^:]{0,10})?):\s*([A-Z]{1,6})\b'
+)
 
 WINDOW_CONFIG = {
     "1m":  {"minutes": 1,     "finviz_param": "i1"},
@@ -487,26 +499,102 @@ def get_finviz_stocks_news() -> dict:
 
 
 def _parse_news_date(date_str: str):
+    if not date_str:
+        return None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%m/%d/%Y %I:%M%p", "%m/%d/%Y"):
         try:
             return datetime.strptime(date_str, fmt)
         except ValueError:
             continue
+    # RFC 822 (RSS pubDate: "Mon, 30 Jun 2026 09:00:00 +0000")
+    try:
+        import email.utils
+        return email.utils.parsedate_to_datetime(date_str).replace(tzinfo=None)
+    except Exception:
+        pass
     return None
+
+
+def _get_wire_articles(url, source_name, cache, lock):
+    """Fetches a global wire-service RSS feed, extracts ticker symbols from titles,
+    caches for _WIRE_TTL seconds. Returns list of article dicts with a 'tickers' set."""
+    now = time.time()
+    with lock:
+        if cache["articles"] and (now - cache["ts"]) < _WIRE_TTL:
+            return cache["articles"]
+
+    try:
+        r = cffi_requests.get(url, impersonate="chrome120", timeout=12)
+        if r.status_code != 200:
+            return cache["articles"]
+        root     = ET.fromstring(r.content)
+        articles = []
+        for item in root.findall(".//item")[:150]:
+            title   = (item.findtext("title")   or "").strip()
+            link    = (item.findtext("link")    or "").strip()
+            pub_raw = (item.findtext("pubDate") or "").strip()
+            tickers = set(_TICKER_RE.findall(title))
+            if not tickers:
+                continue
+            pub_dt  = _parse_news_date(pub_raw)
+            articles.append({
+                "title":   title,
+                "url":     link,
+                "source":  source_name,
+                "date":    pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
+                "date_dt": pub_dt,
+                "tickers": tickers,
+            })
+        with lock:
+            cache["articles"] = articles
+            cache["ts"]       = now
+        return articles
+    except Exception as e:
+        print(f"[WIRE] {source_name} fetch failed: {e}")
+        return cache["articles"]
+
+
+def _get_benzinga_articles(ticker: str) -> list:
+    """Fetches Benzinga's per-ticker RSS feed. Returns list of article dicts."""
+    try:
+        url = f"https://www.benzinga.com/stock/{ticker.lower()}/feed"
+        r   = cffi_requests.get(url, impersonate="chrome120", timeout=10)
+        if r.status_code != 200:
+            return []
+        root     = ET.fromstring(r.content)
+        articles = []
+        for item in root.findall(".//item")[:10]:
+            title   = (item.findtext("title")   or "").strip()
+            link    = (item.findtext("link")    or "").strip()
+            pub_raw = (item.findtext("pubDate") or "").strip()
+            if not title:
+                continue
+            pub_dt = _parse_news_date(pub_raw)
+            articles.append({
+                "title":   title,
+                "url":     link,
+                "source":  "Benzinga",
+                "date":    pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
+                "date_dt": pub_dt,
+            })
+        return articles
+    except Exception as e:
+        print(f"[WIRE] Benzinga {ticker}: {e}")
+        return []
 
 
 def get_ticker_news(ticker: str) -> list:
     """
-    Returns recent news for a ticker, limited to the last 14 days, from:
-      1. Finviz Stocks News — filtered down to PR Newswire, Business Wire,
-         and Benzinga articles, plus anything tagged as an FDA catalyst
-      2. SEC EDGAR 8-K Atom feed — material event filings
+    Returns recent news for a ticker from four sources, each tagged with
+    `source_category` for frontend filtering:
+      pr_newswire  — PR Newswire global RSS, articles mentioning this ticker
+      businesswire — BusinessWire global RSS, articles mentioning this ticker
+      benzinga     — Benzinga per-ticker RSS feed
+      fda          — Finviz Stocks News items with an FDA event tag
+      sec          — SEC EDGAR 8-K filings (no date cutoff)
 
-    Each article carries a `source_category` (pr_newswire, businesswire,
-    benzinga, fda, sec) so the frontend can let users filter by source.
-
-    Cached per ticker for 30 minutes. Fires only when a News View card
-    loads — completely independent of the Stocktwits pipeline.
+    PR Newswire / BusinessWire / Benzinga are limited to the last 14 days.
+    Cached per ticker for 30 minutes.
     """
     now    = time.time()
     cached = _ticker_news_cache.get(ticker)
@@ -516,41 +604,68 @@ def get_ticker_news(ticker: str) -> list:
     articles  = []
     cutoff_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=14)
 
-    # ── 1. Financial newswires + FDA catalysts (from Finviz Stocks News) ──────
-    for item in get_finviz_stocks_news().get(ticker, []):
-        source_lower = (item.get("source") or "").lower()
-        event_type   = item.get("event_type") or ""
-
-        if "pr newswire" in source_lower or "prnewswire" in source_lower:
-            category = "pr_newswire"
-        elif "business wire" in source_lower or "businesswire" in source_lower:
-            category = "businesswire"
-        elif "benzinga" in source_lower:
-            category = "benzinga"
-        elif event_type.startswith("FDA"):
-            category = "fda"
-        else:
+    # ── 1. PR Newswire ────────────────────────────────────────────────────────
+    for item in _get_wire_articles(
+        "https://www.prnewswire.com/rss/news-releases-list.rss",
+        "PR Newswire", _prn_cache, _prn_lock,
+    ):
+        if ticker not in item["tickers"]:
             continue
+        if item["date_dt"] and item["date_dt"] < cutoff_dt:
+            continue
+        articles.append({
+            "title": item["title"], "url": item["url"],
+            "source": item["source"], "date": item["date"],
+            "source_type": "news", "source_category": "pr_newswire",
+        })
 
+    # ── 2. BusinessWire ───────────────────────────────────────────────────────
+    for item in _get_wire_articles(
+        "https://www.businesswire.com/rss/home/20061204005906/en/rss.xml",
+        "Business Wire", _bw_cache, _bw_lock,
+    ):
+        if ticker not in item["tickers"]:
+            continue
+        if item["date_dt"] and item["date_dt"] < cutoff_dt:
+            continue
+        articles.append({
+            "title": item["title"], "url": item["url"],
+            "source": item["source"], "date": item["date"],
+            "source_type": "news", "source_category": "businesswire",
+        })
+
+    # ── 3. Benzinga ───────────────────────────────────────────────────────────
+    for item in _get_benzinga_articles(ticker):
+        if item["date_dt"] and item["date_dt"] < cutoff_dt:
+            continue
+        articles.append({
+            "title": item["title"], "url": item["url"],
+            "source": item["source"], "date": item["date"],
+            "source_type": "news", "source_category": "benzinga",
+        })
+
+    # ── 4. FDA catalysts (from Finviz Stocks News event tags) ────────────────
+    for item in get_finviz_stocks_news().get(ticker, []):
+        if not (item.get("event_type") or "").startswith("FDA"):
+            continue
         article_dt = _parse_news_date(item.get("date", ""))
         if article_dt and article_dt < cutoff_dt:
             continue
-
         articles.append({
             "title":           item.get("title", ""),
             "url":             item.get("url", ""),
             "source":          item.get("source", ""),
             "date":            item.get("date", ""),
             "source_type":     "news",
-            "source_category": category,
+            "source_category": "fda",
         })
 
-    # ── 2. SEC EDGAR 8-K filings ──────────────────────────────────────────────
+    # ── 5. SEC EDGAR 8-K filings (no date cutoff — filings are always relevant)
     try:
         atom_url = (
             f"https://www.sec.gov/cgi-bin/browse-edgar"
             f"?action=getcompany&CIK={ticker}&type=8-K"
-            f"&dateb=&owner=include&count=10&output=atom"
+            f"&dateb=&owner=include&count=5&output=atom"
         )
         r = requests.get(
             atom_url,
@@ -567,7 +682,6 @@ def get_ticker_news(ticker: str) -> list:
                 link    = link_el.get("href", "") if link_el is not None else ""
                 if not title:
                     continue
-
                 articles.append({
                     "title":           title,
                     "url":             link,
@@ -580,7 +694,6 @@ def get_ticker_news(ticker: str) -> list:
         print(f"[TICKER NEWS] SEC {ticker}: {e}")
 
     articles.sort(key=lambda a: a.get("date", ""), reverse=True)
-
     _ticker_news_cache[ticker] = {"articles": articles, "ts": now}
     return articles
 
