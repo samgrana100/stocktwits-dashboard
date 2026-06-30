@@ -560,16 +560,12 @@ def get_ticker_news(ticker: str) -> list:
         if r.status_code == 200 and r.content:
             ns   = {"atom": "http://www.w3.org/2005/Atom"}
             root = ET.fromstring(r.content)
-            for entry in root.findall("atom:entry", ns)[:10]:
+            for entry in root.findall("atom:entry", ns)[:5]:
                 title   = (entry.findtext("atom:title",   "", ns) or "").strip()
                 updated = (entry.findtext("atom:updated", "", ns) or "")[:10]
                 link_el = entry.find("atom:link", ns)
                 link    = link_el.get("href", "") if link_el is not None else ""
                 if not title:
-                    continue
-
-                article_dt = _parse_news_date(updated)
-                if article_dt and article_dt < cutoff_dt:
                     continue
 
                 articles.append({
