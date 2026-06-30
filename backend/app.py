@@ -545,6 +545,7 @@ def _get_wire_articles(url, source_name, cache, lock):
                 "date_dt": pub_dt,
                 "tickers": tickers,
             })
+        print(f"[WIRE] {source_name}: fetched {len(articles)} ticker-tagged articles")
         with lock:
             cache["articles"] = articles
             cache["ts"]       = now
@@ -560,6 +561,7 @@ def _get_benzinga_articles(ticker: str) -> list:
         url = f"https://www.benzinga.com/stock/{ticker.lower()}/feed"
         r   = cffi_requests.get(url, impersonate="chrome120", timeout=10)
         if r.status_code != 200:
+            print(f"[WIRE] Benzinga {ticker}: HTTP {r.status_code}")
             return []
         root     = ET.fromstring(r.content)
         articles = []
@@ -577,6 +579,7 @@ def _get_benzinga_articles(ticker: str) -> list:
                 "date":    pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
                 "date_dt": pub_dt,
             })
+        print(f"[WIRE] Benzinga {ticker}: {len(articles)} articles")
         return articles
     except Exception as e:
         print(f"[WIRE] Benzinga {ticker}: {e}")
