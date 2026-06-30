@@ -8,8 +8,10 @@ import os
 
 load_dotenv()
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGO_URL") or "mongodb://localhost:27017"
 DB_NAME   = os.getenv("MONGO_DB_NAME", "stocktwits_dashboard")
+
+print(f"[DB] MONGO_URI={MONGO_URI[:40]}...")
 
 client = MongoClient(MONGO_URI)
 db     = client[DB_NAME]
