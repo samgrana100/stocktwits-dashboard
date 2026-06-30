@@ -159,9 +159,10 @@ _bw_cache       = {"articles": [], "ts": 0.0}
 _bw_lock        = threading.Lock()
 _WIRE_TTL       = 900   # 15 minutes
 
-# Regex to extract ticker from wire-service titles like "(NASDAQ: TICK)"
+# Matches "(NYSE: TICK)", "(Nasdaq: TICK)", "(OTC: TICK)", or "$TICK"
 _TICKER_RE = re.compile(
-    r'\b(?:NYSE(?:AMERICAN)?|NASDAQ|AMEX|OTCQX|OTCQB|OTC(?:\s+Pink)?|TSX(?:[^:]{0,10})?):\s*([A-Z]{1,6})\b'
+    r'(?:(?:NYSE(?:AMERICAN)?|NASDAQ|AMEX|OTCQX|OTCQB|OTC(?:[^:]{0,8})?|TSX)[:\s]+|\$)([A-Z]{1,6})\b',
+    re.IGNORECASE,
 )
 
 WINDOW_CONFIG = {
@@ -529,13 +530,24 @@ def _get_wire_articles(url, source_name, cache, lock):
             print(f"[WIRE] {source_name}: HTTP {r.status_code}")
             return cache["articles"]
         root  = ET.fromstring(r.content)
-        items = root.findall(".//item")
+        # Support both RSS (<item>) and Atom (<entry>) feed formats
+        items = root.findall(".//item") or root.findall(".//entry")
         articles = []
         for item in items[:200]:
-            title   = (item.findtext("title")   or "").strip()
-            link    = (item.findtext("link")    or "").strip()
-            pub_raw = (item.findtext("pubDate") or "").strip()
-            tickers = set(_TICKER_RE.findall(title))
+            title   = (item.findtext("title") or "").strip()
+            # RSS: <link>url</link>  |  Atom: <link href="url"/>
+            link = (item.findtext("link") or "").strip()
+            if not link:
+                link_el = item.find("link")
+                if link_el is not None:
+                    link = link_el.get("href", "")
+            # RSS: <pubDate>  |  Atom: <updated> or <published>
+            pub_raw = (
+                item.findtext("pubDate") or
+                item.findtext("updated") or
+                item.findtext("published") or ""
+            ).strip()
+            tickers = set(m.upper() for m in _TICKER_RE.findall(title))
             if not tickers:
                 continue
             pub_dt = _parse_news_date(pub_raw)
