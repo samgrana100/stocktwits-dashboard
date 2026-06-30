@@ -520,23 +520,25 @@ def _get_wire_articles(url, source_name, cache, lock):
     caches for _WIRE_TTL seconds. Returns list of article dicts with a 'tickers' set."""
     now = time.time()
     with lock:
-        if cache["articles"] and (now - cache["ts"]) < _WIRE_TTL:
+        if cache["ts"] > 0 and (now - cache["ts"]) < _WIRE_TTL:
             return cache["articles"]
 
     try:
-        r = cffi_requests.get(url, impersonate="chrome120", timeout=12)
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
         if r.status_code != 200:
+            print(f"[WIRE] {source_name}: HTTP {r.status_code}")
             return cache["articles"]
-        root     = ET.fromstring(r.content)
+        root  = ET.fromstring(r.content)
+        items = root.findall(".//item")
         articles = []
-        for item in root.findall(".//item")[:150]:
+        for item in items[:200]:
             title   = (item.findtext("title")   or "").strip()
             link    = (item.findtext("link")    or "").strip()
             pub_raw = (item.findtext("pubDate") or "").strip()
             tickers = set(_TICKER_RE.findall(title))
             if not tickers:
                 continue
-            pub_dt  = _parse_news_date(pub_raw)
+            pub_dt = _parse_news_date(pub_raw)
             articles.append({
                 "title":   title,
                 "url":     link,
@@ -545,7 +547,7 @@ def _get_wire_articles(url, source_name, cache, lock):
                 "date_dt": pub_dt,
                 "tickers": tickers,
             })
-        print(f"[WIRE] {source_name}: fetched {len(articles)} ticker-tagged articles")
+        print(f"[WIRE] {source_name}: {len(items)} items in feed, {len(articles)} ticker-tagged")
         with lock:
             cache["articles"] = articles
             cache["ts"]       = now
@@ -555,35 +557,18 @@ def _get_wire_articles(url, source_name, cache, lock):
         return cache["articles"]
 
 
+# Global Benzinga RSS cache (same pattern as PRN/BW)
+_bzn_cache = {"articles": [], "ts": 0.0}
+_bzn_lock  = threading.Lock()
+
+
 def _get_benzinga_articles(ticker: str) -> list:
-    """Fetches Benzinga's per-ticker RSS feed. Returns list of article dicts."""
-    try:
-        url = f"https://www.benzinga.com/stock/{ticker.lower()}/feed"
-        r   = cffi_requests.get(url, impersonate="chrome120", timeout=10)
-        if r.status_code != 200:
-            print(f"[WIRE] Benzinga {ticker}: HTTP {r.status_code}")
-            return []
-        root     = ET.fromstring(r.content)
-        articles = []
-        for item in root.findall(".//item")[:10]:
-            title   = (item.findtext("title")   or "").strip()
-            link    = (item.findtext("link")    or "").strip()
-            pub_raw = (item.findtext("pubDate") or "").strip()
-            if not title:
-                continue
-            pub_dt = _parse_news_date(pub_raw)
-            articles.append({
-                "title":   title,
-                "url":     link,
-                "source":  "Benzinga",
-                "date":    pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
-                "date_dt": pub_dt,
-            })
-        print(f"[WIRE] Benzinga {ticker}: {len(articles)} articles")
-        return articles
-    except Exception as e:
-        print(f"[WIRE] Benzinga {ticker}: {e}")
-        return []
+    """Filters the global Benzinga RSS cache for articles mentioning this ticker."""
+    all_articles = _get_wire_articles(
+        "https://feeds.benzinga.com/benzinga",
+        "Benzinga", _bzn_cache, _bzn_lock,
+    )
+    return [a for a in all_articles if ticker in a["tickers"]]
 
 
 def get_ticker_news(ticker: str) -> list:
