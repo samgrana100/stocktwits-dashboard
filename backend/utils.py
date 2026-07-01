@@ -77,9 +77,8 @@ def load_tickers_from_finviz() -> list:
     Falls back to local CSV if the fetch fails.
     """
 
-    # Re-read from .env on every call so a refreshed token written by app.py
-    # is picked up without restarting the process.
-    load_dotenv(override=True)
+    # Read from environment — app.py writes the refreshed token to os.environ,
+    # so os.getenv picks up the latest value without re-reading the file.
     token      = os.getenv("FINVIZ_API_TOKEN",  "") or FINVIZ_API_TOKEN
     export_url = os.getenv("FINVIZ_EXPORT_URL", "") or FINVIZ_EXPORT_URL
 

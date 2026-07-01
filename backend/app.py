@@ -35,6 +35,7 @@ FINVIZ_API_TOKEN  = os.getenv("FINVIZ_API_TOKEN", "")
 FINVIZ_EXPORT_URL = os.getenv("FINVIZ_EXPORT_URL", "")
 _FINVIZ_EMAIL    = os.getenv("FINVIZ_EMAIL", "")
 _FINVIZ_PASSWORD = os.getenv("FINVIZ_PASSWORD", "")
+FINNHUB_API_KEY  = os.getenv("FINNHUB_API_KEY", "")
 
 _token_refresh_lock  = threading.Lock()
 _last_token_refresh  = 0.0
@@ -90,26 +91,27 @@ def refresh_finviz_token() -> bool:
 
             new_token = token_match.group(1).lower()
             if new_token == FINVIZ_API_TOKEN:
-                print(f"[TOKEN] Token is current ({new_token[:8]}…)")
+                print(f"[TOKEN] Token is current ({new_token[:8]}...)")
                 return True
 
             FINVIZ_API_TOKEN = new_token
             os.environ["FINVIZ_API_TOKEN"] = new_token
-            print(f"[TOKEN] Refreshed token → {new_token[:8]}…")
+            print(f"[TOKEN] Refreshed token -> {new_token[:8]}...")
 
             # Skip .env rewrite on Railway — filesystem is ephemeral there.
             # In-memory hot-swap above is sufficient for the current process.
             if not os.getenv("RAILWAY_ENVIRONMENT"):
                 env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
                 try:
-                    with open(env_path, "r") as f:
+                    with open(env_path, "r", encoding="utf-8") as f:
                         env_lines = f.readlines()
-                    with open(env_path, "w") as f:
+                    with open(env_path, "w", encoding="utf-8") as f:
                         for line in env_lines:
                             if line.startswith("FINVIZ_API_TOKEN="):
                                 f.write(f"FINVIZ_API_TOKEN={new_token}\n")
                             else:
                                 f.write(line)
+                    print(f"[TOKEN] Updated .env with new token.")
                 except Exception as e:
                     print(f"[TOKEN] Could not write .env: {e}")
 
@@ -152,18 +154,6 @@ _finviz_news_lock      = threading.Lock()
 _ticker_news_cache     = {}   # {ticker: {"articles": [...], "ts": float}}
 _TICKER_NEWS_TTL       = 1800  # 30 minutes
 
-# Global wire-service RSS caches (PR Newswire, BusinessWire)
-_prn_cache      = {"articles": [], "ts": 0.0}
-_prn_lock       = threading.Lock()
-_bw_cache       = {"articles": [], "ts": 0.0}
-_bw_lock        = threading.Lock()
-_WIRE_TTL       = 900   # 15 minutes
-
-# Matches "(NYSE: TICK)", "(Nasdaq: TICK)", "(OTC: TICK)", or "$TICK"
-_TICKER_RE = re.compile(
-    r'(?:(?:NYSE(?:AMERICAN)?|NASDAQ|AMEX|OTCQX|OTCQB|OTC(?:[^:]{0,8})?|TSX)[:\s]+|\$)([A-Z]{1,6})\b',
-    re.IGNORECASE,
-)
 
 WINDOW_CONFIG = {
     "1m":  {"minutes": 1,     "finviz_param": "i1"},
@@ -516,86 +506,128 @@ def _parse_news_date(date_str: str):
     return None
 
 
-def _get_wire_articles(url, source_name, cache, lock):
-    """Fetches a global wire-service RSS feed, extracts ticker symbols from titles,
-    caches for _WIRE_TTL seconds. Returns list of article dicts with a 'tickers' set."""
-    now = time.time()
-    with lock:
-        if cache["ts"] > 0 and (now - cache["ts"]) < _WIRE_TTL:
-            return cache["articles"]
+# Strips law-firm / investor-alert noise from wire service results
+_WIRE_NOISE_RE = re.compile(
+    r'DEADLINE ALERT|SHAREHOLDER ALERT|CLASS ACTION|Law Offices|'
+    r'Announces Investigation|ALERT:|NOTICE:|INVESTIGATION NOTICE|'
+    r'Reminds Investors|Pomerantz|Edelson|Kahn Swick|Bragar Eagel|Frank R\. Cruz',
+    re.IGNORECASE,
+)
 
+# Exchange prefix patterns for per-ticker wire search
+_WIRE_EXCHANGE_PATTERNS = [
+    "NYSE", "NASDAQ", "AMEX", "OTC", "OTCQB", "OTCQX",
+]
+
+
+def _get_globenewswire_news(ticker: str) -> list:
+    """Fetches GlobeNewswire press releases for a ticker via keyword RSS."""
     try:
-        r = cffi_requests.get(url, impersonate="chrome120", timeout=15)
+        url = f"https://www.globenewswire.com/RssFeed/keyword/{ticker}"
+        r   = requests.get(
+            url,
+            headers={"User-Agent": "stocktwits-dashboard samgrana100@gmail.com"},
+            timeout=10,
+        )
         if r.status_code != 200:
-            print(f"[WIRE] {source_name}: HTTP {r.status_code}")
-            return cache["articles"]
+            print(f"[GNW] HTTP {r.status_code} for {ticker}")
+            return []
         root  = ET.fromstring(r.content)
-        # Support both RSS (<item>) and Atom (<entry>) feed formats
         items = root.findall(".//item") or root.findall(".//entry")
         articles = []
-        for item in items[:200]:
-            title   = (item.findtext("title") or "").strip()
-            # RSS: <link>url</link>  |  Atom: <link href="url"/>
-            link = (item.findtext("link") or "").strip()
-            if not link:
-                link_el = item.find("link")
-                if link_el is not None:
-                    link = link_el.get("href", "")
-            # RSS: <pubDate>  |  Atom: <updated> or <published>
-            pub_raw = (
-                item.findtext("pubDate") or
-                item.findtext("updated") or
-                item.findtext("published") or ""
-            ).strip()
-            tickers = set(m.upper() for m in _TICKER_RE.findall(title))
-            if not tickers:
+        for item in items:
+            title = (item.findtext("title") or "").strip()
+            if _WIRE_NOISE_RE.search(title):
                 continue
-            pub_dt = _parse_news_date(pub_raw)
+            link    = (item.findtext("link") or "").strip()
+            pub_raw = (item.findtext("pubDate") or item.findtext("updated") or "").strip()
+            pub_dt  = _parse_news_date(pub_raw)
             articles.append({
-                "title":   title,
-                "url":     link,
-                "source":  source_name,
-                "date":    pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
-                "date_dt": pub_dt,
-                "tickers": tickers,
+                "title":           title,
+                "url":             link,
+                "source":          "GlobeNewswire",
+                "date":            pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
+                "source_type":     "news",
+                "source_category": "globenewswire",
             })
-        sample = [item.findtext("title") or "" for item in items[:3]]
-        print(f"[WIRE] {source_name}: {len(items)} items in feed, {len(articles)} ticker-tagged | sample: {sample}")
-
-        with lock:
-            cache["articles"] = articles
-            cache["ts"]       = now
+        print(f"[GNW] {ticker}: {len(articles)} articles")
         return articles
     except Exception as e:
-        print(f"[WIRE] {source_name} fetch failed: {e}")
-        return cache["articles"]
+        print(f"[GNW] {ticker} failed: {e}")
+        return []
 
 
-# Global Benzinga RSS cache (same pattern as PRN/BW)
-_bzn_cache = {"articles": [], "ts": 0.0}
-_bzn_lock  = threading.Lock()
-
-
-def _get_benzinga_articles(ticker: str) -> list:
-    """Filters the global Benzinga RSS cache for articles mentioning this ticker."""
-    all_articles = _get_wire_articles(
-        "https://www.benzinga.com/feed",
-        "Benzinga", _bzn_cache, _bzn_lock,
+def _get_wire_news_via_google(ticker: str) -> list:
+    """
+    Searches Google News for PR Newswire and Business Wire press releases that
+    mention a specific ticker in exchange-prefix format: (NASDAQ: TICK).
+    Returns articles tagged pr_newswire or businesswire based on source.
+    """
+    q_parts = " OR ".join(
+        f'"{ex}: {ticker}"' for ex in _WIRE_EXCHANGE_PATTERNS
     )
-    return [a for a in all_articles if ticker in a["tickers"]]
+    query = f"(site:prnewswire.com OR site:businesswire.com) ({q_parts})"
+    url   = (
+        "https://news.google.com/rss/search"
+        f"?q={requests.utils.quote(query)}&hl=en-US&gl=US&ceid=US:en"
+    )
+    try:
+        r = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=12)
+        if r.status_code != 200:
+            print(f"[WIRE-GOOGLE] HTTP {r.status_code} for {ticker}")
+            return []
+        root  = ET.fromstring(r.content)
+        items = root.findall(".//item")
+        articles = []
+        for item in items:
+            title = (item.findtext("title") or "").strip()
+            if _WIRE_NOISE_RE.search(title):
+                continue
+            # Determine source from title suffix added by Google News
+            title_lower = title.lower()
+            if "business wire" in title_lower or "businesswire" in title_lower:
+                source_category = "businesswire"
+                source_label    = "Business Wire"
+            else:
+                source_category = "pr_newswire"
+                source_label    = "PR Newswire"
+            # Strip " - PR Newswire" / " - Business Wire" suffix Google appends
+            title = re.sub(
+                r"\s+-\s+(?:PR Newswire|Business Wire|BusinessWire)$", "", title
+            ).strip()
+            link    = (item.findtext("link") or "").strip()
+            pub_raw = (item.findtext("pubDate") or "").strip()
+            pub_dt  = _parse_news_date(pub_raw)
+            articles.append({
+                "title":           title,
+                "url":             link,
+                "source":          source_label,
+                "date":            pub_dt.strftime("%Y-%m-%d") if pub_dt else "",
+                "date_dt":         pub_dt,
+                "source_type":     "news",
+                "source_category": source_category,
+            })
+        prn = sum(1 for a in articles if a["source_category"] == "pr_newswire")
+        bw  = sum(1 for a in articles if a["source_category"] == "businesswire")
+        print(f"[WIRE-GOOGLE] {ticker}: {prn} PRN, {bw} BW articles")
+        return articles
+    except Exception as e:
+        print(f"[WIRE-GOOGLE] {ticker} failed: {e}")
+        return []
 
 
 def get_ticker_news(ticker: str) -> list:
     """
-    Returns recent news for a ticker from four sources, each tagged with
+    Returns recent news for a ticker from five sources, each tagged with
     `source_category` for frontend filtering:
-      pr_newswire  — PR Newswire global RSS, articles mentioning this ticker
-      businesswire — BusinessWire global RSS, articles mentioning this ticker
-      benzinga     — Benzinga per-ticker RSS feed
-      fda          — Finviz Stocks News items with an FDA event tag
-      sec          — SEC EDGAR 8-K filings (no date cutoff)
+      pr_newswire   — PR Newswire articles (via Google News search)
+      businesswire  — Business Wire articles (via Google News search)
+      globenewswire — GlobeNewswire press releases (direct RSS)
+      benzinga      — Benzinga articles via Finnhub
+      fda           — Finviz Stocks News items with an FDA event tag
+      sec           — SEC EDGAR 8-K filings (no date cutoff)
 
-    PR Newswire / BusinessWire / Benzinga are limited to the last 14 days.
+    Wire/Benzinga articles limited to the last 14 days.
     Cached per ticker for 30 minutes.
     """
     now    = time.time()
@@ -604,49 +636,55 @@ def get_ticker_news(ticker: str) -> list:
         return cached["articles"]
 
     articles  = []
-    cutoff_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=14)
+    cutoff_dt = datetime.now() - timedelta(days=14)
 
-    # ── 1. PR Newswire ────────────────────────────────────────────────────────
-    for item in _get_wire_articles(
-        "https://www.prnewswire.com/rss/financial-news-list.rss",
-        "PR Newswire", _prn_cache, _prn_lock,
-    ):
-        if ticker not in item["tickers"]:
+    # ── 1. PR Newswire + Business Wire via Google News per-ticker search
+    for item in _get_wire_news_via_google(ticker):
+        if not item["date_dt"] or item["date_dt"] < cutoff_dt:
             continue
-        if item["date_dt"] and item["date_dt"] < cutoff_dt:
-            continue
-        articles.append({
-            "title": item["title"], "url": item["url"],
-            "source": item["source"], "date": item["date"],
-            "source_type": "news", "source_category": "pr_newswire",
-        })
+        articles.append({k: v for k, v in item.items() if k != "date_dt"})
 
-    # ── 2. BusinessWire ───────────────────────────────────────────────────────
-    for item in _get_wire_articles(
-        "https://feed.businesswire.com/rss/home/20061204005906/en/rss.xml",
-        "Business Wire", _bw_cache, _bw_lock,
-    ):
-        if ticker not in item["tickers"]:
+    # ── 2. GlobeNewswire press releases
+    for item in _get_globenewswire_news(ticker):
+        pub_dt = _parse_news_date(item["date"])
+        if not pub_dt or pub_dt < cutoff_dt:
             continue
-        if item["date_dt"] and item["date_dt"] < cutoff_dt:
-            continue
-        articles.append({
-            "title": item["title"], "url": item["url"],
-            "source": item["source"], "date": item["date"],
-            "source_type": "news", "source_category": "businesswire",
-        })
+        articles.append(item)
 
-    # ── 3. Benzinga ───────────────────────────────────────────────────────────
-    for item in _get_benzinga_articles(ticker):
-        if item["date_dt"] and item["date_dt"] < cutoff_dt:
-            continue
-        articles.append({
-            "title": item["title"], "url": item["url"],
-            "source": item["source"], "date": item["date"],
-            "source_type": "news", "source_category": "benzinga",
-        })
+    # ── 3. Benzinga via Finnhub (filter to Benzinga only — skip Yahoo/CNBC/etc.)
+    if FINNHUB_API_KEY:
+        try:
+            to_date   = datetime.now().strftime("%Y-%m-%d")
+            from_date = cutoff_dt.strftime("%Y-%m-%d")
+            url = (
+                "https://finnhub.io/api/v1/company-news"
+                f"?symbol={ticker}&from={from_date}&to={to_date}"
+                f"&token={FINNHUB_API_KEY}"
+            )
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                bzn_count = 0
+                for item in r.json():
+                    source = item.get("source", "")
+                    if "benzinga" not in source.lower():
+                        continue
+                    dt = datetime.fromtimestamp(item.get("datetime", 0))
+                    articles.append({
+                        "title":           item.get("headline", "").strip(),
+                        "url":             item.get("url", ""),
+                        "source":          source,
+                        "date":            dt.strftime("%Y-%m-%d"),
+                        "source_type":     "news",
+                        "source_category": "benzinga",
+                    })
+                    bzn_count += 1
+                print(f"[FINNHUB] {ticker}: {bzn_count} Benzinga articles")
+            else:
+                print(f"[FINNHUB] HTTP {r.status_code} for {ticker}")
+        except Exception as e:
+            print(f"[FINNHUB] Failed for {ticker}: {e}")
 
-    # ── 4. FDA catalysts (from Finviz Stocks News event tags) ────────────────
+    # ── 2. FDA catalysts (from Finviz Stocks News event tags) ────────────────
     for item in get_finviz_stocks_news().get(ticker, []):
         if not (item.get("event_type") or "").startswith("FDA"):
             continue
@@ -662,7 +700,7 @@ def get_ticker_news(ticker: str) -> list:
             "source_category": "fda",
         })
 
-    # ── 5. SEC EDGAR 8-K filings (no date cutoff — filings are always relevant)
+    # ── 3. SEC EDGAR 8-K filings (no date cutoff — filings are always relevant)
     try:
         atom_url = (
             f"https://www.sec.gov/cgi-bin/browse-edgar"

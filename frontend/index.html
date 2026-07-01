@@ -521,6 +521,14 @@
       padding: 5px 0; border-bottom: 1px solid var(--border-faint);
     }
     .news-recent-item:last-child { border-bottom: none; }
+    .news-recent-item.collapsed   { display: none; }
+    .news-view-more-btn {
+      margin-top: 6px; padding: 3px 10px; font-size: 11px;
+      background: transparent; border: 1px solid var(--border-mid);
+      border-radius: var(--r-sm); color: var(--text-muted);
+      cursor: pointer; transition: all var(--t-fast);
+    }
+    .news-view-more-btn:hover { border-color: var(--blue); color: var(--blue); }
     .news-recent-item a {
       font-size: 12px; color: var(--text-primary); text-decoration: none;
       line-height: 1.4; display: block;
@@ -534,11 +542,12 @@
       font-size: 9px; font-weight: 600; border-radius: 4px;
       padding: 1px 6px; letter-spacing: 0.04em; border: 1px solid;
     }
-    .news-source-tag-pr_newswire  { color: #a855f7; background: rgba(168,85,247,0.08); border-color: rgba(168,85,247,0.25); }
-    .news-source-tag-businesswire { color: #06b6d4; background: rgba(6,182,212,0.08);  border-color: rgba(6,182,212,0.25); }
-    .news-source-tag-benzinga     { color: #eab308; background: rgba(234,179,8,0.08);  border-color: rgba(234,179,8,0.25); }
-    .news-source-tag-fda          { color: #ef4444; background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.25); }
-    .news-source-tag-sec          { color: #f97316; background: rgba(249,115,22,0.08); border-color: rgba(249,115,22,0.25); }
+    .news-source-tag-pr_newswire   { color: #a855f7; background: rgba(168,85,247,0.08); border-color: rgba(168,85,247,0.25); }
+    .news-source-tag-businesswire  { color: #06b6d4; background: rgba(6,182,212,0.08);  border-color: rgba(6,182,212,0.25); }
+    .news-source-tag-globenewswire { color: #22c55e; background: rgba(34,197,94,0.08);  border-color: rgba(34,197,94,0.25); }
+    .news-source-tag-benzinga      { color: #eab308; background: rgba(234,179,8,0.08);  border-color: rgba(234,179,8,0.25); }
+    .news-source-tag-fda           { color: #ef4444; background: rgba(239,68,68,0.08);  border-color: rgba(239,68,68,0.25); }
+    .news-source-tag-sec           { color: #f97316; background: rgba(249,115,22,0.08); border-color: rgba(249,115,22,0.25); }
 
     /* ── EVENT MESSAGE POPOVER ── */
     #event-msg-popover {
@@ -657,7 +666,7 @@
     .news-msg-time { color: var(--text-muted); font-size: 10px; margin-bottom: 3px; }
     .news-msg-body { color: var(--text-secondary); font-size: 12px; line-height: 1.45; word-break: break-word; }
 
-    .news-view-btn {
+    .news-view-btn, .guide-btn {
       height: 28px; padding: 0 12px;
       border: 1px solid var(--border-mid);
       border-radius: var(--r-sm);
@@ -668,6 +677,50 @@
     }
     .news-view-btn:hover  { border-color: var(--blue); color: var(--text-primary); }
     .news-view-btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+    .guide-btn:hover  { border-color: #a855f7; color: var(--text-primary); }
+    .guide-btn.active { background: rgba(168,85,247,0.12); border-color: #a855f7; color: #a855f7; }
+
+    /* ── GUIDE VIEW ── */
+    .guide-view { display: none; overflow-y: auto; padding: 20px 24px 40px; background: var(--bg-base); }
+    .guide-view.active { display: block; }
+
+    .guide-inner { max-width: 960px; margin: 0 auto; }
+
+    .guide-hero { text-align: center; margin-bottom: 36px; padding: 32px 20px 28px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-lg); }
+    .guide-hero-title { font-size: 22px; font-weight: 700; color: #fff; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .guide-hero-sub   { font-size: 13px; color: var(--text-muted); }
+
+    .guide-section { margin-bottom: 32px; }
+    .guide-section-title { font-size: 15px; font-weight: 700; color: #fff; border-left: 3px solid #a855f7; padding-left: 10px; margin-bottom: 12px; }
+    .guide-p { font-size: 13px; color: var(--text-secondary); line-height: 1.65; margin: 0 0 10px; }
+    .guide-p strong { color: var(--text-primary); }
+    .guide-p em { color: #a855f7; font-style: normal; font-weight: 600; }
+
+    .guide-flow-row { display: flex; align-items: flex-start; gap: 6px; flex-wrap: wrap; }
+    .guide-flow-step { flex: 1; min-width: 140px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-md); padding: 14px 12px; }
+    .guide-flow-icon  { width: 26px; height: 26px; border-radius: 50%; background: rgba(168,85,247,0.15); border: 1px solid rgba(168,85,247,0.3); color: #a855f7; font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+    .guide-flow-label { font-size: 12px; font-weight: 700; color: var(--text-primary); margin-bottom: 5px; }
+    .guide-flow-desc  { font-size: 11px; color: var(--text-muted); line-height: 1.5; }
+    .guide-flow-arrow { color: var(--text-muted); font-size: 18px; margin-top: 28px; flex-shrink: 0; }
+
+    .guide-score-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+    .guide-score-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-md); padding: 14px; }
+    .guide-score-card.guide-score-composite { border-color: rgba(168,85,247,0.3); background: rgba(168,85,247,0.05); }
+    .guide-score-name { font-size: 13px; font-weight: 700; color: #fff; margin-bottom: 6px; }
+    .guide-score-desc { font-size: 12px; color: var(--text-muted); line-height: 1.55; }
+
+    .guide-tag-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .guide-etag { font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 4px; border: 1px solid; letter-spacing: 0.3px; }
+    .guide-etag-fda      { color: #ef4444; background: rgba(239,68,68,0.08);   border-color: rgba(239,68,68,0.25); }
+    .guide-etag-earnings { color: #22c55e; background: rgba(34,197,94,0.08);   border-color: rgba(34,197,94,0.25); }
+    .guide-etag-merger   { color: #3b82f6; background: rgba(59,130,246,0.08);  border-color: rgba(59,130,246,0.25); }
+    .guide-etag-clinical { color: #f97316; background: rgba(249,115,22,0.08);  border-color: rgba(249,115,22,0.25); }
+    .guide-etag-squeeze  { color: #eab308; background: rgba(234,179,8,0.08);   border-color: rgba(234,179,8,0.25); }
+
+    .guide-sources { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+    .guide-source-row { display: flex; align-items: flex-start; gap: 14px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--r-md); padding: 12px 14px; }
+    .guide-source-desc { font-size: 12px; color: var(--text-muted); line-height: 1.55; flex: 1; }
+    .guide-source-row .news-source-tag { font-size: 10px; padding: 3px 8px; white-space: nowrap; align-self: center; min-width: 110px; text-align: center; flex-shrink: 0; }
 
     .news-empty { text-align: center; padding: 60px 20px; color: var(--text-muted); font-size: 13px; }
 
@@ -711,6 +764,7 @@
     <button class="window-btn" onclick="setWindow('1w',this)">1w</button>
     <button class="window-btn" onclick="setWindow('1mo',this)">1mo</button>
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
+    <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
     <button class="pipeline-btn start" id="pipeline-btn" onclick="togglePipeline()">Start Pipeline</button>
   </div>
@@ -850,11 +904,133 @@
     <span class="news-source-filter-label">News sources:</span>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('pr_newswire',this)">PR Newswire</button>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('businesswire',this)">Business Wire</button>
+    <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('globenewswire',this)">GlobeNewswire</button>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('benzinga',this)">Benzinga</button>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('fda',this)">FDA</button>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('sec',this)">SEC</button>
   </div>
   <div id="news-ticker-list"></div>
+</div>
+
+<div id="guide-view" class="guide-view">
+  <div class="guide-inner">
+
+    <div class="guide-hero">
+      <div class="guide-hero-title">Stocktwits Sentiment Dashboard</div>
+      <div class="guide-hero-sub">Built by Samuel Grana &nbsp;·&nbsp; Supervised by Dr. Kaamran Raahemifar</div>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">What This Is</div>
+      <p class="guide-p">This dashboard monitors real-time social sentiment from Stocktwits to detect momentum shifts in small-cap and OTC stocks. It combines crowd psychology from social media with AI financial NLP and official regulatory disclosures to give a complete picture of market activity around any screened ticker.</p>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">How Data Flows</div>
+      <div class="guide-flow-row">
+        <div class="guide-flow-step"><div class="guide-flow-icon">1</div><div class="guide-flow-label">Finviz Elite Screener</div><div class="guide-flow-desc">Provides the live ticker list. The screener filters for high relative volume and momentum — only stocks with unusual activity appear.</div></div>
+        <div class="guide-flow-arrow">&#x2192;</div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">2</div><div class="guide-flow-label">Pipeline</div><div class="guide-flow-desc">Fetches the 30 most recent Stocktwits messages per ticker every 90 seconds. Click "Start Pipeline" to run it.</div></div>
+        <div class="guide-flow-arrow">&#x2192;</div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">3</div><div class="guide-flow-label">FinBERT AI Scoring</div><div class="guide-flow-desc">Each message is passed through FinBERT, a financial NLP model trained on analyst reports and earnings calls, which scores sentiment as bullish or bearish.</div></div>
+        <div class="guide-flow-arrow">&#x2192;</div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">4</div><div class="guide-flow-label">MongoDB</div><div class="guide-flow-desc">Stores all scored messages. The dashboard queries this in real time.</div></div>
+        <div class="guide-flow-arrow">&#x2192;</div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">5</div><div class="guide-flow-label">Dashboard</div><div class="guide-flow-desc">Tickers are ranked by composite score, with charts, news, and event tags updating live.</div></div>
+      </div>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">Score System</div>
+      <p class="guide-p">Every Stocktwits message produces three scores that are combined into one ranking signal.</p>
+      <div class="guide-score-grid">
+        <div class="guide-score-card">
+          <div class="guide-score-name">Sentiment</div>
+          <div class="guide-score-desc">Raw FinBERT output — how bullish or bearish the message language is. Range: &minus;1 to +1. Positive means bullish.</div>
+        </div>
+        <div class="guide-score-card">
+          <div class="guide-score-name">Trust</div>
+          <div class="guide-score-desc">Weighted by the poster's follower count, number of ideas published, and account classification. Higher-credibility posters are weighted more.</div>
+        </div>
+        <div class="guide-score-card">
+          <div class="guide-score-name">Impact</div>
+          <div class="guide-score-desc">Weighted by whether the message contains an event keyword (FDA, earnings, merger, etc.) and engagement signals like likes and replies.</div>
+        </div>
+        <div class="guide-score-card guide-score-composite">
+          <div class="guide-score-name">Composite</div>
+          <div class="guide-score-desc">Combined weighted average of Sentiment &times; Trust &times; Impact across all messages in the selected time window. This is the primary ranking column in the main table.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">Event Tags — Extracted From Stocktwits Messages</div>
+      <p class="guide-p">Event tags are automatically detected from the text of Stocktwits messages. When a user writes "$BCRX FDA approval imminent", the system finds keywords and classifies the message with an event tag. These tags appear as colored markers on the score chart inside the detail popup, so you can see exactly what the crowd was reacting to and when.</p>
+      <div class="guide-tag-row">
+        <span class="guide-etag guide-etag-fda">FDA Approval / Rejection / PDUFA</span>
+        <span class="guide-etag guide-etag-earnings">Earnings Beat / Miss</span>
+        <span class="guide-etag guide-etag-merger">Merger / Acquisition</span>
+        <span class="guide-etag guide-etag-clinical">Clinical Trial Results</span>
+        <span class="guide-etag guide-etag-squeeze">Short Squeeze</span>
+      </div>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">News View — Confirming the Signal</div>
+      <p class="guide-p">Switch to <strong>News View</strong> to see all screener tickers as cards, each with a mini price chart, current composite score, recent Stocktwits messages, and recent news articles. The news articles are <em>not</em> the source of the sentiment signal — they exist to <strong>confirm</strong> what Stocktwits users are already talking about. If the crowd is bullish and a legitimate press release just went out, that agreement between social sentiment and official news is a much stronger signal than either source alone.</p>
+      <p class="guide-p">All news sources listed below have an editorial or regulatory standard they are required to follow, which is why they were chosen over general financial media.</p>
+      <div class="guide-sources">
+        <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-pr_newswire">PR Newswire</span>
+          <div class="guide-source-desc">A regulated paid wire distribution service. Companies must verify their identity and take legal responsibility for the accuracy of press releases they distribute here. Fetched via a Google News search scoped to prnewswire.com.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-businesswire">Business Wire</span>
+          <div class="guide-source-desc">Same category as PR Newswire — a Berkshire Hathaway-owned paid press release distribution service used by publicly traded companies for official announcements. Also fetched via Google News.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-globenewswire">GlobeNewswire</span>
+          <div class="guide-source-desc">Nasdaq's official wire service for press releases. Companies listed on Nasdaq often use GlobeNewswire as their primary distribution channel. Fetched via direct RSS by ticker keyword.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-benzinga">Benzinga</span>
+          <div class="guide-source-desc">Professional financial news outlet covering analyst ratings upgrades/downgrades, earnings previews, and market-moving stories. Fetched via the Finnhub API — only Benzinga articles are shown, not tabloid sources.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-fda">FDA</span>
+          <div class="guide-source-desc">FDA-related news items detected from Finviz Stocks News. Shows upcoming PDUFA decision dates and approval or rejection events for biotech and pharma tickers.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-sec">SEC 8-K</span>
+          <div class="guide-source-desc">Legally required SEC filings for material events. When a public company issues any significant press release, they are required by law to file an 8-K within four business days. This is the most authoritative confirmation source because it carries SEC oversight. Fetched directly from EDGAR with no date cutoff.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">Main Table</div>
+      <p class="guide-p">Every ticker returned by your Finviz screener appears here, ranked by composite sentiment score descending. Tickers that have received no Stocktwits messages in the current time window collapse into a "No Recent Messages" section at the bottom. Click any ticker row to open the detail popup, which shows a full price chart with event markers, the score history chart, message density over time, and all raw messages from the window.</p>
+      <p class="guide-p"><strong>Sorting</strong> — Click any column header to re-sort the table by that column. Click again to reverse the sort direction. You can sort by composite score, price change, message count, market cap, or any other visible column.</p>
+      <p class="guide-p"><strong>Thresholds (Filter Bar)</strong> — The filter bar below the metrics row lets you narrow the table by minimum average volume, price change direction (up only / down only), and minimum message count. Adjust these to focus on only the tickers meeting your criteria. Filters apply instantly without reloading data.</p>
+      <p class="guide-p"><strong>Rolling Window</strong> — The time window buttons in the top bar (1m · 3m · 5m · 15m · 30m · 1h · 4h · 1d · 1w · 1mo) control how far back messages are included in all score calculations. A 1h window scores only messages from the last hour; a 1d window covers the full trading day. Shorter windows react faster to breaking news; longer windows smooth out noise. The price chart range on every ticker card in News View also matches the selected window.</p>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">Signals Panel</div>
+      <p class="guide-p">Click the <strong>Signals</strong> button in the top bar to open the side panel. It shows the highest-impact Stocktwits messages in real time across all screener tickers — individual posts that received the highest composite scores. Use it to quickly spot what specific catalysts or claims are driving sentiment on any ticker without opening each detail popup.</p>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">PDUFA &amp; Earnings Catalysts</div>
+      <p class="guide-p">The dashboard tracks upcoming FDA decision deadlines (PDUFA dates) from the BioPharma Catalyst database and upcoming earnings dates from Finviz. These appear as countdown labels on ticker cards in the News View. Catalysts often explain sudden spikes in Stocktwits activity days or weeks before the official announcement hits the news wire.</p>
+    </div>
+
+    <div class="guide-section">
+      <div class="guide-section-title">Time Window</div>
+      <p class="guide-p">The window buttons in the top bar (1m · 3m · 5m · 15m · 30m · 1h · 4h · 1d · 1w · 1mo) control both the price chart range on ticker cards and the sentiment scoring window. Shorter windows surface fast-moving momentum; longer windows show sustained sentiment trends. The composite score, message count, and all chart data update instantly when you change the window.</p>
+    </div>
+
+  </div>
 </div>
 
 <div class="status-bar">
@@ -1933,20 +2109,44 @@
     signalsInterval = null;
   }
 
+  // ── GUIDE VIEW ─────────────────────────────────────────────────────────
+  let guideViewActive = false;
+
+  function toggleGuideView() {
+    guideViewActive = !guideViewActive;
+    document.getElementById("guide-btn").classList.toggle("active", guideViewActive);
+    document.getElementById("guide-view").classList.toggle("active", guideViewActive);
+
+    const filterBar     = document.querySelector(".filter-bar");
+    const contentLayout = document.querySelector(".content-layout");
+    const statusBar     = document.querySelector(".status-bar");
+    if (filterBar)     filterBar.style.display     = guideViewActive ? "none" : "";
+    if (contentLayout) contentLayout.style.display = guideViewActive ? "none" : "";
+    if (statusBar)     statusBar.style.display     = guideViewActive ? "none" : "";
+
+    // Deactivate news view when guide opens
+    if (guideViewActive && newsViewActive) {
+      newsViewActive = false;
+      document.getElementById("news-view-btn").classList.remove("active");
+      document.getElementById("news-view").classList.remove("active");
+    }
+  }
+
   // ── NEWS VIEW ──────────────────────────────────────────────────────────
   let lastFilteredTickers  = [];
   let newsViewActive       = false;
   const newsCardCharts     = {};
   const newsCardEvents     = {};
   const newsCardArticles   = {};
-  let   newsSourceFilters  = new Set(["pr_newswire","businesswire","benzinga","fda","sec"]);
+  let   newsSourceFilters  = new Set(["pr_newswire","businesswire","globenewswire","benzinga","fda","sec"]);
 
   const NEWS_SOURCE_LABELS = {
-    pr_newswire:  "PR Newswire",
-    businesswire: "Business Wire",
-    benzinga:     "Benzinga",
-    fda:          "FDA",
-    sec:          "SEC 8-K",
+    pr_newswire:   "PR Newswire",
+    businesswire:  "Business Wire",
+    globenewswire: "GlobeNewswire",
+    benzinga:      "Benzinga",
+    fda:           "FDA",
+    sec:           "SEC 8-K",
   };
 
   function toggleNewsSourceFilter(source, btn) {
@@ -1963,15 +2163,20 @@
     });
   }
 
+  const NEWS_VISIBLE_DEFAULT = 3;
+
   function renderNewsRecentSection(card, articles) {
     const filtered      = articles.filter(a => newsSourceFilters.has(a.source_category));
     const recentSection = card.querySelector(".news-recent-section");
     const recentList    = card.querySelector(".news-recent-list");
     if (!filtered.length) { recentSection.style.display = "none"; return; }
-    recentList.innerHTML = filtered.map(a => {
+
+    const hiddenCount = Math.max(0, filtered.length - NEWS_VISIBLE_DEFAULT);
+    recentList.innerHTML = filtered.map((a, i) => {
       const label   = NEWS_SOURCE_LABELS[a.source_category] || a.source_category;
       const dateStr = (a.date || "").slice(0, 10);
-      return `<div class="news-recent-item">
+      const cls     = i >= NEWS_VISIBLE_DEFAULT ? " collapsed" : "";
+      return `<div class="news-recent-item${cls}">
         <a href="${escHtml(a.url || "")}" target="_blank" rel="noopener noreferrer">${escHtml(a.title)}</a>
         <div class="news-recent-item-meta">
           <span class="news-source-tag news-source-tag-${a.source_category}">${label}</span>
@@ -1979,6 +2184,26 @@
         </div>
       </div>`;
     }).join("");
+
+    // Remove any existing toggle button before re-rendering
+    const existing = recentSection.querySelector(".news-view-more-btn");
+    if (existing) existing.remove();
+
+    if (hiddenCount > 0) {
+      const btn = document.createElement("button");
+      btn.className = "news-view-more-btn";
+      btn.textContent = `View ${hiddenCount} more`;
+      btn.onclick = function() {
+        const isExpanded = btn.dataset.expanded === "1";
+        recentList.querySelectorAll(".news-recent-item").forEach((el, i) => {
+          if (i >= NEWS_VISIBLE_DEFAULT) el.classList.toggle("collapsed", isExpanded);
+        });
+        btn.dataset.expanded = isExpanded ? "0" : "1";
+        btn.textContent = isExpanded ? `View ${hiddenCount} more` : "View less";
+      };
+      recentSection.appendChild(btn);
+    }
+
     recentSection.style.display = "";
   }
   let newsObserver         = null;
@@ -2040,6 +2265,13 @@
     if (filterBar)     filterBar.style.display     = newsViewActive ? "none" : "";
     if (contentLayout) contentLayout.style.display = newsViewActive ? "none" : "";
     if (statusBar)     statusBar.style.display     = newsViewActive ? "none" : "";
+
+    // Deactivate guide view when news view opens
+    if (newsViewActive && guideViewActive) {
+      guideViewActive = false;
+      document.getElementById("guide-btn").classList.remove("active");
+      document.getElementById("guide-view").classList.remove("active");
+    }
 
     if (newsViewActive) {
       setupNewsObserver();
