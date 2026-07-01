@@ -7,13 +7,16 @@
 import sys
 import os
 import re
+import json
 import threading
 import time
 import requests
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from io import StringIO
+from pathlib import Path
 from datetime import datetime, date, timezone, timedelta
+from urllib.parse import quote as url_quote
 import pandas as pd
 from curl_cffi import requests as cffi_requests
 
@@ -1457,6 +1460,108 @@ def stop_pipeline():
 def pipeline_status():
     running = pipeline_thread is not None and pipeline_thread.is_alive()
     return jsonify({"running": running})
+
+
+# ── SCREENER CONFIG ─────────────────────────────────────────────────────────
+
+SCREENER_CONFIG_PATH = Path(__file__).parent / "screener_config.json"
+
+_FINVIZ_CAP_MAP = {
+    "mega":        "cap_mega",
+    "large":       "cap_large",
+    "mid":         "cap_mid",
+    "small":       "cap_small",
+    "micro":       "cap_micro",
+    "nano":        "cap_nano",
+    "plus_large":  "cap_largeover",
+    "plus_mid":    "cap_midover",
+    "plus_small":  "cap_smallover",
+    "plus_micro":  "cap_microover",
+    "minus_large": "cap_largeunder",
+    "minus_mid":   "cap_midunder",
+    "minus_small": "cap_smallunder",
+    "minus_micro": "cap_microunder",
+}
+
+def _load_screener_config() -> dict:
+    if SCREENER_CONFIG_PATH.exists():
+        try:
+            return json.loads(SCREENER_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+def _save_screener_config(config: dict):
+    config["_saved_at"] = datetime.now(timezone.utc).isoformat()
+    SCREENER_CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+
+def _build_finviz_filter_string(config: dict) -> str:
+    parts = []
+
+    change = config.get("change", "all")
+    if change == "up":   parts.append("ta_change_u")
+    elif change == "down": parts.append("ta_change_d")
+
+    rel_vol = float(config.get("rel_vol_min") or 0)
+    if rel_vol > 0:
+        rv = int(rel_vol) if rel_vol == int(rel_vol) else rel_vol
+        parts.append(f"sh_relvol_o{rv}")
+
+    avg_vol = float(config.get("avg_vol_min") or 0)
+    if avg_vol > 0:
+        k = int(avg_vol // 1000)
+        if k > 0:
+            parts.append(f"sh_avgvol_o{k}")
+
+    cur_vol = float(config.get("cur_vol_min") or 0)
+    if cur_vol > 0:
+        k = int(cur_vol // 1000)
+        if k > 0:
+            parts.append(f"sh_curvol_o{k}")
+
+    price = float(config.get("price_min") or 0)
+    if price > 0:
+        p = int(price) if price == int(price) else price
+        parts.append(f"sh_price_o{p}")
+
+    cap = config.get("mkt_cap", "all")
+    if cap in _FINVIZ_CAP_MAP:
+        parts.append(_FINVIZ_CAP_MAP[cap])
+
+    return ",".join(parts)
+
+def _build_finviz_export_url(config: dict) -> str:
+    f = url_quote(_build_finviz_filter_string(config))
+    return f"https://elite.finviz.com/export.ashx?v=151&f={f}&o=-change"
+
+
+@app.route("/api/screener-config")
+def get_screener_config():
+    return jsonify(_load_screener_config())
+
+
+@app.route("/api/apply-screener", methods=["POST"])
+def apply_screener():
+    global FINVIZ_EXPORT_URL, finviz_cache, finviz_cache_time
+
+    config = request.get_json(force=True)
+    if not config:
+        return jsonify({"error": "no config"}), 400
+
+    _save_screener_config(config)
+
+    new_url = _build_finviz_export_url(config)
+    FINVIZ_EXPORT_URL = new_url
+    os.environ["FINVIZ_EXPORT_URL"] = new_url
+
+    with _finviz_lock:
+        finviz_cache      = {}
+        finviz_cache_time = 0
+
+    was_running = pipeline_thread is not None and pipeline_thread.is_alive()
+    print(f"[SCREENER] Config applied — filters: {_build_finviz_filter_string(config)} | pipeline_running={was_running}")
+
+    return jsonify({"status": "ok", "was_running": was_running})
 
 
 def run_scorer_loop(stop_flag: list):

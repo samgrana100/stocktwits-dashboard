@@ -154,6 +154,34 @@
     .filter-item select:focus, .filter-item input:focus { border-color: var(--blue); }
     .filter-item input { width: 72px; }
     #filter-avgvol { width: 90px; }
+    .corr-cell { white-space: nowrap; padding: 4px 8px !important; }
+    .corr-input {
+      width: 38px; background: var(--bg-overlay); border: 1px solid var(--border-subtle);
+      color: var(--text-muted); font-size: 10px; padding: 2px 4px;
+      border-radius: var(--r-sm); outline: none; text-align: center;
+      transition: border-color var(--t-fast);
+    }
+    .corr-input:focus { border-color: var(--blue); color: var(--text-secondary); }
+    .corr-input::-webkit-inner-spin-button,
+    .corr-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    .corr-dash { color: var(--text-muted); font-size: 11px; margin: 0 3px; }
+    #filter-keyword { width: 130px; }
+    .filter-keyword-wrap { position: relative; display: flex; align-items: center; }
+    .filter-keyword-clear {
+      position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+      background: none; border: none; color: var(--text-muted); cursor: pointer;
+      font-size: 13px; line-height: 1; padding: 0; display: none;
+    }
+    .filter-keyword-clear.visible { display: block; }
+    .news-keyword-wrap { display: flex; align-items: center; gap: 5px; }
+    .news-keyword-wrap span { font-size: 10px; color: var(--text-muted); font-weight: 500; }
+    .news-keyword-input {
+      background: var(--bg-overlay); border: 1px solid var(--border-subtle);
+      color: var(--text-secondary); font-size: 11px; padding: 3px 22px 3px 7px;
+      border-radius: var(--r-sm); outline: none; width: 130px;
+      transition: border-color var(--t-fast);
+    }
+    .news-keyword-input:focus { border-color: var(--blue); }
     .filter-sep { width: 1px; height: 16px; background: var(--border-subtle); margin: 0 2px; }
     .filter-reset {
       margin-left: auto; font-size: 10px; font-weight: 600; color: var(--text-muted);
@@ -680,6 +708,65 @@
     .guide-btn:hover  { border-color: #a855f7; color: var(--text-primary); }
     .guide-btn.active { background: rgba(168,85,247,0.12); border-color: #a855f7; color: #a855f7; }
 
+    /* ── SCREENER MODAL ── */
+    .screener-overlay {
+      position: fixed; inset: 0; z-index: 9000;
+      background: rgba(0,0,0,0.88);
+      display: none; align-items: center; justify-content: center;
+    }
+    .screener-overlay.active { display: flex; }
+    .screener-modal {
+      background: var(--bg-surface); border: 1px solid var(--border-subtle);
+      border-radius: var(--r-lg); width: 540px; max-width: 95vw;
+      padding: 28px 28px 24px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+    }
+    .screener-modal-title { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+    .screener-modal-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 22px; }
+    .screener-modal-grid  {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin-bottom: 16px;
+    }
+    .screener-modal-field { display: flex; flex-direction: column; gap: 5px; }
+    .screener-modal-field.full { grid-column: 1 / -1; }
+    .screener-modal-field label {
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.07em;
+    }
+    .screener-modal-field select,
+    .screener-modal-field input {
+      background: var(--bg-overlay); border: 1px solid var(--border-subtle);
+      color: var(--text-secondary); font-size: 12px; padding: 7px 10px;
+      border-radius: var(--r-sm); outline: none; width: 100%;
+      transition: border-color var(--t-fast);
+    }
+    .screener-modal-field select:focus,
+    .screener-modal-field input:focus { border-color: var(--blue); }
+    .screener-modal-note {
+      font-size: 9px; color: var(--blue); font-weight: 600;
+      text-transform: none; letter-spacing: 0; margin-left: 4px;
+    }
+    .screener-modal-saved { font-size: 10px; color: var(--text-dimmed); margin-bottom: 16px; min-height: 14px; }
+    .screener-modal-actions { display: flex; gap: 10px; }
+    .screener-modal-apply {
+      flex: 1; padding: 10px; background: var(--green); border: none;
+      border-radius: var(--r-sm); color: #000; font-size: 13px; font-weight: 700;
+      cursor: pointer; transition: opacity var(--t-fast);
+    }
+    .screener-modal-apply:hover    { opacity: 0.85; }
+    .screener-modal-apply:disabled { opacity: 0.5; cursor: not-allowed; }
+    .screener-modal-skip {
+      padding: 10px 18px; background: transparent; border: 1px solid var(--border-mid);
+      border-radius: var(--r-sm); color: var(--text-muted); font-size: 12px;
+      cursor: pointer; transition: all var(--t-fast); white-space: nowrap; display: none;
+    }
+    .screener-modal-skip:hover { border-color: var(--blue); color: var(--text-secondary); }
+    .update-filters-btn {
+      height: 28px; padding: 0 12px; border: 1px solid var(--border-mid);
+      border-radius: var(--r-sm); background: transparent; color: var(--text-secondary);
+      cursor: pointer; font-size: 12px; transition: all var(--t-fast);
+    }
+    .update-filters-btn:hover { border-color: var(--green); color: var(--green); }
+
     /* ── GUIDE VIEW ── */
     .guide-view { display: none; overflow-y: auto; padding: 20px 24px 40px; background: var(--bg-base); }
     .guide-view.active { display: block; }
@@ -763,6 +850,7 @@
     <button class="window-btn" onclick="setWindow('1d',this)">1d</button>
     <button class="window-btn" onclick="setWindow('1w',this)">1w</button>
     <button class="window-btn" onclick="setWindow('1mo',this)">1mo</button>
+    <button class="update-filters-btn" onclick="openScreenerModal(true)">Update Filters</button>
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
     <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
@@ -844,6 +932,14 @@
     <span>Price ≥</span>
     <input type="number" id="filter-price" placeholder="e.g. 1.00" min="0" step="0.01" oninput="applyFiltersAndRender()">
   </div>
+  <div class="filter-sep"></div>
+  <div class="filter-item">
+    <span>Search</span>
+    <div class="filter-keyword-wrap">
+      <input type="text" id="filter-keyword" placeholder="ticker / company…" oninput="onKeywordChange(this.value)">
+      <button class="filter-keyword-clear" id="filter-keyword-clear" onclick="clearKeyword()" title="Clear">&times;</button>
+    </div>
+  </div>
   <button class="filter-reset" onclick="resetFilters()">Reset Filters</button>
 </div>
 
@@ -870,10 +966,12 @@
         <th onclick="sortTable('total_messages',event)">Total Msgs</th>
         <th onclick="sortTable('message_count',event)">Msg Density</th>
         <th onclick="sortTable('surge_ratio',event)">Surge</th>
+        <th style="cursor:default">Px &times; Sent Corr</th>
+        <th style="cursor:default">Px &times; Density Corr</th>
       </tr>
     </thead>
     <tbody id="table-body">
-      <tr><td colspan="17" style="text-align:center;padding:40px;color:var(--text-muted)">Loading data...</td></tr>
+      <tr><td colspan="19" style="text-align:center;padding:40px;color:var(--text-muted)">Loading data...</td></tr>
     </tbody>
   </table>
 </div>
@@ -901,7 +999,14 @@
 
 <div id="news-view" class="news-view">
   <div class="news-source-filter-bar">
-    <span class="news-source-filter-label">News sources:</span>
+    <div class="news-keyword-wrap">
+      <span>Search</span>
+      <div class="filter-keyword-wrap">
+        <input type="text" class="news-keyword-input" id="filter-keyword-news" placeholder="ticker / company…" oninput="onKeywordChange(this.value)">
+        <button class="filter-keyword-clear" id="filter-keyword-clear-news" onclick="clearKeyword()" title="Clear">&times;</button>
+      </div>
+    </div>
+    <span class="news-source-filter-label" style="margin-left:10px;">News sources:</span>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('pr_newswire',this)">PR Newswire</button>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('businesswire',this)">Business Wire</button>
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('globenewswire',this)">GlobeNewswire</button>
@@ -976,8 +1081,8 @@
     </div>
 
     <div class="guide-section">
-      <div class="guide-section-title">News View — Confirming the Signal</div>
-      <p class="guide-p">Switch to <strong>News View</strong> to see all screener tickers as cards, each with a mini price chart, current composite score, recent Stocktwits messages, and recent news articles. The news articles are <em>not</em> the source of the sentiment signal — they exist to <strong>confirm</strong> what Stocktwits users are already talking about. If the crowd is bullish and a legitimate press release just went out, that agreement between social sentiment and official news is a much stronger signal than either source alone.</p>
+      <div class="guide-section-title">News View — Confirming the Sentiment</div>
+      <p class="guide-p">Switch to <strong>News View</strong> to see all screener tickers as cards, each with a mini price chart, current composite score, recent Stocktwits messages, and recent news articles. The news articles are <em>not</em> the source of the sentiment score — they exist to <strong>confirm</strong> what Stocktwits users are already talking about. If the crowd is bullish and a legitimate press release just went out, that agreement between social sentiment and official news gives you a more complete picture of what is driving activity around a ticker.</p>
       <p class="guide-p">All news sources listed below have an editorial or regulatory standard they are required to follow, which is why they were chosen over general financial media.</p>
       <div class="guide-sources">
         <div class="guide-source-row">
@@ -1016,8 +1121,8 @@
     </div>
 
     <div class="guide-section">
-      <div class="guide-section-title">Signals Panel</div>
-      <p class="guide-p">Click the <strong>Signals</strong> button in the top bar to open the side panel. It shows the highest-impact Stocktwits messages in real time across all screener tickers — individual posts that received the highest composite scores. Use it to quickly spot what specific catalysts or claims are driving sentiment on any ticker without opening each detail popup.</p>
+      <div class="guide-section-title">Live Stocktwits Messages</div>
+      <p class="guide-p">Click the <strong>Signals</strong> button in the top bar to open the side panel. It streams the most recent Stocktwits messages in real time across all screener tickers — individual posts that received the highest composite scores. Use it to quickly read what users are saying about any ticker without opening each detail popup.</p>
     </div>
 
     <div class="guide-section">
@@ -1030,6 +1135,110 @@
       <p class="guide-p">The window buttons in the top bar (1m · 3m · 5m · 15m · 30m · 1h · 4h · 1d · 1w · 1mo) control both the price chart range on ticker cards and the sentiment scoring window. Shorter windows surface fast-moving momentum; longer windows show sustained sentiment trends. The composite score, message count, and all chart data update instantly when you change the window.</p>
     </div>
 
+    <div class="guide-section">
+      <div class="guide-section-title">Screener Performance &amp; Recommended Filters</div>
+      <p class="guide-p">The number of tickers your Finviz screener returns directly controls how fast the pipeline runs. The pipeline fetches Stocktwits messages for every ticker in parallel (5 workers), then loops. With too many tickers, the loop takes several minutes and sentiment data becomes stale before the next cycle completes.</p>
+      <div class="guide-score-grid" style="margin-bottom:12px">
+        <div class="guide-score-card">
+          <div class="guide-score-name" style="color:var(--green)">50–150 tickers</div>
+          <div class="guide-score-desc">Loop time ~15–45 seconds. Near real-time sentiment updates. Best range for active monitoring.</div>
+        </div>
+        <div class="guide-score-card">
+          <div class="guide-score-name" style="color:var(--yellow,#eab308)">200–500 tickers</div>
+          <div class="guide-score-desc">Loop time 1–3 minutes. Sentiment updates are slightly delayed but still useful for research.</div>
+        </div>
+        <div class="guide-score-card">
+          <div class="guide-score-name" style="color:var(--red)">500+ tickers</div>
+          <div class="guide-score-desc">Loop time 3–10+ minutes. Data grows stale between cycles. Consider tightening screener filters.</div>
+        </div>
+      </div>
+      <p class="guide-p"><strong>Our recommended starting filters</strong> — set these in the Update Filters modal for a focused, fast screener that catches high-momentum names:</p>
+      <div class="guide-sources" style="margin-bottom:10px">
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-earnings" style="min-width:130px;text-align:center">Change: Up only</span>
+          <div class="guide-source-desc">Limits the universe to stocks moving upward on the day. Focuses the dashboard on tickers where positive sentiment is most relevant to observe.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-fda" style="min-width:130px;text-align:center">Rel Vol ≥ 3</span>
+          <div class="guide-source-desc">Relative volume of 3x means a stock is trading at triple its normal rate — a strong indicator that unusual activity is occurring. Values below 2x let in too many tickers with routine activity. 5x or higher narrows to only the most active names.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-clinical" style="min-width:130px;text-align:center">Cur Vol ≥ 500k</span>
+          <div class="guide-source-desc">Ensures there is enough real market participation. Tickers below 500k daily volume often have thin Stocktwits activity and less reliable sentiment data.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-merger" style="min-width:130px;text-align:center">Price ≥ $1.00</span>
+          <div class="guide-source-desc">Filters out sub-penny stocks, which tend to have artificially inflated Stocktwits activity that does not reflect genuine market sentiment.</div>
+        </div>
+      </div>
+      <p class="guide-p">These four filters together typically return <strong>30–100 tickers</strong>, which keeps loop time under 30 seconds and produces a focused dashboard. Adjust rel vol up or down to widen or narrow the universe as needed.</p>
+    </div>
+
+  </div>
+</div>
+
+<div id="screener-overlay" class="screener-overlay">
+  <div class="screener-modal">
+    <div class="screener-modal-title">Stocktwits Sentiment Dashboard</div>
+    <div class="screener-modal-sub" id="sm-subtitle">Set your Finviz screener filters to begin</div>
+
+    <div class="screener-modal-grid">
+      <div class="screener-modal-field">
+        <label>Change Direction</label>
+        <select id="sm-change">
+          <option value="all">All</option>
+          <option value="up">&#x2191; Up only</option>
+          <option value="down">&#x2193; Down only</option>
+        </select>
+      </div>
+      <div class="screener-modal-field">
+        <label>Rel Volume &#x2265;</label>
+        <input type="number" id="sm-relvol" placeholder="e.g. 5" min="0" step="0.5">
+      </div>
+      <div class="screener-modal-field">
+        <label>Avg Volume &#x2265;</label>
+        <input type="number" id="sm-avgvol" placeholder="e.g. 500000" min="0" step="50000">
+      </div>
+      <div class="screener-modal-field">
+        <label>Current Volume &#x2265;</label>
+        <input type="number" id="sm-curvol" placeholder="e.g. 100000" min="0" step="50000">
+      </div>
+      <div class="screener-modal-field">
+        <label>Price &#x2265; ($)</label>
+        <input type="number" id="sm-price" placeholder="e.g. 1.00" min="0" step="0.50">
+      </div>
+      <div class="screener-modal-field">
+        <label>Score &#x2265; <span class="screener-modal-note">client-side filter</span></label>
+        <input type="number" id="sm-score" placeholder="e.g. 0.05" step="0.01">
+      </div>
+      <div class="screener-modal-field full">
+        <label>Market Cap</label>
+        <select id="sm-mktcap">
+          <option value="all">Any</option>
+          <option value="mega">Mega ($200bln+)</option>
+          <option value="large">Large ($10bln–$200bln)</option>
+          <option value="mid">Mid ($2bln–$10bln)</option>
+          <option value="small">Small ($300mln–$2bln)</option>
+          <option value="micro">Micro ($50mln–$300mln)</option>
+          <option value="nano">Nano (under $50mln)</option>
+          <option value="plus_large">+Large (over $10bln)</option>
+          <option value="plus_mid">+Mid (over $2bln)</option>
+          <option value="plus_small">+Small (over $300mln)</option>
+          <option value="plus_micro">+Micro (over $50mln)</option>
+          <option value="minus_large">-Large (under $200bln)</option>
+          <option value="minus_mid">-Mid (under $10bln)</option>
+          <option value="minus_small">-Small (under $2bln)</option>
+          <option value="minus_micro">-Micro (under $300mln)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="screener-modal-saved" id="sm-saved-info"></div>
+
+    <div class="screener-modal-actions">
+      <button class="screener-modal-apply" id="sm-apply-btn" onclick="applyScreenerModal()">Apply &amp; Start Pipeline</button>
+      <button class="screener-modal-skip" id="sm-skip-btn" onclick="closeScreenerModal()">Skip</button>
+    </div>
   </div>
 </div>
 
@@ -1365,6 +1574,41 @@
     });
   }
 
+  let activeKeyword = "";
+
+  function onKeywordChange(val) {
+    activeKeyword = val.trim().toLowerCase();
+    // Sync both inputs and toggle clear buttons
+    const mainInput  = document.getElementById("filter-keyword");
+    const newsInput  = document.getElementById("filter-keyword-news");
+    const mainClear  = document.getElementById("filter-keyword-clear");
+    const newsClear  = document.getElementById("filter-keyword-clear-news");
+    if (mainInput && mainInput.value.toLowerCase().trim() !== activeKeyword) mainInput.value = val;
+    if (newsInput && newsInput.value.toLowerCase().trim() !== activeKeyword) newsInput.value = val;
+    if (mainClear) mainClear.classList.toggle("visible", activeKeyword.length > 0);
+    if (newsClear) newsClear.classList.toggle("visible", activeKeyword.length > 0);
+
+    applyFiltersAndRender();
+
+    // If news view is active, hide/show cards without rebuilding
+    if (newsViewActive) applyNewsCardKeywordFilter();
+  }
+
+  function clearKeyword() {
+    document.getElementById("filter-keyword").value      = "";
+    const newsInput = document.getElementById("filter-keyword-news");
+    if (newsInput) newsInput.value = "";
+    onKeywordChange("");
+  }
+
+  function applyNewsCardKeywordFilter() {
+    const kw = activeKeyword;
+    const validSet = new Set(lastFilteredTickers.map(t => t.ticker));
+    document.querySelectorAll(".news-card").forEach(card => {
+      card.style.display = validSet.has(card.dataset.ticker) ? "" : "none";
+    });
+  }
+
   function applyFiltersAndRender() {
     const fChange  = document.getElementById("filter-change").value;
     const fRelVol  = parseFloat(document.getElementById("filter-relvol").value)  || 0;
@@ -1372,6 +1616,7 @@
     const fMktCap  = document.getElementById("filter-mktcap").value;
     const fScore   = parseFloat(document.getElementById("filter-score").value);
     const fPrice   = parseFloat(document.getElementById("filter-price").value)   || 0;
+    const fKeyword = activeKeyword;
 
     let filtered = allTickers.filter(t => {
       const chg = parseVal(t.change);
@@ -1404,6 +1649,22 @@
           true;
         if (!pass) return false;
       }
+
+      if (fKeyword) {
+        const eventText = (t.catalyst_events || []).map(e => {
+          const meta = EVENT_META[e] || {};
+          return [e, meta.pill || "", EVENT_DESC[e] || ""].join(" ");
+        }).join(" ");
+        const haystack = [
+          t.ticker   || "",
+          t.company  || "",
+          t.sector   || "",
+          t.industry || "",
+          eventText,
+        ].join(" ").toLowerCase();
+        if (!haystack.includes(fKeyword)) return false;
+      }
+
       return true;
     });
 
@@ -1432,7 +1693,7 @@
     document.getElementById("filter-price").value   = "";
     sortKeys = [{ key: "avg_composite_score", asc: false }];
     updateSortHeaders();
-    applyFiltersAndRender();
+    clearKeyword();
   }
   let refreshTimer       = 90;
   let countdownInterval;
@@ -1564,7 +1825,7 @@
   function renderTable(tickers) {
     const tbody = document.getElementById("table-body");
     if (!tickers || tickers.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="17" style="text-align:center;padding:40px;color:var(--text-muted)">No data. Run the pipeline.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;padding:40px;color:var(--text-muted)">No data. Run the pipeline.</td></tr>';
       return;
     }
     tbody.innerHTML = tickers.map((t, i) => {
@@ -1628,6 +1889,16 @@
         <td style="color:#555">${t.total_messages||0}</td>
         <td><span class="density-badge ${dc}">${dl}</span></td>
         <td>${surgeCell(t.surge_ratio)}</td>
+        <td onclick="event.stopPropagation()" class="corr-cell">
+          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="-1">
+          <span class="corr-dash">&ndash;</span>
+          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="1">
+        </td>
+        <td onclick="event.stopPropagation()" class="corr-cell">
+          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="-1">
+          <span class="corr-dash">&ndash;</span>
+          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="1">
+        </td>
       </tr>`;
     }).join("");
   }
@@ -2108,6 +2379,112 @@
     clearInterval(signalsInterval);
     signalsInterval = null;
   }
+
+  // ── SCREENER MODAL ─────────────────────────────────────────────────────
+  async function openScreenerModal(isUpdate = false) {
+    const subtitle  = document.getElementById("sm-subtitle");
+    const applyBtn  = document.getElementById("sm-apply-btn");
+    const skipBtn   = document.getElementById("sm-skip-btn");
+    subtitle.textContent = isUpdate
+      ? "Update your Finviz screener filters"
+      : "Set your Finviz screener filters to begin";
+    applyBtn.textContent = isUpdate ? "Apply & Restart Pipeline" : "Apply & Start Pipeline";
+    applyBtn.disabled    = false;
+
+    try {
+      const res = await fetch("/api/screener-config");
+      if (res.ok) {
+        const cfg = await res.json();
+        _fillScreenerModal(cfg);
+        if (cfg._saved_at) {
+          document.getElementById("sm-saved-info").textContent =
+            "Last saved: " + new Date(cfg._saved_at).toLocaleString();
+          skipBtn.style.display = "";
+        }
+      }
+    } catch(e) {}
+
+    document.getElementById("screener-overlay").classList.add("active");
+  }
+
+  function _fillScreenerModal(cfg) {
+    document.getElementById("sm-change").value  = cfg.change    || "all";
+    document.getElementById("sm-relvol").value  = cfg.rel_vol_min > 0 ? cfg.rel_vol_min : "";
+    document.getElementById("sm-avgvol").value  = cfg.avg_vol_min > 0 ? cfg.avg_vol_min : "";
+    document.getElementById("sm-curvol").value  = cfg.cur_vol_min > 0 ? cfg.cur_vol_min : "";
+    document.getElementById("sm-price").value   = cfg.price_min  > 0 ? cfg.price_min   : "";
+    document.getElementById("sm-score").value   = cfg.score_min  > 0 ? cfg.score_min   : "";
+    document.getElementById("sm-mktcap").value  = cfg.mkt_cap    || "all";
+  }
+
+  function closeScreenerModal() {
+    document.getElementById("screener-overlay").classList.remove("active");
+  }
+
+  function _gatherScreenerConfig() {
+    return {
+      change:       document.getElementById("sm-change").value,
+      rel_vol_min:  parseFloat(document.getElementById("sm-relvol").value) || 0,
+      avg_vol_min:  parseFloat(document.getElementById("sm-avgvol").value) || 0,
+      cur_vol_min:  parseFloat(document.getElementById("sm-curvol").value) || 0,
+      price_min:    parseFloat(document.getElementById("sm-price").value)  || 0,
+      score_min:    parseFloat(document.getElementById("sm-score").value)  || 0,
+      mkt_cap:      document.getElementById("sm-mktcap").value,
+    };
+  }
+
+  async function applyScreenerModal() {
+    const btn = document.getElementById("sm-apply-btn");
+    btn.disabled = true;
+    btn.textContent = "Applying…";
+
+    const cfg = _gatherScreenerConfig();
+
+    try {
+      const res  = await fetch("/api/apply-screener", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(cfg)
+      });
+      const data = await res.json();
+
+      if (data.was_running) {
+        btn.textContent = "Stopping pipeline…";
+        await fetch("/api/pipeline/stop", {method: "POST"});
+        for (let i = 0; i < 20; i++) {
+          await new Promise(r => setTimeout(r, 500));
+          const sr = await fetch("/api/pipeline/status");
+          const sd = await sr.json();
+          if (!sd.running) break;
+        }
+      }
+
+      btn.textContent = "Starting pipeline…";
+      await fetch("/api/pipeline/start", {method: "POST"});
+      pipelineRunning = true;
+      const pBtn = document.getElementById("pipeline-btn");
+      pBtn.textContent = "Stop Pipeline";
+      pBtn.className   = "pipeline-btn stop";
+
+      // Sync Finviz-level filters to dashboard filter bar
+      document.getElementById("filter-change").value  = cfg.change;
+      document.getElementById("filter-relvol").value  = cfg.rel_vol_min || "";
+      document.getElementById("filter-avgvol").value  = cfg.avg_vol_min || "";
+      document.getElementById("filter-price").value   = cfg.price_min   || "";
+      document.getElementById("filter-mktcap").value  = cfg.mkt_cap;
+      if (cfg.score_min > 0)
+        document.getElementById("filter-score").value = cfg.score_min;
+
+      closeScreenerModal();
+      applyFiltersAndRender();
+
+    } catch(e) {
+      btn.textContent = "Error — Try Again";
+      btn.disabled    = false;
+    }
+  }
+
+  // Show modal on page load
+  document.addEventListener("DOMContentLoaded", () => openScreenerModal(false));
 
   // ── GUIDE VIEW ─────────────────────────────────────────────────────────
   let guideViewActive = false;

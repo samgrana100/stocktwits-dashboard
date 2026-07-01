@@ -4,42 +4,52 @@
 # Samuel Grana - Stocktwits News Sentiment Dashboard
 
 import time
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from fetcher import fetch_messages, fetch_messages_paginated
 from utils import load_tickers, get_timestamp, get_minute_bucket, get_utc_iso
 from db import scored_messages, message_density, price_history
 
 # --- Configuration ---
-LOOP_INTERVAL = 90
-MIN_DELAY = 1.0
-MAX_DELAY = 5.0
+LOOP_INTERVAL   = 90
+PIPELINE_WORKERS = 5   # concurrent ticker threads — raise cautiously to avoid Stocktwits 429s
 CSV_PATH = "data/screener.csv"
 
+_seen_lock = threading.Lock()
 
-def calculate_delay(ticker_count: int) -> float:
-    """
-    Automatically calculates the right delay between ticker requests
-    based on how many tickers there are.
-    """
-    if ticker_count == 0:
-        return MIN_DELAY
-    available_per_ticker = LOOP_INTERVAL / ticker_count
-    delay = max(MIN_DELAY, min(MAX_DELAY, available_per_ticker * 0.8))
-    return round(delay, 2)
+
+def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_flag: list):
+    if stop_flag[0]:
+        return
+
+    with _seen_lock:
+        is_new = ticker not in seen_tickers
+        if is_new:
+            seen_tickers.add(ticker)
+
+    if is_new:
+        print("[PIPELINE] New ticker " + ticker + " — backfilling 24h history...")
+        historical = fetch_messages_paginated(ticker, hours_back=24)
+        if historical:
+            store_messages(ticker, historical, rolling_window)
+
+    messages = fetch_messages(ticker)
+    if messages:
+        store_messages(ticker, messages, rolling_window)
+        update_density(ticker, len(messages), rolling_window)
+        store_price_snapshot(ticker, messages)
 
 
 def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
     """
     Main ingestion loop. Runs continuously until stop_flag[0] is set to True.
-
-    Args:
-        rolling_window: How many minutes of messages to keep (15, 60, or 240)
-        stop_flag: Set stop_flag[0] = True from Flask to stop the loop
+    Fetches PIPELINE_WORKERS tickers concurrently to reduce loop cycle time.
     """
 
     print("[PIPELINE] Starting ingestion loop.")
     print("[PIPELINE] Rolling window: " + str(rolling_window) + " minutes.")
-    print("[PIPELINE] Press Ctrl+C to stop.\n")
+    print("[PIPELINE] Workers: " + str(PIPELINE_WORKERS) + " concurrent.\n")
 
     seen_tickers = set()
 
@@ -49,35 +59,26 @@ def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
         tickers = load_tickers()
 
         if not tickers:
-            print("[PIPELINE] No tickers found. Check your CSV file.")
+            print("[PIPELINE] No tickers found. Check your screener filters.")
             time.sleep(LOOP_INTERVAL)
             continue
 
-        delay = calculate_delay(len(tickers))
-
         print("[PIPELINE] Loop started at " + get_timestamp())
-        print("[PIPELINE] Tickers: " + str(len(tickers)) + " | Delay: " + str(delay) + "s each\n")
+        print("[PIPELINE] Tickers: " + str(len(tickers)) + " | Workers: " + str(PIPELINE_WORKERS) + "\n")
 
-        for ticker in tickers:
-            if stop_flag[0]:
-                break
-
-            # On first encounter this session, backfill 24h of history
-            if ticker not in seen_tickers:
-                seen_tickers.add(ticker)
-                print("[PIPELINE] New ticker " + ticker + " — backfilling 24h history...")
-                historical = fetch_messages_paginated(ticker, hours_back=24)
-                if historical:
-                    store_messages(ticker, historical, rolling_window)
-
-            messages = fetch_messages(ticker)
-
-            if messages:
-                store_messages(ticker, messages, rolling_window)
-                update_density(ticker, len(messages), rolling_window)
-                store_price_snapshot(ticker, messages)
-
-            time.sleep(delay)
+        with ThreadPoolExecutor(max_workers=PIPELINE_WORKERS) as executor:
+            futures = {
+                executor.submit(_process_ticker, t, seen_tickers, rolling_window, stop_flag): t
+                for t in tickers
+            }
+            for future in as_completed(futures):
+                if stop_flag[0]:
+                    break
+                try:
+                    future.result()
+                except Exception as e:
+                    t = futures[future]
+                    print("[PIPELINE] Error on " + t + ": " + str(e))
 
         elapsed = time.time() - loop_start
         wait_time = max(0, LOOP_INTERVAL - elapsed)
