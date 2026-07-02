@@ -32,7 +32,7 @@ def fetch_messages(ticker: str, limit: int = 30) -> list:
         )
 
         if response.status_code == 429:
-            print("[FETCHER] Rate limited on " + ticker + ". Slowing down.")
+            print("[FETCHER] 429 RATE LIMITED on " + ticker + " — skipping this cycle.")
             return []
 
         if response.status_code != 200:
@@ -78,7 +78,7 @@ def fetch_messages_paginated(ticker: str, hours_back: int = 24, page_delay: floa
             response = requests.get(url, params=params, impersonate="chrome", timeout=10)
 
             if response.status_code == 429:
-                print("[FETCHER] Rate limited on " + ticker + " during backfill. Stopping.")
+                print("[FETCHER] 429 RATE LIMITED on " + ticker + " during backfill — stopping early.")
                 break
 
             if response.status_code != 200:

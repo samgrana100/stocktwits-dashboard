@@ -3,6 +3,7 @@
 # Fetches messages for every ticker and stores them in MongoDB
 # Samuel Grana - Stocktwits News Sentiment Dashboard
 
+import os
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,9 +12,12 @@ from fetcher import fetch_messages, fetch_messages_paginated
 from utils import load_tickers, get_timestamp, get_minute_bucket, get_utc_iso
 from db import scored_messages, message_density, price_history
 
-# --- Configuration ---
-LOOP_INTERVAL   = 90
-PIPELINE_WORKERS = 5   # concurrent ticker threads — raise cautiously to avoid Stocktwits 429s
+# --- Configuration (override via env vars for Railway deployment) ---
+LOOP_INTERVAL       = int(os.getenv("LOOP_INTERVAL",       "90"))
+PIPELINE_WORKERS    = int(os.getenv("PIPELINE_WORKERS",    "2"))
+INTER_TICKER_DELAY  = float(os.getenv("INTER_TICKER_DELAY", "0.0"))
+BACKFILL_HOURS      = int(os.getenv("BACKFILL_HOURS",      "24"))
+BACKFILL_PAGE_DELAY = float(os.getenv("BACKFILL_PAGE_DELAY", "0.6"))
 CSV_PATH = "data/screener.csv"
 
 _seen_lock = threading.Lock()
@@ -29,8 +33,8 @@ def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_fl
             seen_tickers.add(ticker)
 
     if is_new:
-        print("[PIPELINE] New ticker " + ticker + " — backfilling 24h history...")
-        historical = fetch_messages_paginated(ticker, hours_back=24)
+        print("[PIPELINE] New ticker " + ticker + " — backfilling " + str(BACKFILL_HOURS) + "h history...")
+        historical = fetch_messages_paginated(ticker, hours_back=BACKFILL_HOURS, page_delay=BACKFILL_PAGE_DELAY)
         if historical:
             store_messages(ticker, historical, rolling_window)
 
@@ -39,6 +43,9 @@ def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_fl
         store_messages(ticker, messages, rolling_window)
         update_density(ticker, len(messages), rolling_window)
         store_price_snapshot(ticker, messages)
+
+    if INTER_TICKER_DELAY > 0:
+        time.sleep(INTER_TICKER_DELAY)
 
 
 def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
