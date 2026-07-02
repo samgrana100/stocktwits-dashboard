@@ -93,6 +93,23 @@ def load_tickers_from_finviz() -> list:
 
         response = cffi_requests.get(url, impersonate="chrome120", timeout=15)
 
+        if response.status_code == 401:
+            print("[TICKERS] Finviz 401 — attempting token refresh...")
+            try:
+                from app import refresh_finviz_token
+                if refresh_finviz_token():
+                    token = os.getenv("FINVIZ_API_TOKEN", "") or FINVIZ_API_TOKEN
+                    url   = export_url + "&auth=" + token
+                    response = cffi_requests.get(url, impersonate="chrome120", timeout=15)
+                    if response.status_code != 200:
+                        print("[TICKERS] Retry after refresh still failed (" + str(response.status_code) + ").")
+                        return []
+                else:
+                    return []
+            except Exception as e:
+                print("[TICKERS] Token refresh error: " + str(e))
+                return []
+
         if response.status_code != 200:
             print("[TICKERS] Finviz returned error " + str(response.status_code) + ". Falling back to local CSV.")
             return []
