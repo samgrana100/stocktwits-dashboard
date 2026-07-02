@@ -165,10 +165,10 @@ WINDOW_CONFIG = {
     "15m": {"minutes": 15,    "finviz_param": "i1"},
     "30m": {"minutes": 30,    "finviz_param": "i1"},
     "1h":  {"minutes": 60,    "finviz_param": "i1"},
+    "2h":  {"minutes": 120,   "finviz_param": "i1"},
     "4h":  {"minutes": 240,   "finviz_param": "i1"},
     "1d":  {"minutes": 1440,  "finviz_param": "i1"},
     "1w":  {"minutes": 10080, "finviz_param": "i1"},
-    "1mo": {"minutes": 43200, "finviz_param": "i1"},
 }
 
 
@@ -320,15 +320,18 @@ def get_finviz_data() -> dict:
 
 # ─── FINVIZ PRICE FETCHER ───
 
-def get_finviz_price_history(ticker: str, finviz_param: str, window_minutes: int) -> list:
+def get_finviz_price_history(ticker: str, finviz_param: str, multi_day: bool = False) -> list:
     """
     Fetches price bars from Finviz quote_export (p=i1, 1-min bars).
-    Results are cached per ticker for PRICE_CACHE_TTL seconds so repeated
-    popup opens don't hammer the Finviz API.
+
+    multi_day=False (sub-day charts): restricts to the most recent calendar day so
+        cross-day HH:MM key collisions can't occur when needsDate=False in the frontend.
+    multi_day=True  (1d+ charts):     returns all bars from the CSV; needsDate=True
+        in the frontend keys every bar by "MM-DD HH:MM", so multi-day data is safe.
 
     CSV format: "MM/DD/YYYY HH:MM AM/PM"  e.g. "05/21/2026 04:00 AM"
     """
-    cache_key = f"{ticker}_{finviz_param}_{window_minutes}"
+    cache_key = f"{ticker}_{finviz_param}_{'multi' if multi_day else 'today'}"
     now_ts    = time.time()
     with _price_lock:
         cached = price_cache.get(cache_key)
@@ -398,14 +401,13 @@ def get_finviz_price_history(ticker: str, finviz_param: str, window_minutes: int
             print(f"[FINVIZ PRICE] No parseable dates for {ticker}")
             return []
 
-        # Anchor the rolling window to the data's own end timestamp (not now()),
-        # so the window selector works correctly even when the market is closed.
-        # For r=d1 this covers the full current session; for r=d5/m1 it spans
-        # multiple days and the window_minutes cutoff selects the right slice.
         df          = df.sort_values("parsed_dt")
         session_end = df["parsed_dt"].max()
-        cutoff      = session_end - timedelta(minutes=window_minutes)
-        df          = df[df["parsed_dt"] >= cutoff]
+        if not multi_day:
+            # Sub-day charts key price by HH:MM only (needsDate=False in frontend).
+            # Restrict to the most recent session date so yesterday's bars never
+            # collide with today's at the same minute key.
+            df = df[df["parsed_dt"].dt.date == session_end.date()]
 
         month    = datetime.now(timezone.utc).month
         tz_label = "EDT" if 3 <= month <= 11 else "EST"
@@ -423,7 +425,7 @@ def get_finviz_price_history(ticker: str, finviz_param: str, window_minutes: int
             except Exception:
                 continue
 
-        print(f"[FINVIZ PRICE] {ticker}: {len(price_hist)} points, session_end={session_end} (param={finviz_param})")
+        print(f"[FINVIZ PRICE] {ticker}: {len(price_hist)} points (param={finviz_param})")
         with _price_lock:
             stale = [k for k, v in price_cache.items() if (now_ts - v["ts"]) >= PRICE_CACHE_TTL]
             for k in stale:
@@ -810,14 +812,20 @@ def get_scores():
 def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label):
     # Always generate a regular time axis covering the full window so that
     # score/density data is never cut off by sparse price bar timestamps.
-    # Price data maps onto this axis via extractLabel in the frontend.
+    # Axis is snapped to clean step boundaries so frontend snapKey lookups match.
     axis = []
     step = 1 if window_min <= 60 else (5 if window_min <= 1440 else (60 if window_min <= 10080 else 1440))
-    current = window_start_dt.replace(tzinfo=timezone.utc)
+
+    # Snap start to the nearest step boundary (UTC minutes since midnight).
+    # UTC-ET offset is always whole hours, so snapping in UTC = snapping in ET.
+    raw = window_start_dt.replace(tzinfo=timezone.utc, second=0, microsecond=0)
+    total_min = raw.hour * 60 + raw.minute
+    snapped   = (total_min // step) * step
+    current   = raw.replace(hour=snapped // 60, minute=snapped % 60)
+
     while current <= now_utc:
         axis.append(utc_to_et(current.strftime("%Y-%m-%dT%H:%M:%SZ")))
         current += timedelta(minutes=step)
-    axis.append(utc_to_et(now_utc.strftime("%Y-%m-%dT%H:%M:%SZ")))
     return axis
 
 
@@ -896,7 +904,7 @@ def get_ticker_detail(ticker):
     # ─── Price history from Finviz quote_export API ───
     # Returns all minute bars from the most recent session.
     # Frontend matches by HH:MM so past-session dates align with today's axis.
-    price_hist = get_finviz_price_history(ticker, finviz_param, window_min)
+    price_hist = get_finviz_price_history(ticker, finviz_param, multi_day=(window_min >= 1440))
 
     month    = datetime.now(timezone.utc).month
     tz_label = "EDT" if 3 <= month <= 11 else "EST"
@@ -1167,7 +1175,7 @@ def get_price_endpoint(ticker):
     month          = now_utc.month
     tz_label       = "EDT" if 3 <= month <= 11 else "EST"
 
-    price_hist = get_finviz_price_history(ticker, finviz_param, window_min)
+    price_hist = get_finviz_price_history(ticker, finviz_param, multi_day=(window_min >= 1440))
     time_axis  = _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label)
 
     return jsonify({"price_history": price_hist, "time_axis": time_axis})

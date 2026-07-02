@@ -940,6 +940,39 @@
       <button class="filter-keyword-clear" id="filter-keyword-clear" onclick="clearKeyword()" title="Clear">&times;</button>
     </div>
   </div>
+  <div class="filter-sep"></div>
+  <div class="filter-item">
+    <span>Msg Density Rolling</span>
+    <select id="global-density-sel" class="win-sel" style="font-size:12px;padding:3px 6px">
+      <option value="1m">1m</option>
+      <option value="3m">3m</option>
+      <option value="5m" selected>5m</option>
+      <option value="15m">15m</option>
+      <option value="30m">30m</option>
+      <option value="1h">1h</option>
+      <option value="2h">2h</option>
+      <option value="4h">4h</option>
+      <option value="1d">1d</option>
+    </select>
+    <button class="filter-reset" style="margin-left:4px" onclick="setAllDensityWindows(document.getElementById('global-density-sel').value)">Set All</button>
+  </div>
+  <div class="filter-sep"></div>
+  <div class="filter-item">
+    <span>Msg Sentiment Rolling</span>
+    <select id="global-sentiment-sel" class="win-sel" style="font-size:12px;padding:3px 6px">
+      <option value="1m">1m</option>
+      <option value="3m">3m</option>
+      <option value="5m" selected>5m</option>
+      <option value="15m">15m</option>
+      <option value="30m">30m</option>
+      <option value="1h">1h</option>
+      <option value="2h">2h</option>
+      <option value="4h">4h</option>
+      <option value="1d">1d</option>
+    </select>
+    <button class="filter-reset" style="margin-left:4px" onclick="setAllSentimentWindows(document.getElementById('global-sentiment-sel').value)">Set All</button>
+  </div>
+  <div class="filter-sep"></div>
   <button class="filter-reset" onclick="resetFilters()">Reset Filters</button>
 </div>
 
@@ -960,7 +993,8 @@
         <th onclick="sortTable('rel_volume',event)">Rel Vol</th>
         <th onclick="sortTable('price',event)">Price</th>
         <th onclick="sortTable('change',event)">Change</th>
-        <th style="cursor:default">Window</th>
+        <th style="cursor:default">Msg Density Rolling</th>
+        <th style="cursor:default">Msg Sentiment Rolling</th>
         <th onclick="sortTable('avg_composite_score',event)">Rolling Score</th>
         <th onclick="sortTable('scored_messages',event)">Scored Msgs</th>
         <th onclick="sortTable('total_messages',event)">Total Msgs</th>
@@ -1314,7 +1348,6 @@
       <button class="popup-window-btn" onclick="setPopupWindow('4h',this)">4h</button>
       <button class="popup-window-btn" onclick="setPopupWindow('1d',this)">1d</button>
       <button class="popup-window-btn" onclick="setPopupWindow('1w',this)">1w</button>
-      <button class="popup-window-btn" onclick="setPopupWindow('1mo',this)">1mo</button>
     </div>
 
     <div class="popup-chart-wrap">
@@ -1377,16 +1410,29 @@
   }
 
   // ── Per-ticker window state (persisted to localStorage) ──
-  const WINDOW_OPTIONS  = ["1m","3m","5m","15m","30m","1h","4h","1d"];
-  const WINDOW_MINUTES  = { "1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"4h":240,"1d":1440,"1w":10080,"1mo":43200 };
-  let tickerWindows = {};
+  const WINDOW_OPTIONS  = ["1m","3m","5m","15m","30m","1h","2h","4h","1d"];
+  const WINDOW_MINUTES  = { "1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"1d":1440,"1w":10080 };
+  let tickerDensityWindows  = {};
+  let tickerSentimentWindows = {};
 
   function loadTickerWindows() {
-    try { tickerWindows = JSON.parse(localStorage.getItem("tickerWindows") || "{}"); }
-    catch(e) { tickerWindows = {}; }
+    try { tickerDensityWindows  = JSON.parse(localStorage.getItem("tickerDensityWindows")  || "{}"); }
+    catch(e) { tickerDensityWindows = {}; }
+    try { tickerSentimentWindows = JSON.parse(localStorage.getItem("tickerSentimentWindows") || "{}"); }
+    catch(e) { tickerSentimentWindows = {}; }
   }
-  function saveTickerWindows() {
-    localStorage.setItem("tickerWindows", JSON.stringify(tickerWindows));
+  function saveDensityWindows()   { localStorage.setItem("tickerDensityWindows",  JSON.stringify(tickerDensityWindows));  }
+  function saveSentimentWindows() { localStorage.setItem("tickerSentimentWindows", JSON.stringify(tickerSentimentWindows)); }
+
+  function computeRollingDensity(densityHistory, rollingMinutes) {
+    const cutoff = new Date(Date.now() - rollingMinutes * 60000).toISOString();
+    return (densityHistory || []).filter(d => (d.sort_key || "") >= cutoff).reduce((s, d) => s + (d.count || 0), 0);
+  }
+  function computeRollingScore(scoreHistory, rollingMinutes) {
+    const cutoff = new Date(Date.now() - rollingMinutes * 60000).toISOString();
+    const recent = (scoreHistory || []).filter(d => (d.sort_key || "") >= cutoff);
+    if (!recent.length) return null;
+    return recent.reduce((s, d) => s + (d.score || 0), 0) / recent.length;
   }
 
   async function updateTableRowWindow(ticker, w) {
@@ -1402,27 +1448,52 @@
     } catch(e) { console.error("[quickscore]", e); }
   }
 
-  function setTickerWindow(ticker, w) {
-    tickerWindows[ticker] = w;
-    saveTickerWindows();
+  function _reloadNewsCard(ticker) {
+    if (!newsViewActive) return;
+    const card = document.querySelector(`.news-card[data-ticker="${ticker}"]`);
+    if (!card) return;
+    if (newsCardCharts[ticker]) { newsCardCharts[ticker].destroy(); delete newsCardCharts[ticker]; }
+    card.querySelector(".news-chart-col").innerHTML =
+      '<div class="news-loading-placeholder">Loading chart…</div><canvas class="news-chart-canvas" style="display:none"></canvas>';
+    card.querySelector(".news-messages-col").innerHTML =
+      '<div class="news-loading-placeholder">Loading messages…</div>';
+    card.dataset.loaded = "false";
+    if (newsObserver) { newsObserver.unobserve(card); newsObserver.observe(card); }
+  }
+
+  function setTickerDensityWindow(ticker, w) {
+    tickerDensityWindows[ticker] = w;
+    saveDensityWindows();
+    _reloadNewsCard(ticker);
+  }
+
+  function setTickerSentimentWindow(ticker, w) {
+    tickerSentimentWindows[ticker] = w;
+    saveSentimentWindows();
     updateTableRowWindow(ticker, w);
-    // If the news view is open, reload that ticker's card so it reflects the new window
-    if (newsViewActive) {
-      const card = document.querySelector(`.news-card[data-ticker="${ticker}"]`);
-      if (card) {
-        if (newsCardCharts[ticker]) { newsCardCharts[ticker].destroy(); delete newsCardCharts[ticker]; }
-        card.querySelector(".news-chart-col").innerHTML =
-          '<div class="news-loading-placeholder">Loading chart…</div><canvas class="news-chart-canvas" style="display:none"></canvas>';
-        card.querySelector(".news-messages-col").innerHTML =
-          '<div class="news-loading-placeholder">Loading messages…</div>';
-        card.dataset.loaded = "false";
-        if (newsObserver) { newsObserver.unobserve(card); newsObserver.observe(card); }
-      }
-    }
+    _reloadNewsCard(ticker);
+  }
+
+  function setAllDensityWindows(w) {
+    allTickers.forEach(t => {
+      tickerDensityWindows[t.ticker] = w;
+      const sel = document.getElementById("dwsel-" + t.ticker);
+      if (sel) sel.value = w;
+    });
+    saveDensityWindows();
+  }
+
+  function setAllSentimentWindows(w) {
+    allTickers.forEach(t => {
+      tickerSentimentWindows[t.ticker] = w;
+      const sel = document.getElementById("swsel-" + t.ticker);
+      if (sel) sel.value = w;
+    });
+    saveSentimentWindows();
   }
 
   async function applyTickerWindowOverrides() {
-    const overrides = Object.entries(tickerWindows).filter(([ticker]) =>
+    const overrides = Object.entries(tickerSentimentWindows).filter(([ticker]) =>
       allTickers.some(t => t.ticker === ticker)
     );
     if (!overrides.length) return;
@@ -1841,7 +1912,27 @@
       document.getElementById("metric-most-active-count").textContent =
         mostActive ? (mostActive.total_messages||0) + " msgs" : "--";
 
+      // Refresh stale news view cards so price data doesn't fall behind
+      if (newsViewActive) refreshStaleNewsCards();
+
     } catch(e) { console.error("Failed to fetch scores:", e); }
+  }
+
+  function refreshStaleNewsCards() {
+    const now = Date.now();
+    document.querySelectorAll(".news-card").forEach(card => {
+      if (card.dataset.loaded !== "true") return;
+      const age = now - (parseInt(card.dataset.loadedAt) || 0);
+      if (age < 90000) return; // loaded less than 90s ago — still fresh
+      const ticker = card.dataset.ticker;
+      if (newsCardCharts[ticker]) { newsCardCharts[ticker].destroy(); delete newsCardCharts[ticker]; }
+      card.querySelector(".news-chart-col").innerHTML =
+        '<div class="news-loading-placeholder">Loading chart…</div><canvas class="news-chart-canvas" style="display:none"></canvas>';
+      card.querySelector(".news-messages-col").innerHTML =
+        '<div class="news-loading-placeholder">Loading messages…</div>';
+      card.dataset.loaded = "false";
+      if (newsObserver) { newsObserver.unobserve(card); newsObserver.observe(card); }
+    });
   }
 
   function renderTable(tickers) {
@@ -1875,13 +1966,21 @@
            </div>`
         : "";
 
-      const selW    = tickerWindows[t.ticker] || "5m";
-      const winCell = `<td onclick="event.stopPropagation()" style="padding:4px 8px">
-        <select id="wsel-${safeTicker}" class="win-sel"
-                onchange="setTickerWindow('${safeTicker}',this.value)">
-          ${WINDOW_OPTIONS.map(w => `<option value="${w}"${w===selW?" selected":""}>${w}</option>`).join("")}
-        </select>
-      </td>`;
+      const selD    = tickerDensityWindows[t.ticker]  || "5m";
+      const selS    = tickerSentimentWindows[t.ticker] || "5m";
+      const winCell = `
+        <td onclick="event.stopPropagation()" style="padding:4px 8px">
+          <select id="dwsel-${safeTicker}" class="win-sel"
+                  onchange="setTickerDensityWindow('${safeTicker}',this.value)">
+            ${WINDOW_OPTIONS.map(w => `<option value="${w}"${w===selD?" selected":""}>${w}</option>`).join("")}
+          </select>
+        </td>
+        <td onclick="event.stopPropagation()" style="padding:4px 8px">
+          <select id="swsel-${safeTicker}" class="win-sel"
+                  onchange="setTickerSentimentWindow('${safeTicker}',this.value)">
+            ${WINDOW_OPTIONS.map(w => `<option value="${w}"${w===selS?" selected":""}>${w}</option>`).join("")}
+          </select>
+        </td>`;
 
       const catalystPills    = (t.catalyst_events || [])
         .map(e => eventBadgeHTML(e, "catalyst-pill")).join("");
@@ -2049,41 +2148,47 @@
 
   async function loadPopupData(ticker) {
     try {
-      const rollingW = tickerWindows[ticker] || "5m";
-      const res  = await fetch("/api/ticker/" + ticker + "?window=" + currentPopupWindow + "&rolling=" + rollingW);
+      const densityRollingW   = tickerDensityWindows[ticker]  || "5m";
+      const sentimentRollingW = tickerSentimentWindows[ticker] || "5m";
+      const res  = await fetch("/api/ticker/" + ticker + "?window=" + currentPopupWindow + "&rolling=" + sentimentRollingW);
       const data = await res.json();
-      const rk   = data.rolling_key || rollingW;
 
-      // Update live stat labels to show the rolling window
-      document.getElementById("live-score-label").textContent   = "Rolling Score · " + rk;
-      document.getElementById("live-density-label").textContent = "Rolling Density · " + rk;
+      // Compute rolling stats frontend-side so density and sentiment use their own windows
+      const densityRollingMin   = WINDOW_MINUTES[densityRollingW]   || 5;
+      const sentimentRollingMin = WINDOW_MINUTES[sentimentRollingW] || 5;
+      const rollingDensityTotal = computeRollingDensity(data.density_history, densityRollingMin);
+      const rollingScoreAvg     = computeRollingScore(data.score_history, sentimentRollingMin);
+      const scoredInWindow      = (data.score_history || []).filter(d => {
+        const cutoff = new Date(Date.now() - sentimentRollingMin * 60000).toISOString();
+        return (d.sort_key || "") >= cutoff;
+      }).length;
 
-      const s = data.latest_scores;
-      if (s) {
-        const comp = s.composite_score ?? 0;
+      document.getElementById("live-score-label").textContent   = "Rolling Score · " + sentimentRollingW;
+      document.getElementById("live-density-label").textContent = "Rolling Density · " + densityRollingW;
+
+      if (rollingScoreAvg !== null) {
+        const comp = rollingScoreAvg;
         const el   = document.getElementById("score-composite");
         el.textContent = comp.toFixed(4);
         el.className   = "popup-score-val " + (comp > 0.05 ? "up" : comp < -0.05 ? "down" : "neutral");
-        document.getElementById("score-sentiment").textContent = (s.sentiment_score ?? 0).toFixed(4);
-        document.getElementById("score-trust").textContent     = (s.trust_score     ?? 0).toFixed(4);
-        document.getElementById("score-impact").textContent    = (s.impact_score    ?? 0).toFixed(4);
-        const n = s.scored_count ?? 0;
+        // sub-scores: pull from latest_scores (backend computed, same sentiment window)
+        const s = data.latest_scores;
+        document.getElementById("score-sentiment").textContent = s ? (s.sentiment_score ?? 0).toFixed(4) : "--";
+        document.getElementById("score-trust").textContent     = s ? (s.trust_score     ?? 0).toFixed(4) : "--";
+        document.getElementById("score-impact").textContent    = s ? (s.impact_score    ?? 0).toFixed(4) : "--";
         document.getElementById("popup-score-context").textContent =
-          "Window avg  ·  " + rk + "  ·  " + n + " scored msg" + (n === 1 ? "" : "s");
-        // Rolling score live stat: average over the rolling window
+          "Window avg  ·  " + sentimentRollingW + "  ·  " + scoredInWindow + " scored msg" + (scoredInWindow === 1 ? "" : "s");
         document.getElementById("live-score").textContent = comp.toFixed(4);
       } else {
         document.getElementById("popup-score-context").textContent =
-          "No scored messages in " + rk + " window";
+          "No scored messages in " + sentimentRollingW + " window";
         document.getElementById("live-score").textContent = "--";
       }
-      // Rolling density live stat: total messages in rolling window
-      const total = data.rolling_message_total ?? 0;
-      document.getElementById("live-density").textContent = total + " msgs/" + rk;
+      document.getElementById("live-density").textContent = rollingDensityTotal + " msgs/" + densityRollingW;
 
       document.getElementById("popup-updated").textContent =
         "Updated: " + new Date().toLocaleTimeString();
-      renderCombinedChart(data, rk);
+      renderCombinedChart(data, densityRollingW, sentimentRollingW);
 
       // ── Confirmed events banner ──
       const confirmedTypes   = new Set(data.confirmed_event_types || []);
@@ -2162,7 +2267,7 @@
     });
   }
 
-  function renderCombinedChart(data, rollingKey, canvasEl) {
+  function renderCombinedChart(data, densityRollingKey, sentimentRollingKey, canvasEl) {
     const isPopup = !canvasEl;
     canvasEl = canvasEl || document.getElementById("chart-combined");
     if (isPopup && combinedChart) { combinedChart.destroy(); combinedChart = null; }
@@ -2170,69 +2275,127 @@
     // Use server-generated full time axis as the base
     const timeAxis = data.time_axis || [];
 
+    // Axis step (minutes per label) and whether the window spans multiple calendar days.
+    // On 1d+ windows the same HH:MM appears twice (yesterday + today), so map keys must
+    // include the date to prevent phantom price/score segments from the wrong day.
+    const windowMin = data.window_minutes || 60;
+    const axisStep  = windowMin <= 60 ? 1 : (windowMin <= 1440 ? 5 : (windowMin <= 10080 ? 60 : 1440));
+    const needsDate = windowMin >= 1440;
+
+    // Map key from a full ET time string ("2026-07-02T09:30:00 EDT" or "2026-07-02T09:30:47 EDT").
+    // Returns "MM-DD HH:MM" on daily+ windows, "HH:MM" on shorter ones.
+    function makeKey(timeStr) {
+      if (!timeStr) return "";
+      if (timeStr.includes("T")) {
+        const sep   = timeStr.indexOf("T");
+        const date  = timeStr.substring(0, sep);     // "2026-07-02"
+        const hhmm  = timeStr.substring(sep + 1, sep + 6); // "09:30"
+        return needsDate ? date.substring(5) + " " + hhmm : hhmm;
+      }
+      return timeStr.substring(0, 10);
+    }
+
+    // Like makeKey but snaps to the nearest axis-step boundary.
+    // Uses total minutes since midnight so axisStep >= 60 (hourly, daily) works correctly.
+    function snapKey(timeStr) {
+      if (!timeStr) return "";
+      if (timeStr.includes("T")) {
+        const sep      = timeStr.indexOf("T");
+        const date     = timeStr.substring(0, sep);
+        const h        = parseInt(timeStr.substring(sep + 1, sep + 3));
+        const m        = parseInt(timeStr.substring(sep + 4, sep + 6));
+        const total    = h * 60 + m;
+        const snapped  = Math.floor(total / axisStep) * axisStep;
+        const sh       = String(Math.floor(snapped / 60)).padStart(2, "0");
+        const sm       = String(snapped % 60).padStart(2, "0");
+        return needsDate ? date.substring(5) + " " + sh + ":" + sm : sh + ":" + sm;
+      }
+      return timeStr.substring(0, 10);
+    }
+
     // Build lookup maps from actual data using ET time strings
     const pMap = {}, sMap = {}, dMap = {};
 
     data.price_history.forEach(d => {
-      // Match on HH:MM portion of time string
-      const key = extractLabel(d.time);
-      pMap[key] = d.price;
+      pMap[snapKey(d.time)] = d.price;
     });
 
     data.score_history.forEach(d => {
-      const key = extractLabel(d.time);
-      // Average multiple scores at same minute
+      const key = snapKey(d.time);
       if (sMap[key] === undefined) sMap[key] = [];
       sMap[key].push(d.score);
     });
 
     data.density_history.forEach(d => {
-      const key = extractLabel(d.time);
-      dMap[key] = d.count;
+      const key = snapKey(d.time);
+      dMap[key] = (dMap[key] || 0) + d.count;
     });
 
-    // Average scores at same minute
+    // Average scores per bucket
     const sMapAvg = {};
     Object.keys(sMap).forEach(k => {
       const arr = sMap[k];
       sMapAvg[k] = arr.reduce((a, b) => a + b, 0) / arr.length;
     });
 
-    // Map to full time axis
+    // displayLabels: short HH:MM used for x-axis tick labels (readable, no date clutter)
+    // axisKeys: full lookup key — includes date on daily+ windows to prevent day-crossing collision
     const displayLabels = timeAxis.map(t => extractLabel(t));
+    const axisKeys      = timeAxis.map(t => makeKey(t));
 
-    const rawP = displayLabels.map(l => pMap[l] ?? null);
+    const rawP = axisKeys.map(k => pMap[k] ?? null);
 
-    // Rolling 5-minute average score: at each minute, average all actual
-    // scored minutes within the trailing 5-minute window (T-5 to T).
-    const rawS = displayLabels.map((l, i) => {
-      const start  = Math.max(0, i - 5);
-      const window = displayLabels.slice(start, i + 1);
-      const scores = window.map(lbl => sMapAvg[lbl]).filter(v => v !== undefined);
+    // Rolling average score using the per-ticker sentiment rolling window
+    const sentimentMinutes = WINDOW_MINUTES[sentimentRollingKey] || 5;
+    const sentimentLabels  = Math.max(1, Math.round(sentimentMinutes / axisStep));
+    const rawS = axisKeys.map((k, i) => {
+      const start  = Math.max(0, i - sentimentLabels + 1);
+      const window = axisKeys.slice(start, i + 1);
+      const scores = window.map(ak => sMapAvg[ak]).filter(v => v !== undefined);
       return scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : null;
     });
 
-    // Per-minute message counts (raw)
-    const rawD = displayLabels.map(l => dMap[l] !== undefined ? dMap[l] : 0);
+    // Forward-fill trailing nulls so the score line reaches the chart's right edge.
+    // Cap at 12 steps (12 min on 1h, 60 min on 1d) so the line doesn't bridge the overnight gap.
+    let _lastScore = null, _lsGap = 0;
+    const rawSFilled = rawS.map(v => {
+      if (v !== null) { _lastScore = v; _lsGap = 0; return v; }
+      return (_lastScore !== null && ++_lsGap <= 12) ? _lastScore : null;
+    });
 
-    const rollingMinutes = WINDOW_MINUTES[rollingKey] || 5;
+    // Per-step message counts
+    const rawD = axisKeys.map(k => dMap[k] !== undefined ? dMap[k] : 0);
+
+    // Convert density rolling window minutes → label count so density is correct on long windows
+    const rollingMinutes = WINDOW_MINUTES[densityRollingKey] || 5;
+    const rollingLabels  = Math.max(1, Math.round(rollingMinutes / axisStep));
     const rollingD = rawD.map((_, i) => {
-      const start = Math.max(0, i - rollingMinutes + 1);
+      const start = Math.max(0, i - rollingLabels + 1);
       return rawD.slice(start, i + 1).reduce((a, b) => a + b, 0);
     });
 
-    const normP = normalize(rawP);
-    const hasPriceData = rawP.some(v => v != null);
-    // Score is in [-1, +1] — use fixed mapping so 0 = Mid, +1 = High, -1 = Low
-    const normS = rawS.map(v => v == null ? null : (v + 1) / 2);
+    // Forward-fill price gaps — holds last known price through missing Finviz bars,
+    // halts, and the Finviz lag at the right edge. Safe because price_history is
+    // already filtered to today's session only; there are no cross-day bars to bleed.
+    // Pre-session slots (before first bar) remain null since _lp starts null.
+    let _lp = null;
+    const rawPFilled = rawP.map(v => {
+      if (v != null) { _lp = v; return v; }
+      return _lp;
+    });
 
-    // Event markers — first tagged event per minute bucket (stores full event object)
+    const normP = normalize(rawPFilled);
+    const hasPriceData = rawP.some(v => v != null);
+    // Score is in [-1, +1] — fixed mapping so 0 = Mid, +1 = High, -1 = Low
+    const normS = rawSFilled.map(v => v == null ? null : (v + 1) / 2);
+
+    // Event markers — first tagged event per step bucket
     const eMap = {};
     (data.event_history || []).forEach(e => {
-      const key = extractLabel(e.time);
+      const key = snapKey(e.time);
       if (!eMap[key]) eMap[key] = e;
     });
-    const evRaw    = displayLabels.map(l => eMap[l] || null);
+    const evRaw    = axisKeys.map(k => eMap[k] || null);
     const evY      = evRaw.map(v => v ? 0.04 : null);
     const evColors = evRaw.map(v => v ? ((EVENT_META[v.event_type] || {}).color || "#888") : "transparent");
     const evRadii  = evRaw.map(v => v ? 7 : 0);
@@ -2263,7 +2426,7 @@
         datasets: [
           ...(hasPriceData ? [{
             label: "Price",
-            data: normP, rawData: rawP,
+            data: normP, rawData: rawPFilled,
             borderColor: "#ef4444", borderWidth: 2,
             pointRadius: 0, fill: false, tension: 0, spanGaps: false,
             yAxisID: "y"
@@ -2325,7 +2488,7 @@
                 if (raw == null) return ctx.dataset.label + ": --";
                 if (ctx.dataset.label === "Price")         return "Price: $"  + raw.toFixed(2);
                 if (ctx.dataset.label === "Rolling Score") return "Score: "   + raw.toFixed(4);
-                if (ctx.dataset.label === "Msg Density")   return "Density: " + raw + " msgs/" + (rollingKey || "5m");
+                if (ctx.dataset.label === "Msg Density")   return "Density: " + raw + " msgs/" + (densityRollingKey || "5m");
                 return ctx.dataset.label + ": " + raw;
               }
             }
@@ -2794,7 +2957,8 @@
   async function loadNewsCard(card) {
     card.dataset.loaded = "true";
     const ticker  = card.dataset.ticker;
-    const rollingW = tickerWindows[ticker] || "5m";
+    const densityRollingW   = tickerDensityWindows[ticker]  || "5m";
+    const sentimentRollingW = tickerSentimentWindows[ticker] || "5m";
     try {
       // Fire all independent fetches immediately in parallel
       const msgPromise        = fetch("/api/ticker-messages/" + ticker + "?limit=15&window=1440");
@@ -2810,7 +2974,7 @@
 
       if (!chartData) {
         // Full fallback: MongoDB + price in one call
-        const r = await fetch("/api/ticker/" + ticker + "?window=" + currentWindow + "&rolling=" + rollingW);
+        const r = await fetch("/api/ticker/" + ticker + "?window=" + currentWindow + "&rolling=" + sentimentRollingW);
         if (!r.ok) { card.dataset.loaded = "false"; return; }
         chartData = await r.json();
       } else {
@@ -2838,10 +3002,10 @@
       if (placeholder) placeholder.remove();
       canvas.style.display = "";
 
-      const rk = rollingW || chartData.rolling_key;
       newsCardEvents[ticker] = chartData.event_history || [];
-      const chartInst = renderCombinedChart(chartData, rk, canvas);
+      const chartInst = renderCombinedChart(chartData, densityRollingW, sentimentRollingW, canvas);
       newsCardCharts[ticker] = chartInst;
+      card.dataset.loadedAt = Date.now(); // timestamp for stale-refresh logic
 
       const msgCol = card.querySelector(".news-messages-col");
       msgCol.innerHTML = renderNewsMessages(msgData.messages || [], ticker);
