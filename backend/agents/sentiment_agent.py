@@ -108,7 +108,7 @@ def calculate_sentiment_scores_batch(message_bodies: list) -> list:
     safe = [c if c else "neutral" for c in cleaned]
 
     try:
-        results = sentiment_pipeline(safe, truncation=True)
+        results = sentiment_pipeline(safe, truncation=True, batch_size=32)
         scores = []
         for i, result in enumerate(results):
             if not cleaned[i]:
