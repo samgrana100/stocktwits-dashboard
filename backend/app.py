@@ -808,9 +808,9 @@ def get_scores():
 
 
 def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label):
-    if price_hist and finviz_param == "i1":
-        sort_keys = sorted(set(p["sort_key"] for p in price_hist))
-        return [sk + " " + tz_label for sk in sort_keys]
+    # Always generate a regular time axis covering the full window so that
+    # score/density data is never cut off by sparse price bar timestamps.
+    # Price data maps onto this axis via extractLabel in the frontend.
     axis = []
     step = 1 if window_min <= 60 else (5 if window_min <= 1440 else (60 if window_min <= 10080 else 1440))
     current = window_start_dt.replace(tzinfo=timezone.utc)
