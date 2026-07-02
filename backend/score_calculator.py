@@ -7,9 +7,10 @@
 import sys
 import os
 from collections import defaultdict
+from datetime import datetime, timezone, timedelta
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from db import scored_messages, message_density
+from db import scored_messages, message_density, price_history
 from agents.trust_agent import calculate_trust_score
 from agents.impact_agent import calculate_impact_score
 from agents.sentiment_agent import calculate_sentiment_scores_batch
@@ -127,7 +128,10 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     Also returns bull/bear signal breakdown.
     """
 
-    window_start = get_window_start_iso(rolling_window_minutes)
+    window_start     = get_window_start_iso(rolling_window_minutes)
+    short_window     = max(1, rolling_window_minutes // 12)
+    short_start      = get_window_start_iso(short_window)
+    rolling_start_dt = datetime.now(timezone.utc) - timedelta(minutes=rolling_window_minutes)
 
     scored_pipeline = [
         {
@@ -164,6 +168,38 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     ]))
     catalyst_map = {r["_id"]: r["events"] for r in catalyst_results}
 
+    # ── Short-term counts per ticker (for density direction)
+    short_count_map = {
+        r["_id"]: r["count"]
+        for r in scored_messages.aggregate([
+            {"$match": {"created_at_utc": {"$gte": short_start}}},
+            {"$group": {"_id": "$ticker", "count": {"$sum": 1}}}
+        ])
+    }
+
+    # ── Short-term sentiment averages per ticker (for sentiment direction)
+    short_sent_map = {
+        r["_id"]: {"avg": r["avg_score"], "n": r["n"]}
+        for r in scored_messages.aggregate([
+            {"$match": {"created_at_utc": {"$gte": short_start}, "composite_score": {"$ne": None}}},
+            {"$group": {"_id": "$ticker", "avg_score": {"$avg": "$composite_score"}, "n": {"$sum": 1}}}
+        ])
+    }
+
+    # ── Intraday price trend from MongoDB price_history (for price direction)
+    price_docs = list(price_history.find(
+        {"ts": {"$gte": rolling_start_dt}},
+        {"ticker": 1, "price": 1, "ts": 1}
+    ).sort("ts", 1))
+    price_by_ticker = defaultdict(list)
+    for doc in price_docs:
+        price_by_ticker[doc["ticker"]].append(doc["price"])
+    price_trend_map = {}
+    for t, prices in price_by_ticker.items():
+        if len(prices) >= 2:
+            oldest, newest = prices[0], prices[-1]
+            price_trend_map[t] = round((newest - oldest) / oldest * 100, 2) if oldest > 0 else 0.0
+
     # ── Surge signal: always compare last 5m vs last 1h (raw counts, no scoring required)
     surge_5m_map = {
         r["_id"]: r["count"]
@@ -179,6 +215,51 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             {"$group": {"_id": "$ticker", "count": {"$sum": 1}}}
         ])
     }
+
+    def _compute_signal(ticker, total_cnt, avg_composite):
+        # Density direction: compare short-term count vs expected rate
+        short_cnt    = short_count_map.get(ticker, 0)
+        rolling_rate = (total_cnt * short_window / rolling_window_minutes) if rolling_window_minutes > 0 else 0
+        if total_cnt >= 5 and short_cnt >= max(3, rolling_rate * 1.5):
+            density_dir = "up"
+        elif total_cnt >= 10 and rolling_rate > 0 and short_cnt <= rolling_rate * 0.5:
+            density_dir = "down"
+        else:
+            density_dir = "flat"
+
+        # Sentiment direction: compare short-term avg score vs rolling avg
+        short_sent   = short_sent_map.get(ticker, {})
+        short_avg    = short_sent.get("avg")
+        short_sent_n = short_sent.get("n", 0)
+        if short_avg is not None and short_sent_n >= 3:
+            if short_avg > avg_composite + 0.05:
+                sentiment_dir = "up"
+            elif short_avg < avg_composite - 0.05:
+                sentiment_dir = "down"
+            else:
+                sentiment_dir = "flat"
+        else:
+            sentiment_dir = "flat"
+
+        # Price direction: intraday % change over rolling window from MongoDB
+        price_pct = price_trend_map.get(ticker)
+        if price_pct is None:
+            price_dir = "unknown"
+        elif price_pct > 0.5:
+            price_dir = "up"
+        elif price_pct < -0.5:
+            price_dir = "down"
+        else:
+            price_dir = "flat"
+
+        # Signal classification — both density AND sentiment must agree
+        signal = None
+        if density_dir == "up" and sentiment_dir == "up":
+            signal = "bullish_corr" if price_dir == "up" else "early_long"
+        elif density_dir == "down" and sentiment_dir == "down":
+            signal = "bearish_corr" if price_dir == "down" else "early_short"
+
+        return signal, density_dir, sentiment_dir, price_dir, price_pct
 
     # Group by ticker
     ticker_msgs = defaultdict(list)
@@ -207,6 +288,9 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         expected_5m = count_1h / 12
         surge_ratio = round(count_5m / expected_5m, 1) if expected_5m > 0 and count_5m >= 3 else 0.0
 
+        signal, density_dir, sentiment_dir, price_dir, price_pct = \
+            _compute_signal(ticker, total_map.get(ticker, len(msgs)), avg_composite)
+
         ticker_scores.append({
             "ticker":              ticker,
             "avg_composite_score": round(avg_composite, 4),
@@ -222,7 +306,12 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             "bear_pct":            bear_pct,
             "surge_ratio":         surge_ratio,
             "catalyst_events":     catalyst_map.get(ticker, []),
-            "rolling_window_minutes": rolling_window_minutes
+            "rolling_window_minutes": rolling_window_minutes,
+            "signal":              signal,
+            "density_dir":         density_dir,
+            "sentiment_dir":       sentiment_dir,
+            "price_dir":           price_dir,
+            "price_trend_pct":     price_pct,
         })
 
     # Add tickers with messages but no scored messages yet
@@ -231,6 +320,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         count_1h    = surge_1h_map.get(ticker, 0)
         expected_5m = count_1h / 12
         surge_ratio = round(count_5m / expected_5m, 1) if expected_5m > 0 and count_5m >= 3 else 0.0
+
+        _, density_dir, _, price_dir, price_pct = _compute_signal(ticker, total_map.get(ticker, 0), 0.0)
 
         ticker_scores.append({
             "ticker":              ticker,
@@ -247,7 +338,12 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             "bear_pct":            0.0,
             "surge_ratio":         surge_ratio,
             "catalyst_events":     catalyst_map.get(ticker, []),
-            "rolling_window_minutes": rolling_window_minutes
+            "rolling_window_minutes": rolling_window_minutes,
+            "signal":              None,
+            "density_dir":         density_dir,
+            "sentiment_dir":       "flat",
+            "price_dir":           price_dir,
+            "price_trend_pct":     price_pct,
         })
 
     # Scored tickers first, ranked by weighted composite score; unscored at bottom

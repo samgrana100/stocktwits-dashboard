@@ -154,17 +154,31 @@
     .filter-item select:focus, .filter-item input:focus { border-color: var(--blue); }
     .filter-item input { width: 72px; }
     #filter-avgvol { width: 90px; }
-    .corr-cell { white-space: nowrap; padding: 4px 8px !important; }
-    .corr-input {
-      width: 38px; background: var(--bg-overlay); border: 1px solid var(--border-subtle);
-      color: var(--text-muted); font-size: 10px; padding: 2px 4px;
-      border-radius: var(--r-sm); outline: none; text-align: center;
-      transition: border-color var(--t-fast);
-    }
-    .corr-input:focus { border-color: var(--blue); color: var(--text-secondary); }
-    .corr-input::-webkit-inner-spin-button,
-    .corr-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-    .corr-dash { color: var(--text-muted); font-size: 11px; margin: 0 3px; }
+    .signal-badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 10px; font-weight: 600; letter-spacing: 0.4px; white-space: nowrap; }
+    .sig-bullish-corr { background: rgba(34,197,94,0.12);  color: #22c55e; border: 1px solid rgba(34,197,94,0.25); }
+    .sig-bearish-corr { background: rgba(239,68,68,0.12);  color: #ef4444; border: 1px solid rgba(239,68,68,0.25); }
+    .sig-early-long   { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.25); }
+    .sig-early-short  { background: rgba(251,191,36,0.12); color: #fbbf24; border: 1px solid rgba(251,191,36,0.25); }
+    .sig-filter-btn { padding: 3px 9px; font-size: 11px; background: transparent; border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-muted); cursor: pointer; transition: all 0.15s; }
+    .sig-filter-btn:hover  { border-color: var(--blue); color: var(--text-primary); }
+    .sig-filter-btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
+    /* ── MOMENTUM VIEW ── */
+    .momentum-view { display: none; overflow-y: auto; padding: 14px 20px; background: var(--bg-base); }
+    .momentum-view.active { display: block; }
+    .momentum-header { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; }
+    .momentum-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+    .momentum-card { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; transition: border-color 0.15s; }
+    .momentum-card:hover { border-color: var(--blue); }
+    .momentum-card-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4px; }
+    .momentum-ticker { font-size: 15px; font-weight: 700; color: var(--text-primary); }
+    .momentum-company { font-size: 11px; color: var(--text-muted); margin-bottom: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .momentum-metrics { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+    .momentum-metric { background: var(--bg-base); border-radius: 4px; padding: 6px 8px; }
+    .momentum-metric-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 3px; }
+    .momentum-metric-val { font-size: 12px; font-weight: 600; }
+    .dir-up   { color: #22c55e; }
+    .dir-down { color: #ef4444; }
+    .dir-flat { color: var(--text-muted); }
     #filter-keyword { width: 130px; }
     .filter-keyword-wrap { position: relative; display: flex; align-items: center; }
     .filter-keyword-clear {
@@ -851,6 +865,7 @@
     <button class="window-btn" onclick="setWindow('1w',this)">1w</button>
     <button class="window-btn" onclick="setWindow('1mo',this)">1mo</button>
     <button class="update-filters-btn" onclick="openScreenerModal(true)">Update Filters</button>
+    <button class="news-view-btn" id="momentum-view-btn" onclick="toggleMomentumView()">Momentum</button>
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
     <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
@@ -973,6 +988,17 @@
     <button class="filter-reset" style="margin-left:4px" onclick="setAllSentimentWindows(document.getElementById('global-sentiment-sel').value)">Set All</button>
   </div>
   <div class="filter-sep"></div>
+  <div class="filter-item">
+    <span>Signal</span>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">
+      <button class="sig-filter-btn active" onclick="setSignalFilter('all',this)">All</button>
+      <button class="sig-filter-btn" onclick="setSignalFilter('bullish_corr',this)">↑ Bullish Corr</button>
+      <button class="sig-filter-btn" onclick="setSignalFilter('bearish_corr',this)">↓ Bearish Corr</button>
+      <button class="sig-filter-btn" onclick="setSignalFilter('early_long',this)">⚡ Early Long</button>
+      <button class="sig-filter-btn" onclick="setSignalFilter('early_short',this)">⚡ Early Short</button>
+    </div>
+  </div>
+  <div class="filter-sep"></div>
   <button class="filter-reset" onclick="resetFilters()">Reset Filters</button>
 </div>
 
@@ -998,10 +1024,9 @@
         <th onclick="sortTable('avg_composite_score',event)">Rolling Score</th>
         <th onclick="sortTable('scored_messages',event)">Scored Msgs</th>
         <th onclick="sortTable('total_messages',event)">Total Msgs</th>
-        <th onclick="sortTable('message_count',event)">Msg Density</th>
+        <th onclick="sortTable('total_messages',event)">Msg Density</th>
         <th onclick="sortTable('surge_ratio',event)">Surge</th>
-        <th style="cursor:default">Px &times; Sent Corr</th>
-        <th style="cursor:default">Px &times; Density Corr</th>
+        <th style="cursor:default">Signal</th>
       </tr>
     </thead>
     <tbody id="table-body">
@@ -1030,6 +1055,21 @@
 </div>
 
 </div><!-- /content-layout -->
+
+<div id="momentum-view" class="momentum-view">
+  <div class="momentum-header">
+    <span style="font-size:13px;font-weight:600;color:var(--text-primary);letter-spacing:0.05em">MOMENTUM VIEW</span>
+    <div style="display:flex;gap:4px;flex-wrap:wrap">
+      <button class="sig-filter-btn active" onclick="setMomentumFilter('all',this)">All</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('bullish_corr',this)">↑ Bullish Corr</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('bearish_corr',this)">↓ Bearish Corr</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('early_long',this)">⚡ Early Long</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('early_short',this)">⚡ Early Short</button>
+    </div>
+    <span id="momentum-count" style="font-size:11px;color:var(--text-muted);margin-left:4px"></span>
+  </div>
+  <div id="momentum-grid" class="momentum-grid"></div>
+</div>
 
 <div id="news-view" class="news-view">
   <div class="news-source-filter-bar">
@@ -1619,6 +1659,28 @@
     return `<div class="news-catalyst-banner">${items.join("")}</div>`;
   }
 
+  // ── Signal helpers ──
+  const SIG_LABELS  = { bullish_corr: "↑ Bullish Corr", bearish_corr: "↓ Bearish Corr", early_long: "⚡ Early Long", early_short: "⚡ Early Short" };
+  const SIG_CLASSES = { bullish_corr: "sig-bullish-corr", bearish_corr: "sig-bearish-corr", early_long: "sig-early-long", early_short: "sig-early-short" };
+
+  function signalBadgeHTML(signal) {
+    if (!signal) return '<span style="color:var(--text-muted);font-size:11px">—</span>';
+    return `<span class="signal-badge ${SIG_CLASSES[signal] || ''}">${SIG_LABELS[signal] || signal}</span>`;
+  }
+  function dirArrow(dir) {
+    if (dir === "up")   return '<span class="dir-up">↑</span>';
+    if (dir === "down") return '<span class="dir-down">↓</span>';
+    return '<span class="dir-flat">→</span>';
+  }
+
+  let activeSignalFilter = "all";
+  function setSignalFilter(sig, btn) {
+    activeSignalFilter = sig;
+    document.querySelectorAll(".filter-bar .sig-filter-btn").forEach(b => b.classList.remove("active"));
+    if (btn) btn.classList.add("active");
+    applyFiltersAndRender();
+  }
+
   function surgeCell(ratio) {
     if (!ratio || ratio < 1.5) return "";
     const cls = ratio >= 3 ? "surge-hot" : "surge-rising";
@@ -1758,8 +1820,12 @@
         if (!haystack.includes(fKeyword)) return false;
       }
 
+      if (activeSignalFilter !== "all" && (t.signal || null) !== activeSignalFilter) return false;
+
       return true;
     });
+
+    if (momentumViewActive) renderMomentumView(filtered);
 
     filtered.sort((a, b) => {
       for (const { key, asc } of sortKeys) {
@@ -1787,6 +1853,9 @@
     sortKeys = [{ key: "avg_composite_score", asc: false }];
     updateSortHeaders();
     clearKeyword();
+    activeSignalFilter = "all";
+    document.querySelectorAll(".filter-bar .sig-filter-btn").forEach((b, i) => b.classList.toggle("active", i === 0));
+    applyFiltersAndRender();
   }
   let refreshTimer       = 90;
   let countdownInterval;
@@ -1947,11 +2016,6 @@
       const scoreDisp  = (score > 0 ? "+" : "") + score.toFixed(4);
       const barWidth   = Math.min(Math.abs(score) * 500, 100);
       const barClass   = score > 0.05 ? "score-fill-pos" : score < -0.05 ? "score-fill-neg" : "score-fill-neu";
-      const density    = t.message_count || 0;
-      let dc = "density-low", dl = "Low";
-      if (density > 20) { dc = "density-high"; dl = "High"; }
-      else if (density > 8) { dc = "density-med"; dl = "Med"; }
-
       const safeTicker   = (t.ticker   || "").replace(/'/g, "\\'");
       const safeCompany  = (t.company  || "--").replace(/'/g, "\\'");
       const safeSector   = (t.sector   || "--").replace(/'/g, "\\'");
@@ -2008,18 +2072,9 @@
         </td>
         <td style="color:#777">${t.scored_messages||0}</td>
         <td style="color:#555">${t.total_messages||0}</td>
-        <td><span class="density-badge ${dc}">${dl}</span></td>
+        <td style="color:#aaa">${t.total_messages||0}</td>
         <td>${surgeCell(t.surge_ratio)}</td>
-        <td onclick="event.stopPropagation()" class="corr-cell">
-          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="-1">
-          <span class="corr-dash">&ndash;</span>
-          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="1">
-        </td>
-        <td onclick="event.stopPropagation()" class="corr-cell">
-          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="-1">
-          <span class="corr-dash">&ndash;</span>
-          <input class="corr-input" type="number" step="0.01" min="-1" max="1" placeholder="1">
-        </td>
+        <td>${signalBadgeHTML(t.signal)}</td>
       </tr>`;
     }).join("");
   }
@@ -2692,6 +2747,7 @@
   let guideViewActive = false;
 
   function toggleGuideView() {
+    if (momentumViewActive) { momentumViewActive = false; document.getElementById("momentum-view-btn").classList.remove("active"); document.getElementById("momentum-view").classList.remove("active"); }
     guideViewActive = !guideViewActive;
     document.getElementById("guide-btn").classList.toggle("active", guideViewActive);
     document.getElementById("guide-view").classList.toggle("active", guideViewActive);
@@ -2709,6 +2765,85 @@
       document.getElementById("news-view-btn").classList.remove("active");
       document.getElementById("news-view").classList.remove("active");
     }
+  }
+
+  // ── MOMENTUM VIEW ──────────────────────────────────────────────────────
+  let momentumViewActive    = false;
+  let activeMomentumFilter  = "all";
+
+  function setMomentumFilter(sig, btn) {
+    activeMomentumFilter = sig;
+    document.querySelectorAll("#momentum-view .sig-filter-btn").forEach(b => b.classList.remove("active"));
+    if (btn) btn.classList.add("active");
+    renderMomentumView();
+  }
+
+  function toggleMomentumView() {
+    momentumViewActive = !momentumViewActive;
+    document.getElementById("momentum-view-btn").classList.toggle("active", momentumViewActive);
+    document.getElementById("momentum-view").classList.toggle("active", momentumViewActive);
+    if (momentumViewActive) {
+      if (newsViewActive)  { newsViewActive  = false; document.getElementById("news-view-btn").classList.remove("active"); document.getElementById("news-view").classList.remove("active"); }
+      if (guideViewActive) { guideViewActive = false; document.getElementById("guide-btn").classList.remove("active"); document.getElementById("guide-view").classList.remove("active"); }
+      renderMomentumView();
+    }
+  }
+
+  function renderMomentumView(tickers) {
+    const grid  = document.getElementById("momentum-grid");
+    const count = document.getElementById("momentum-count");
+    if (!grid) return;
+
+    const source = (tickers || allTickers).filter(t => {
+      if (!t.signal) return false;
+      if (activeMomentumFilter !== "all" && t.signal !== activeMomentumFilter) return false;
+      return true;
+    });
+
+    count.textContent = source.length + " signal" + (source.length === 1 ? "" : "s");
+
+    if (!source.length) {
+      grid.innerHTML = '<div style="color:var(--text-muted);padding:20px;font-size:13px">No signals detected. Try a longer rolling window or wait for more message activity.</div>';
+      return;
+    }
+
+    grid.innerHTML = source.map(t => {
+      const safeTicker   = (t.ticker   || "").replace(/'/g, "\\'");
+      const safeCompany  = (t.company  || "--").replace(/'/g, "\\'");
+      const safeSector   = (t.sector   || "--").replace(/'/g, "\\'");
+      const safeIndustry = (t.industry || "--").replace(/'/g, "\\'");
+
+      const pricePct   = t.price_trend_pct;
+      const priceStr   = pricePct != null ? (pricePct > 0 ? "+" : "") + pricePct.toFixed(2) + "%" : "N/A";
+      const priceClass = pricePct == null ? "dir-flat" : pricePct > 0.5 ? "dir-up" : pricePct < -0.5 ? "dir-down" : "dir-flat";
+
+      const score      = t.avg_composite_score || 0;
+      const scoreStr   = (score > 0 ? "+" : "") + score.toFixed(4);
+      const scoreClass = score > 0.05 ? "dir-up" : score < -0.05 ? "dir-down" : "dir-flat";
+
+      return `
+        <div class="momentum-card" onclick="openPopup('${safeTicker}','${safeCompany}','${safeSector}','${safeIndustry}')">
+          <div class="momentum-card-header">
+            <span class="momentum-ticker">${t.ticker || "--"}</span>
+            ${signalBadgeHTML(t.signal)}
+          </div>
+          <div class="momentum-company">${t.company || "--"} · ${t.industry || "--"}</div>
+          <div class="momentum-metrics">
+            <div class="momentum-metric">
+              <div class="momentum-metric-label">Price (intraday)</div>
+              <div class="momentum-metric-val ${priceClass}">${priceStr} ${dirArrow(t.price_dir)}</div>
+            </div>
+            <div class="momentum-metric">
+              <div class="momentum-metric-label">Msg Density</div>
+              <div class="momentum-metric-val">${t.total_messages || 0} msgs ${dirArrow(t.density_dir)}</div>
+            </div>
+            <div class="momentum-metric">
+              <div class="momentum-metric-label">Avg Score</div>
+              <div class="momentum-metric-val ${scoreClass}">${scoreStr} ${dirArrow(t.sentiment_dir)}</div>
+            </div>
+          </div>
+        </div>`;
+    }).join("");
   }
 
   // ── NEWS VIEW ──────────────────────────────────────────────────────────
@@ -2834,6 +2969,7 @@
   }
 
   function toggleNewsView() {
+    if (momentumViewActive) { momentumViewActive = false; document.getElementById("momentum-view-btn").classList.remove("active"); document.getElementById("momentum-view").classList.remove("active"); }
     newsViewActive = !newsViewActive;
     document.getElementById("news-view-btn").classList.toggle("active", newsViewActive);
     document.getElementById("news-view").classList.toggle("active", newsViewActive);
