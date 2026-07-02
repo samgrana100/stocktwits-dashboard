@@ -363,7 +363,10 @@ def get_finviz_price_history(ticker: str, finviz_param: str, window_minutes: int
             s = str(date_str).strip()
             # Finviz hybrid format: hours 0-12 use "HH:MM AM/PM" (12-hour),
             # hours 13-23 use "HH:MM PM" (24-hour number but still appends PM).
+            # Some exports abbreviate to single char "P"/"A" — normalize first.
             # %I:%M %p rejects hour>=13, so we strip the suffix and use %H:%M instead.
+            if s.endswith(" P"): s = s[:-2] + " PM"
+            if s.endswith(" A"): s = s[:-2] + " AM"
             upper = s.upper()
             if upper.endswith(" AM") or upper.endswith(" PM"):
                 parts = s.rsplit(" ", 2)
@@ -1569,10 +1572,14 @@ def run_scorer_loop(stop_flag: list):
     print("[SCORER THREAD] Starting continuous scoring loop...")
     while not stop_flag[0]:
         try:
-            score_unscored_messages(batch_size=50)
+            score_unscored_messages(batch_size=500)
+            after = scored_messages.count_documents({"composite_score": None})
+            # Only sleep when the queue is fully drained — keep hammering if backlog remains
+            if after == 0:
+                time.sleep(10)
         except Exception as e:
             print("[SCORER THREAD] Error: " + str(e))
-        time.sleep(10)
+            time.sleep(10)
     print("[SCORER THREAD] Stopped.")
 
 

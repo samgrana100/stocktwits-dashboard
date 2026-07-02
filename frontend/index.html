@@ -1354,6 +1354,28 @@
   let currentPopupWindow = "1h";
   let currentPopupTicker = "";
 
+  // ── Price-fetch throttle: max 3 concurrent Finviz price requests ──
+  const _priceQueue = [];
+  let   _priceActive = 0;
+  const PRICE_CONCURRENCY = 3;
+
+  function _drainPriceQueue() {
+    while (_priceActive < PRICE_CONCURRENCY && _priceQueue.length > 0) {
+      const { url, resolve, reject } = _priceQueue.shift();
+      _priceActive++;
+      fetch(url)
+        .then(resolve, reject)
+        .finally(() => { _priceActive--; _drainPriceQueue(); });
+    }
+  }
+
+  function fetchPriceThrottled(ticker, window) {
+    return new Promise((resolve, reject) => {
+      _priceQueue.push({ url: "/api/price/" + ticker + "?window=" + window, resolve, reject });
+      _drainPriceQueue();
+    });
+  }
+
   // ── Per-ticker window state (persisted to localStorage) ──
   const WINDOW_OPTIONS  = ["1m","3m","5m","15m","30m","1h","4h","1d"];
   const WINDOW_MINUTES  = { "1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"4h":240,"1d":1440,"1w":10080,"1mo":43200 };
@@ -2200,6 +2222,7 @@
     });
 
     const normP = normalize(rawP);
+    const hasPriceData = rawP.some(v => v != null);
     // Score is in [-1, +1] — use fixed mapping so 0 = Mid, +1 = High, -1 = Low
     const normS = rawS.map(v => v == null ? null : (v + 1) / 2);
 
@@ -2218,18 +2241,33 @@
     const lastPrice = [...rawP].reverse().find(v => v != null);
     if (isPopup) document.getElementById("live-price").textContent = lastPrice != null ? "$" + lastPrice.toFixed(2) : "--";
 
+    const noPricePlugin = {
+      id: "noPriceLabel",
+      afterDraw(chart) {
+        if (hasPriceData) return;
+        const ctx2 = chart.ctx;
+        const { left, top, width } = chart.chartArea;
+        ctx2.save();
+        ctx2.font = "11px sans-serif";
+        ctx2.fillStyle = "rgba(239,68,68,0.5)";
+        ctx2.textAlign = "left";
+        ctx2.fillText("Price unavailable", left + 6, top + 14);
+        ctx2.restore();
+      }
+    };
+
     const chartInst = new Chart(canvasEl, {
       type: "line",
       data: {
         labels: displayLabels,
         datasets: [
-          {
+          ...(hasPriceData ? [{
             label: "Price",
             data: normP, rawData: rawP,
             borderColor: "#ef4444", borderWidth: 2,
             pointRadius: 0, fill: false, tension: 0, spanGaps: false,
             yAxisID: "y"
-          },
+          }] : []),
           {
             label: "Rolling Score",
             data: normS, rawData: rawS,
@@ -2259,6 +2297,7 @@
           }
         ]
       },
+      plugins: [noPricePlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -2778,7 +2817,7 @@
         // Batch gave us MongoDB data (no price). Fetch price lazily — one request
         // per visible card, so Finviz only ever sees 2-3 concurrent requests.
         try {
-          const priceRes = await fetch("/api/price/" + ticker + "?window=" + currentWindow);
+          const priceRes = await fetchPriceThrottled(ticker, currentWindow);
           if (priceRes.ok) {
             const pd = await priceRes.json();
             chartData = Object.assign({}, chartData, {
