@@ -161,6 +161,11 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     total_results = list(scored_messages.aggregate(total_pipeline))
     total_map     = {r["_id"]: r["total_messages"] for r in total_results}
 
+    # Threshold for "high density" tickers (used by peak_fade signal)
+    total_counts           = list(total_map.values())
+    mean_messages          = sum(total_counts) / len(total_counts) if total_counts else 1
+    high_density_threshold = max(10, mean_messages * 1.25)
+
     # Catalyst events per ticker in window
     catalyst_results = list(scored_messages.aggregate([
         {"$match": {"created_at_utc": {"$gte": window_start}, "event_type": {"$ne": None}}},
@@ -252,12 +257,15 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         else:
             price_dir = "flat"
 
-        # Signal classification — both density AND sentiment must agree
+        # Signal classification — density + sentiment must agree (with sentiment confirmation);
+        # peak_fade fires when a high-density ticker shows density + price both fading (no sentiment req)
         signal = None
         if density_dir == "up" and sentiment_dir == "up":
             signal = "bullish_corr" if price_dir == "up" else "early_long"
         elif density_dir == "down" and sentiment_dir == "down":
             signal = "bearish_corr" if price_dir == "down" else "early_short"
+        elif total_cnt >= high_density_threshold and density_dir == "down" and price_dir == "down":
+            signal = "peak_fade"
 
         return signal, density_dir, sentiment_dir, price_dir, price_pct
 
