@@ -207,8 +207,18 @@
     .filter-reset:hover { color: var(--text-primary); border-color: var(--border-mid); }
 
     /* ── TABLE ── */
+    .table-scroll-top { overflow-x: auto; height: 10px; }
+    .table-scroll-top::-webkit-scrollbar { height: 6px; }
+    .table-scroll-top::-webkit-scrollbar-thumb { background: var(--border-mid); border-radius: 3px; }
+    .table-scroll-inner { height: 1px; }
     .table-wrap { overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; white-space: nowrap; }
+    /* Column collapse toggle */
+    .col-toggle-th { width: 22px; min-width: 22px; padding: 2px 0; text-align: center; position: sticky; background: inherit; }
+    .col-toggle-btn { background: none; border: 1px solid var(--border); border-radius: 3px; color: var(--text-muted); cursor: pointer; font-size: 9px; padding: 1px 3px; line-height: 1.4; transition: color 0.12s, border-color 0.12s; }
+    .col-toggle-btn:hover { color: var(--blue); border-color: var(--blue); }
+    .col-toggle-td { padding: 0; }
+    #main-table.cols-collapsed .col-details { display: none; }
     thead tr {
       background: var(--bg-surface);
       border-bottom: 1px solid var(--border-subtle);
@@ -1005,19 +1015,23 @@
 
 <div class="content-layout">
 <div class="main-content">
-<div class="table-wrap">
+<div class="table-scroll-top" id="table-scroll-mirror">
+  <div id="table-scroll-inner"></div>
+</div>
+<div class="table-wrap" id="table-wrap-main">
   <table id="main-table">
     <thead>
       <tr>
         <th onclick="sortTable('_rank',event)">No.</th>
         <th onclick="sortTable('ticker',event)">Ticker</th>
-        <th onclick="sortTable('company',event)">Company</th>
-        <th onclick="sortTable('industry',event)">Industry</th>
-        <th onclick="sortTable('market_cap',event)">Mkt Cap</th>
-        <th onclick="sortTable('pe',event)">P/E</th>
-        <th onclick="sortTable('volume',event)">Volume</th>
-        <th onclick="sortTable('avg_volume',event)">Avg Vol</th>
-        <th onclick="sortTable('rel_volume',event)">Rel Vol</th>
+        <th class="col-toggle-th"><button class="col-toggle-btn" id="col-toggle-btn" onclick="event.stopPropagation();toggleDetailCols()" title="Collapse detail columns">◀</button></th>
+        <th class="col-details" onclick="sortTable('company',event)">Company</th>
+        <th class="col-details" onclick="sortTable('industry',event)">Industry</th>
+        <th class="col-details" onclick="sortTable('market_cap',event)">Mkt Cap</th>
+        <th class="col-details" onclick="sortTable('pe',event)">P/E</th>
+        <th class="col-details" onclick="sortTable('volume',event)">Volume</th>
+        <th class="col-details" onclick="sortTable('avg_volume',event)">Avg Vol</th>
+        <th class="col-details" onclick="sortTable('rel_volume',event)">Rel Vol</th>
         <th onclick="sortTable('price',event)">Price</th>
         <th onclick="sortTable('change',event)">Change</th>
         <th style="cursor:default">Msg Density Rolling</th>
@@ -1031,7 +1045,7 @@
       </tr>
     </thead>
     <tbody id="table-body">
-      <tr><td colspan="19" style="text-align:center;padding:40px;color:var(--text-muted)">Loading data...</td></tr>
+      <tr><td colspan="20" style="text-align:center;padding:40px;color:var(--text-muted)">Loading data...</td></tr>
     </tbody>
   </table>
 </div>
@@ -1701,6 +1715,35 @@
     return parseVal(row[key]);
   }
 
+  // ── TOP SCROLLBAR + COLUMN COLLAPSE ──────────────────────────────────
+  function initTopScrollbar() {
+    const wrap   = document.getElementById("table-wrap-main");
+    const mirror = document.getElementById("table-scroll-mirror");
+    if (!wrap || !mirror) return;
+    let busy = false;
+    wrap.addEventListener("scroll", () => {
+      if (busy) return; busy = true; mirror.scrollLeft = wrap.scrollLeft; busy = false;
+    });
+    mirror.addEventListener("scroll", () => {
+      if (busy) return; busy = true; wrap.scrollLeft = mirror.scrollLeft; busy = false;
+    });
+  }
+
+  function syncTopScrollbar() {
+    const wrap  = document.getElementById("table-wrap-main");
+    const inner = document.getElementById("table-scroll-inner");
+    if (wrap && inner) inner.style.width = wrap.scrollWidth + "px";
+  }
+
+  function toggleDetailCols() {
+    const table     = document.getElementById("main-table");
+    const btn       = document.getElementById("col-toggle-btn");
+    const collapsed = table.classList.toggle("cols-collapsed");
+    btn.textContent = collapsed ? "▶" : "◀";
+    btn.title       = collapsed ? "Expand detail columns" : "Collapse detail columns";
+    syncTopScrollbar();
+  }
+
   function sortTable(key, evt) {
     const shift = evt && evt.shiftKey;
     const existing = sortKeys.findIndex(s => s.key === key);
@@ -2059,13 +2102,14 @@
       return `<tr onclick="openPopup('${safeTicker}','${safeCompany}','${safeSector}','${safeIndustry}')">
         <td class="rank">${i+1}</td>
         <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}</td>
-        <td style="color:#aaa">${t.company||"--"}</td>
-        <td style="color:#666">${t.industry||"--"}</td>
-        <td style="color:#777">${cleanVal(t.market_cap)}</td>
-        <td style="color:#777">${cleanVal(t.pe)}</td>
-        <td style="color:#777">${cleanVal(t.volume)}</td>
-        <td style="color:#777">${cleanVal(t.avg_volume)}</td>
-        <td style="color:#aaa">${cleanVal(t.rel_volume)}</td>
+        <td class="col-toggle-td"></td>
+        <td class="col-details" style="color:#aaa">${t.company||"--"}</td>
+        <td class="col-details" style="color:#666">${t.industry||"--"}</td>
+        <td class="col-details" style="color:#777">${cleanVal(t.market_cap)}</td>
+        <td class="col-details" style="color:#777">${cleanVal(t.pe)}</td>
+        <td class="col-details" style="color:#777">${cleanVal(t.volume)}</td>
+        <td class="col-details" style="color:#777">${cleanVal(t.avg_volume)}</td>
+        <td class="col-details" style="color:#aaa">${cleanVal(t.rel_volume)}</td>
         <td style="color:#aaa">${cleanVal(t.price)}</td>
         <td>${formatChange(t.change)}</td>
         ${winCell}
@@ -2083,6 +2127,7 @@
         <td>${signalBadgeHTML(t.signal)}</td>
       </tr>`;
     }).join("");
+    setTimeout(syncTopScrollbar, 0);
   }
 
   function renderSilentTickers(tickers) {
@@ -2746,8 +2791,8 @@
     }
   }
 
-  // Show modal on page load
-  document.addEventListener("DOMContentLoaded", () => openScreenerModal(false));
+  // Show modal on page load; init top scrollbar sync
+  document.addEventListener("DOMContentLoaded", () => { openScreenerModal(false); initTopScrollbar(); });
 
   // ── GUIDE VIEW ─────────────────────────────────────────────────────────
   let guideViewActive = false;
