@@ -1039,7 +1039,7 @@
         <th onclick="sortTable('avg_composite_score',event)">Rolling Score</th>
         <th onclick="sortTable('scored_messages',event)">Scored Msgs</th>
         <th onclick="sortTable('total_messages',event)">Total Msgs</th>
-        <th onclick="sortTable('total_messages',event)">Msg Density</th>
+        <th onclick="sortTable('_density_col',event)">Msg Density</th>
         <th onclick="sortTable('surge_ratio',event)">Surge</th>
         <th style="cursor:default">Signal</th>
       </tr>
@@ -1627,10 +1627,10 @@
     return isNaN(n) ? -1 : n * 1e6;
   }
 
-  const SORT_COL_KEYS = ["_rank","ticker","company","industry",
+  const SORT_COL_KEYS = ["_rank","ticker","_toggle","company","industry",
                          "market_cap","pe","volume","avg_volume","rel_volume",
-                         "price","change","_window","avg_composite_score",
-                         "scored_messages","total_messages","message_count","surge_ratio"];
+                         "price","change","_window","_window2","avg_composite_score",
+                         "scored_messages","total_messages","_density_col","surge_ratio"];
   const TEXT_SORT_KEYS = ["ticker","company","industry"];
   const NUM_SORT_KEYS  = ["avg_composite_score","scored_messages","total_messages","message_count","pe","surge_ratio"];
 
@@ -1733,7 +1733,8 @@
   }
 
   function colValue(row, key) {
-    if (key === "_rank") return 0;
+    if (key === "_rank")         return 0;
+    if (key === "_density_col") return row.total_messages ?? -Infinity;
     if (TEXT_SORT_KEYS.includes(key)) return String(row[key] || "").toLowerCase();
     if (NUM_SORT_KEYS.includes(key))  return row[key] ?? -Infinity;
     if (key === "market_cap")         return parseMktCap(row[key]);
