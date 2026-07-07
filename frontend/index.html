@@ -2090,7 +2090,7 @@
       const scoreClass = score > 0.05 ? "up" : score < -0.05 ? "down" : "neutral";
       const scoreNorm  = Math.round(Math.min(Math.max(score * 250, -100), 100));
       const scoreDisp  = (scoreNorm > 0 ? "+" : "") + scoreNorm;
-      const barWidth   = Math.min(Math.abs(score) * 500, 100);
+      const barWidth   = Math.abs(scoreNorm);
       const barClass   = score > 0.05 ? "score-fill-pos" : score < -0.05 ? "score-fill-neg" : "score-fill-neu";
       const safeTicker   = (t.ticker   || "").replace(/'/g, "\\'");
       const safeCompany  = (t.company  || "--").replace(/'/g, "\\'");
