@@ -2043,13 +2043,13 @@
       const topBull = tickers.find(t => t.avg_composite_score > 0);
       document.getElementById("metric-top-bull").textContent = topBull ? topBull.ticker : "--";
       document.getElementById("metric-top-bull-score").textContent =
-        topBull ? "+" + topBull.avg_composite_score.toFixed(4) : "no positive scores";
+        topBull ? "+" + Math.round(Math.min(topBull.avg_composite_score * 250, 100)) : "no positive scores";
 
       const byScoreAsc = [...tickers].sort((a,b) => a.avg_composite_score - b.avg_composite_score);
       const topBear = byScoreAsc.find(t => t.avg_composite_score < 0);
       document.getElementById("metric-top-bear").textContent = topBear ? topBear.ticker : "--";
       document.getElementById("metric-top-bear-score").textContent =
-        topBear ? topBear.avg_composite_score.toFixed(4) : "no negative scores";
+        topBear ? Math.round(Math.max(topBear.avg_composite_score * 250, -100)) : "no negative scores";
 
       const mostActive = [...tickers].sort((a,b) => (b.total_messages||0) - (a.total_messages||0))[0];
       document.getElementById("metric-most-active").textContent = mostActive ? mostActive.ticker : "--";
@@ -2088,7 +2088,8 @@
     tbody.innerHTML = tickers.map((t, i) => {
       const score      = t.avg_composite_score;
       const scoreClass = score > 0.05 ? "up" : score < -0.05 ? "down" : "neutral";
-      const scoreDisp  = (score > 0 ? "+" : "") + score.toFixed(4);
+      const scoreNorm  = Math.round(Math.min(Math.max(score * 250, -100), 100));
+      const scoreDisp  = (scoreNorm > 0 ? "+" : "") + scoreNorm;
       const barWidth   = Math.min(Math.abs(score) * 500, 100);
       const barClass   = score > 0.05 ? "score-fill-pos" : score < -0.05 ? "score-fill-neg" : "score-fill-neu";
       const safeTicker   = (t.ticker   || "").replace(/'/g, "\\'");
@@ -2301,7 +2302,8 @@
       if (rollingScoreAvg !== null) {
         const comp = rollingScoreAvg;
         const el   = document.getElementById("score-composite");
-        el.textContent = comp.toFixed(4);
+        const compNorm = Math.round(Math.min(Math.max(comp * 250, -100), 100));
+        el.textContent = (compNorm > 0 ? "+" : "") + compNorm;
         el.className   = "popup-score-val " + (comp > 0.05 ? "up" : comp < -0.05 ? "down" : "neutral");
         // sub-scores: pull from latest_scores (backend computed, same sentiment window)
         const s = data.latest_scores;
@@ -2310,7 +2312,7 @@
         document.getElementById("score-impact").textContent    = s ? (s.impact_score    ?? 0).toFixed(4) : "--";
         document.getElementById("popup-score-context").textContent =
           "Window avg  ·  " + sentimentRollingW + "  ·  " + scoredInWindow + " scored msg" + (scoredInWindow === 1 ? "" : "s");
-        document.getElementById("live-score").textContent = comp.toFixed(4);
+        document.getElementById("live-score").textContent = (compNorm > 0 ? "+" : "") + compNorm;
       } else {
         document.getElementById("popup-score-context").textContent =
           "No scored messages in " + sentimentRollingW + " window";
@@ -3139,7 +3141,8 @@
 
   function buildNewsCardHTML(t) {
     const scoreClass   = (t.avg_composite_score || 0) > 0.05 ? "up" : (t.avg_composite_score || 0) < -0.05 ? "down" : "neutral";
-    const scoreDisp    = ((t.avg_composite_score || 0) > 0 ? "+" : "") + (t.avg_composite_score || 0).toFixed(4);
+    const _sNorm       = Math.round(Math.min(Math.max((t.avg_composite_score || 0) * 250, -100), 100));
+    const scoreDisp    = (_sNorm > 0 ? "+" : "") + _sNorm;
     const chg          = parseVal(t.change);
     const chgClass     = chg > 0 ? "up" : chg < 0 ? "down" : "";
     const chgDisp      = formatChange(t.change);
