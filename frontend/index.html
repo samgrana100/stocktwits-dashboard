@@ -1518,6 +1518,7 @@
     tickerDensityWindows[ticker] = w;
     saveDensityWindows();
     _reloadNewsCard(ticker);
+    scheduleDensityDisplay();
   }
 
   function setTickerSentimentWindow(ticker, w) {
@@ -1572,6 +1573,28 @@
       }
     });
     if (changed) applyFiltersAndRender();
+    applyTickerDensityDisplay();
+  }
+
+  let _densityDisplayTimer = null;
+  function scheduleDensityDisplay() {
+    if (_densityDisplayTimer) clearTimeout(_densityDisplayTimer);
+    _densityDisplayTimer = setTimeout(applyTickerDensityDisplay, 250);
+  }
+
+  async function applyTickerDensityDisplay() {
+    if (!allTickers.length) return;
+    await Promise.all(allTickers.map(async t => {
+      const densityW = tickerDensityWindows[t.ticker] || "5m";
+      if (densityW === currentWindow) return;
+      try {
+        const res = await fetch("/api/quickscore/" + t.ticker + "?window=" + densityW);
+        if (!res.ok) return;
+        const data = await res.json();
+        const cell = document.getElementById("density-cell-" + t.ticker);
+        if (cell) cell.textContent = (data.total_messages || 0) + " msgs/" + densityW;
+      } catch(_) {}
+    }));
   }
 
   // ── Sort / Filter state ──
@@ -1890,6 +1913,7 @@
 
     lastFilteredTickers = filtered;
     renderTable(filtered);
+    scheduleDensityDisplay();
   }
 
   function resetFilters() {
@@ -2122,7 +2146,7 @@
         </td>
         <td style="color:#777">${t.scored_messages||0}</td>
         <td style="color:#555">${t.total_messages||0}</td>
-        <td style="color:#aaa;font-size:11px">${t.total_messages||0} msgs/${formatWindow(t.rolling_window_minutes||60)}</td>
+        <td id="density-cell-${t.ticker}" style="color:#aaa;font-size:11px">${t.total_messages||0} msgs/${formatWindow(t.rolling_window_minutes||60)}</td>
         <td>${surgeCell(t.surge_ratio)}</td>
         <td>${signalBadgeHTML(t.signal)}</td>
       </tr>`;
