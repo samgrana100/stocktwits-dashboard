@@ -1583,8 +1583,9 @@
   }
 
   async function applyTickerDensityDisplay() {
-    if (!allTickers.length) return;
-    await Promise.all(allTickers.map(async t => {
+    const targets = lastFilteredTickers.length ? lastFilteredTickers : allTickers;
+    if (!targets.length) return;
+    await Promise.all(targets.map(async t => {
       const densityW = tickerDensityWindows[t.ticker] || "5m";
       if (densityW === currentWindow) return;
       try {
