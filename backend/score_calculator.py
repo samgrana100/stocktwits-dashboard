@@ -216,6 +216,27 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             oldest, newest = prices[0], prices[-1]
             price_trend_map[t] = round((newest - oldest) / oldest * 100, 2) if oldest > 0 else 0.0
 
+    # ── Short-window price direction: recent short_window vs previous short_window
+    # Used by peak_fade so it catches active pullbacks even on tickers up big on the day
+    short_price_start_dt = datetime.now(timezone.utc) - timedelta(minutes=short_window)
+    prev_price_start_dt  = datetime.now(timezone.utc) - timedelta(minutes=2 * short_window)
+    short_price_by_ticker = defaultdict(list)
+    prev_price_by_ticker  = defaultdict(list)
+    for doc in price_docs:
+        if doc["ts"] >= short_price_start_dt:
+            short_price_by_ticker[doc["ticker"]].append(doc["price"])
+        elif doc["ts"] >= prev_price_start_dt:
+            prev_price_by_ticker[doc["ticker"]].append(doc["price"])
+    short_price_trend_map = {}
+    for t in set(list(short_price_by_ticker.keys()) + list(prev_price_by_ticker.keys())):
+        recent = short_price_by_ticker.get(t, [])
+        prev   = prev_price_by_ticker.get(t, [])
+        if recent and prev:
+            recent_avg = sum(recent) / len(recent)
+            prev_avg   = sum(prev)   / len(prev)
+            if prev_avg > 0:
+                short_price_trend_map[t] = round((recent_avg - prev_avg) / prev_avg * 100, 2)
+
     # ── Surge signal: always compare last 5m vs last 1h (raw counts, no scoring required)
     surge_5m_map = {
         r["_id"]: r["count"]
@@ -273,14 +294,24 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         else:
             price_dir = "flat"
 
+        # Short-window price direction: recent short_window vs previous short_window
+        # Used only by peak_fade so it fires on active pullbacks even when full-window price is still up
+        short_price_pct = short_price_trend_map.get(ticker)
+        if short_price_pct is not None and short_price_pct < -0.3:
+            short_price_dir = "down"
+        elif short_price_pct is not None and short_price_pct > 0.3:
+            short_price_dir = "up"
+        else:
+            short_price_dir = "flat"
+
         # Signal classification — density + sentiment must agree (with sentiment confirmation);
-        # peak_fade fires when a high-density ticker shows density + price both fading (no sentiment req)
+        # peak_fade uses short-window price direction to catch active pullbacks on big movers
         signal = None
         if density_dir == "up" and sentiment_dir == "up":
             signal = "bullish_corr" if price_dir == "up" else "early_long"
         elif density_dir == "down" and sentiment_dir == "down":
             signal = "bearish_corr" if price_dir == "down" else "early_short"
-        elif total_cnt >= high_density_threshold and density_dir == "down" and price_dir == "down":
+        elif total_cnt >= high_density_threshold and density_dir == "down" and short_price_dir == "down":
             signal = "peak_fade"
 
         return signal, density_dir, sentiment_dir, price_dir, price_pct
