@@ -182,6 +182,17 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         ])
     }
 
+    # ── Previous short window [2x ago → 1x ago] — confirms trend direction
+    # If recent < previous, density is already rolling over; don't fire "up"
+    prev_short_start = get_window_start_iso(2 * short_window)
+    prev_count_map = {
+        r["_id"]: r["count"]
+        for r in scored_messages.aggregate([
+            {"$match": {"created_at_utc": {"$gte": prev_short_start, "$lt": short_start}}},
+            {"$group": {"_id": "$ticker", "count": {"$sum": 1}}}
+        ])
+    }
+
     # ── Short-term sentiment averages per ticker (for sentiment direction)
     short_sent_map = {
         r["_id"]: {"avg": r["avg_score"], "n": r["n"]}
@@ -222,12 +233,17 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     }
 
     def _compute_signal(ticker, total_cnt, avg_composite):
-        # Density direction: compare short-term count vs expected rate
+        # Density direction: rate threshold + trend confirmation
+        # short_cnt = messages in last short_window min
+        # prev_cnt  = messages in the previous short_window min (one period back)
+        # Requiring short_cnt >= prev_cnt for "up" prevents firing on a peak that
+        # has already rolled over (e.g. density burst at open but falling by midday)
         short_cnt    = short_count_map.get(ticker, 0)
+        prev_cnt     = prev_count_map.get(ticker, 0)
         rolling_rate = (total_cnt * short_window / rolling_window_minutes) if rolling_window_minutes > 0 else 0
-        if total_cnt >= 5 and short_cnt >= max(3, rolling_rate * 1.5):
+        if total_cnt >= 5 and short_cnt >= max(3, rolling_rate * 1.5) and short_cnt >= prev_cnt:
             density_dir = "up"
-        elif total_cnt >= 10 and rolling_rate > 0 and short_cnt <= rolling_rate * 0.5:
+        elif total_cnt >= 10 and rolling_rate > 0 and short_cnt <= rolling_rate * 0.5 and short_cnt <= prev_cnt:
             density_dir = "down"
         else:
             density_dir = "flat"
