@@ -218,8 +218,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
 
     # ── Short-window price direction: recent short_window vs previous short_window
     # Used by peak_fade so it catches active pullbacks even on tickers up big on the day
-    short_price_start_dt = datetime.now(timezone.utc) - timedelta(minutes=short_window)
-    prev_price_start_dt  = datetime.now(timezone.utc) - timedelta(minutes=2 * short_window)
+    short_price_start_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=short_window)
+    prev_price_start_dt  = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=2 * short_window)
     short_price_by_ticker = defaultdict(list)
     prev_price_by_ticker  = defaultdict(list)
     for doc in price_docs:
