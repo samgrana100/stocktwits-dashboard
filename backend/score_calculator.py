@@ -304,15 +304,17 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         else:
             short_price_dir = "flat"
 
-        # Signal classification — density + sentiment must agree (with sentiment confirmation);
-        # peak_fade uses short-window price direction to catch active pullbacks on big movers
+        # Signal classification:
+        # Bullish signals require density + sentiment agreement.
+        # Bearish signals require only density direction — sentiment confirmation not required.
+        # Peak Fade (high-density exhaustion) takes priority over generic bearish signals.
         signal = None
         if density_dir == "up" and sentiment_dir == "up":
             signal = "bullish_corr" if price_dir == "up" else "early_long"
-        elif density_dir == "down" and sentiment_dir == "down":
-            signal = "bearish_corr" if price_dir == "down" else "early_short"
         elif total_cnt >= high_density_threshold and density_dir == "down" and short_price_dir == "down":
             signal = "peak_fade"
+        elif density_dir == "down":
+            signal = "bearish_corr" if price_dir == "down" else "early_short"
 
         return signal, density_dir, sentiment_dir, price_dir, price_pct
 
