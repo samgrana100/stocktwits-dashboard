@@ -1014,6 +1014,11 @@ def get_tickers_batch():
     rolling_min    = rolling_config["minutes"]
     rolling_start  = get_window_start_iso(rolling_min)
 
+    density_window_key  = request.args.get("density_window", rolling_key)
+    density_config_d    = WINDOW_CONFIG.get(density_window_key, rolling_config)
+    density_rolling_min = density_config_d["minutes"]
+    density_start       = get_window_start_iso(window_min + density_rolling_min)
+
     now_utc         = datetime.now(timezone.utc)
     window_start_dt = now_utc - timedelta(minutes=window_min)
     month           = now_utc.month
@@ -1045,7 +1050,7 @@ def get_tickers_batch():
 
     # ── 2. Message density (one aggregation) ──
     density_docs = list(scored_messages.aggregate([
-        {"$match": {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": window_start}}},
+        {"$match": {"ticker": {"$in": uncached}, "created_at_utc": {"$gte": density_start}}},
         {"$group": {
             "_id":   {"ticker": "$ticker", "minute": {"$substr": ["$created_at_utc", 0, 16]}},
             "count": {"$sum": 1}
