@@ -285,10 +285,19 @@
     .signals-panel-hdr  {
       position: sticky; top: 0; z-index: 1;
       background: var(--bg-elevated); border-bottom: 1px solid var(--border-subtle);
-      padding: 10px 14px; display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; display: flex; flex-direction: column; gap: 8px;
     }
+    .signals-panel-hdr-row { display: flex; align-items: center; justify-content: space-between; }
     .signals-panel-title { font-size: 11px; font-weight: 600; color: var(--text-primary); letter-spacing: 0.06em; text-transform: uppercase; }
     .signals-panel-count { font-size: 10px; color: var(--text-dimmed); }
+    .signals-search {
+      width: 100%; box-sizing: border-box;
+      padding: 5px 8px; font-size: 11px;
+      background: var(--bg-surface); color: var(--text-primary);
+      border: 1px solid var(--border-subtle); border-radius: 4px; outline: none;
+    }
+    .signals-search::placeholder { color: var(--text-dimmed); }
+    .signals-search:focus { border-color: var(--blue); }
     .signal-card { padding: 11px 14px; border-bottom: 1px solid var(--border-faint); transition: background var(--t-fast); }
     .signal-card:hover { background: var(--bg-hover); }
     .signal-card-hdr  { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; flex-wrap: wrap; }
@@ -1059,8 +1068,11 @@
 
 <div class="signals-panel" id="signals-panel">
   <div class="signals-panel-hdr">
-    <span class="signals-panel-title">Live Signals</span>
-    <span class="signals-panel-count" id="signals-count">-- bullish</span>
+    <div class="signals-panel-hdr-row">
+      <span class="signals-panel-title">Live Signals</span>
+      <span class="signals-panel-count" id="signals-count">-- bullish</span>
+    </div>
+    <input type="text" id="signals-search" class="signals-search" placeholder="Filter by ticker…" oninput="applySignalsFilter()" autocomplete="off" spellcheck="false">
   </div>
   <div id="signals-feed"><div class="signal-empty">No signals yet. Start the pipeline.</div></div>
 </div>
@@ -2218,14 +2230,27 @@
     } catch(e) { console.error("[signals]", e); }
   }
 
+  let _signalsMessages = [];
+
   function renderSignals(messages) {
-    document.getElementById("signals-count").textContent = messages.length + " bullish";
+    _signalsMessages = messages;
+    applySignalsFilter();
+  }
+
+  function applySignalsFilter() {
+    const q    = (document.getElementById("signals-search")?.value || "").trim().toUpperCase();
+    const msgs = q ? _signalsMessages.filter(m => (m.ticker || "").toUpperCase().includes(q)) : _signalsMessages;
     const feed = document.getElementById("signals-feed");
-    if (!messages.length) {
-      feed.innerHTML = '<div class="signal-empty">No significantly bullish messages in the last 4h.</div>';
+    const countEl = document.getElementById("signals-count");
+    if (!msgs.length) {
+      countEl.textContent = "0 bullish";
+      feed.innerHTML = q
+        ? `<div class="signal-empty">No signals for "${escHtml(q)}".</div>`
+        : '<div class="signal-empty">No significantly bullish messages in the last 4h.</div>';
       return;
     }
-    feed.innerHTML = messages.map(m => {
+    countEl.textContent = msgs.length + " bullish";
+    feed.innerHTML = msgs.map(m => {
       const sc         = m.composite_score;
       const score      = sc != null ? (sc >= 0 ? "+" : "") + sc.toFixed(4) : "--";
       const time       = fmtPostedTime(m.posted_et);
