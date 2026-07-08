@@ -264,7 +264,7 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         rolling_rate = (total_cnt * short_window / rolling_window_minutes) if rolling_window_minutes > 0 else 0
         if total_cnt >= 5 and short_cnt >= max(3, rolling_rate * 1.5) and short_cnt >= prev_cnt:
             density_dir = "up"
-        elif total_cnt >= 10 and rolling_rate > 0 and short_cnt <= rolling_rate * 0.5 and short_cnt <= prev_cnt:
+        elif total_cnt >= 15 and rolling_rate > 0 and short_cnt <= rolling_rate * 0.5 and short_cnt <= prev_cnt and prev_cnt >= 2:
             density_dir = "down"
         else:
             density_dir = "flat"
