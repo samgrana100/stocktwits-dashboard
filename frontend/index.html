@@ -345,6 +345,63 @@
     }
     .signals-toggle-btn.active { border-color: var(--blue); color: var(--blue); }
 
+    /* ── CORRELATION VIEW ── */
+    .corr-view-layout { display: flex; gap: 0; align-items: flex-start; }
+    .corr-main-col { flex: 1; min-width: 0; padding: 0 16px 24px; }
+    .corr-view-hdr { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; padding: 14px 0 12px; border-bottom: 1px solid var(--border-subtle); margin-bottom: 16px; }
+    .corr-view-title { font-size: 13px; font-weight: 600; color: var(--text-primary); letter-spacing: .05em; text-transform: uppercase; }
+    .corr-count { font-size: 11px; color: var(--text-dimmed); }
+    .corr-controls { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .corr-ctrl-label { font-size: 11px; color: var(--text-dimmed); display: flex; align-items: center; gap: 5px; }
+    .corr-ctrl-label input[type=number] { width: 46px; padding: 3px 6px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-primary); font-size: 11px; text-align: center; outline: none; }
+    .corr-ctrl-label input:focus { border-color: var(--blue); }
+    .corr-section-hdr { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dimmed); margin: 0 0 10px; }
+    .corr-section-entry { margin-bottom: 20px; }
+    .corr-card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+    .corr-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast); }
+    .corr-card:hover { background: var(--bg-hover); }
+    .corr-card.entry-zone { border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.04); }
+    .corr-card-hdr { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    .corr-ticker { font-size: 14px; font-weight: 700; color: var(--blue); }
+    .corr-price { font-size: 12px; color: var(--text-secondary); }
+    .corr-entry-badge { font-size: 9px; font-weight: 700; color: #4ade80; background: rgba(74,222,128,.15); border: 1px solid rgba(74,222,128,.3); border-radius: 3px; padding: 2px 5px; margin-left: auto; }
+    .corr-r-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+    .corr-r-val { font-size: 16px; font-weight: 700; }
+    .corr-r-pos { color: #4ade80; }
+    .corr-r-neg { color: #f87171; }
+    .corr-r-neu { color: #555; }
+    .corr-bar-wrap { position: relative; margin-bottom: 8px; }
+    .corr-bar { height: 5px; background: var(--bg-elevated); border-radius: 3px; position: relative; }
+    .corr-bar-fill { height: 100%; border-radius: 3px; transition: width .3s; }
+    .corr-bar-fill-pos { background: #4ade80; }
+    .corr-bar-fill-neg { background: #f87171; }
+    .corr-threshold-line { position: absolute; top: -3px; width: 2px; height: 11px; background: rgba(255,255,255,.4); border-radius: 1px; pointer-events: none; }
+    .corr-density-info { font-size: 10px; color: var(--text-dimmed); margin-bottom: 9px; }
+    .corr-enter-btn { font-size: 10px; font-weight: 600; padding: 4px 10px; border: 1px solid rgba(74,222,128,.4); border-radius: 4px; background: rgba(74,222,128,.08); color: #4ade80; cursor: pointer; transition: background var(--t-fast); }
+    .corr-enter-btn:hover { background: rgba(74,222,128,.18); }
+    .corr-empty { color: var(--text-dimmed); font-size: 12px; padding: 32px 16px; text-align: center; }
+    /* Exit monitor panel */
+    .corr-exit-panel { width: 270px; flex-shrink: 0; border-left: 1px solid var(--border-subtle); min-height: 300px; max-height: calc(100vh - 178px); overflow-y: auto; position: sticky; top: 60px; }
+    .corr-exit-hdr { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 10px; border-bottom: 1px solid var(--border-subtle); position: sticky; top: 0; background: var(--bg-elevated); z-index: 1; }
+    .corr-exit-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-primary); }
+    .corr-exit-count { font-size: 10px; color: var(--text-dimmed); }
+    .corr-exit-card { padding: 10px 14px; border-bottom: 1px solid var(--border-faint); }
+    .corr-exit-ticker { font-size: 13px; font-weight: 700; color: var(--blue); }
+    .corr-exit-meta { font-size: 10px; color: var(--text-dimmed); margin: 3px 0 7px; }
+    .corr-exit-bar-wrap { height: 4px; background: var(--bg-elevated); border-radius: 2px; overflow: hidden; margin-bottom: 4px; }
+    .corr-exit-bar-fill { height: 100%; background: #fb923c; border-radius: 2px; transition: width .3s; }
+    .corr-exit-pct-lbl { font-size: 10px; color: #fb923c; margin-bottom: 6px; }
+    .corr-exit-signal { font-size: 10px; font-weight: 700; color: #f87171; background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.3); border-radius: 3px; padding: 2px 6px; display: inline-block; margin-bottom: 6px; }
+    .corr-exit-actions { display: flex; gap: 8px; align-items: center; }
+    .corr-exit-chart-btn { font-size: 10px; padding: 2px 8px; border: 1px solid var(--border-subtle); border-radius: 4px; background: none; color: var(--text-muted); cursor: pointer; }
+    .corr-exit-chart-btn:hover { border-color: var(--blue); color: var(--blue); }
+    .corr-remove-btn { font-size: 10px; color: var(--text-dimmed); background: none; border: none; cursor: pointer; margin-left: auto; padding: 0; }
+    .corr-remove-btn:hover { color: #f87171; }
+    .corr-exit-empty { padding: 24px 14px; font-size: 11px; color: var(--text-dimmed); text-align: center; }
+    /* Signal column correlation badge */
+    .signal-badge.corr-entry { background: rgba(74,222,128,.12); color: #4ade80; border: 1px solid rgba(74,222,128,.3); border-radius: 4px; padding: 2px 6px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+    .signal-badge.corr-watch { color: #777; font-size: 10px; }
+
     /* ── SILENT TICKERS ── */
     .silent-section { border-top: 1px solid var(--border-subtle); }
     .silent-header {
@@ -883,6 +940,7 @@
     <button class="update-filters-btn" onclick="openScreenerModal(true)">Update Filters</button>
     <button class="news-view-btn" id="momentum-view-btn" onclick="toggleMomentumView()">Momentum</button>
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
+    <button class="news-view-btn" id="corr-view-btn" onclick="toggleCorrView()">Correlation</button>
     <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
     <button class="pipeline-btn start" id="pipeline-btn" onclick="togglePipeline()">Start Pipeline</button>
@@ -1084,11 +1142,7 @@
     <span style="font-size:13px;font-weight:600;color:var(--text-primary);letter-spacing:0.05em">MOMENTUM VIEW</span>
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       <button class="sig-filter-btn active" onclick="setMomentumFilter('all',this)">All Active</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('bullish_corr',this)">↑ Bullish Corr</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('bearish_corr',this)">↓ Bearish Corr</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('peak_fade',this)">↓ Momentum Fading</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('early_long',this)">↑ Density Rising</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('early_short',this)">↓ Density Falling</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('all',this)" style="display:none"></button>
     </div>
     <span id="momentum-count" style="font-size:11px;color:var(--text-muted);margin-left:4px"></span>
   </div>
@@ -1113,6 +1167,39 @@
     <button class="news-source-filter-btn active" onclick="toggleNewsSourceFilter('sec',this)">SEC</button>
   </div>
   <div id="news-ticker-list"></div>
+</div>
+
+<!-- Correlation View -->
+<div id="corr-view" style="display:none; background:var(--bg-base); min-height:calc(100vh - 60px)">
+  <div class="corr-view-layout">
+    <div class="corr-main-col">
+      <div class="corr-view-hdr">
+        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+          <span class="corr-view-title">Density · Price Correlation</span>
+          <span class="corr-count" id="corr-count">-- tickers</span>
+        </div>
+        <div class="corr-controls">
+          <label class="corr-ctrl-label">Entry Threshold <input type="number" id="corr-entry-threshold" value="30" min="1" max="99" oninput="onCorrThresholdChange()"> %</label>
+          <label class="corr-ctrl-label">Exit from Peak <input type="number" id="corr-exit-pct" value="30" min="1" max="99" oninput="renderCorrExitPanel()"> %</label>
+        </div>
+      </div>
+      <div id="corr-entry-section" class="corr-section-entry" style="display:none">
+        <div class="corr-section-hdr">Entry Zone</div>
+        <div id="corr-entry-list" class="corr-card-list"></div>
+      </div>
+      <div id="corr-watch-section">
+        <div class="corr-section-hdr" id="corr-watch-hdr">Watching</div>
+        <div id="corr-watch-list" class="corr-card-list"></div>
+      </div>
+    </div>
+    <div class="corr-exit-panel">
+      <div class="corr-exit-hdr">
+        <span class="corr-exit-title">Exit Monitor</span>
+        <span class="corr-exit-count" id="corr-exit-count">0 positions</span>
+      </div>
+      <div id="corr-exit-feed"><div class="corr-exit-empty">No positions tracked.<br>Enter a trade from the Entry Zone.</div></div>
+    </div>
+  </div>
 </div>
 
 <div id="guide-view" class="guide-view">
@@ -1708,8 +1795,18 @@
   }
 
   // ── Signal helpers ──
-  const SIG_LABELS  = { bullish_corr: "↑ Bullish Corr", bearish_corr: "↓ Bearish Corr", early_long: "↑ Density Rising", early_short: "↓ Density Falling", peak_fade: "↓ Momentum Fading" };
-  const SIG_CLASSES = { bullish_corr: "sig-bullish-corr", bearish_corr: "sig-bearish-corr", early_long: "sig-early-long", early_short: "sig-early-short", peak_fade: "sig-peak-fade" };
+  function corrSignalBadgeHTML(t) {
+    const r = t.correlation;
+    if (r == null) return '<span style="color:var(--text-muted);font-size:11px">—</span>';
+    const pct = Math.round(r * 100);
+    if (pct >= corrEntryThreshold) {
+      return `<span class="signal-badge corr-entry">↑ Entry ${pct}%</span>`;
+    }
+    if (pct > 0) {
+      return `<span class="signal-badge corr-watch">${pct}%</span>`;
+    }
+    return '<span style="color:var(--text-muted);font-size:11px">—</span>';
+  }
 
   function formatWindow(min) {
     if (!min) return "?";
@@ -1911,6 +2008,7 @@
     });
 
     if (momentumViewActive) buildMomentumCards();
+    if (corrViewActive)     buildCorrView();
 
     filtered.sort((a, b) => {
       for (const { key, asc } of sortKeys) {
@@ -2068,7 +2166,8 @@
         mostActive ? (mostActive.total_messages||0) + " msgs" : "--";
 
       // Refresh stale news view cards so price data doesn't fall behind
-      if (newsViewActive) refreshStaleNewsCards();
+      if (newsViewActive)  refreshStaleNewsCards();
+      if (corrViewActive)  buildCorrView();
 
     } catch(e) { console.error("Failed to fetch scores:", e); }
   }
@@ -2154,7 +2253,7 @@
         ${winCell}
         <td>
           <div class="score-bar-wrap">
-            <div class="score-bar"><div class="${barClass}" style="width:${barWidth}%"></div></div>
+            ${hasScore ? `<div class="score-bar"><div class="${barClass}" style="width:${Math.max(barWidth,scoreNorm===0?1:0)}%"></div></div>` : ""}
             <span class="${scoreClass}" style="font-size:11px;min-width:58px">${scoreDisp}</span>
           </div>
           ${bullBear}
@@ -2163,7 +2262,7 @@
         <td style="color:#555">${t.total_messages||0}</td>
         <td id="density-cell-${t.ticker}" style="color:#aaa;font-size:11px">${t.total_messages||0} msgs/${formatWindow(t.rolling_window_minutes||60)}</td>
         <td>${surgeCell(t.surge_ratio)}</td>
-        <td>${signalBadgeHTML(t.signal)}</td>
+        <td>${corrSignalBadgeHTML(t)}</td>
       </tr>`;
     }).join("");
     setTimeout(syncTopScrollbar, 0);
@@ -3146,6 +3245,157 @@
     }
   }
 
+  // ── CORRELATION VIEW ──────────────────────────────────────────────────
+  let corrViewActive      = false;
+  let corrEntryThreshold  = parseInt(localStorage.getItem("corrEntryThreshold") || "30");
+  let corrExitPct         = parseInt(localStorage.getItem("corrExitPct")        || "30");
+  let corrEntered         = JSON.parse(localStorage.getItem("corrEntered") || "{}");
+
+  function _saveCorrEntered() { localStorage.setItem("corrEntered", JSON.stringify(corrEntered)); }
+
+  function toggleCorrView() {
+    if (momentumViewActive) { momentumViewActive = false; document.getElementById("momentum-view-btn").classList.remove("active"); document.getElementById("momentum-view").classList.remove("active"); _cleanupMomentumCards(); }
+    if (newsViewActive) toggleNewsView();
+    corrViewActive = !corrViewActive;
+    document.getElementById("corr-view-btn").classList.toggle("active", corrViewActive);
+    document.getElementById("corr-view").style.display = corrViewActive ? "" : "none";
+    const filterBar     = document.querySelector(".filter-bar");
+    const contentLayout = document.querySelector(".content-layout");
+    const statusBar     = document.querySelector(".status-bar");
+    if (filterBar)     filterBar.style.display     = corrViewActive ? "none" : "";
+    if (contentLayout) contentLayout.style.display = corrViewActive ? "none" : "";
+    if (statusBar)     statusBar.style.display     = corrViewActive ? "none" : "";
+    if (corrViewActive) {
+      document.getElementById("corr-entry-threshold").value = corrEntryThreshold;
+      document.getElementById("corr-exit-pct").value        = corrExitPct;
+      buildCorrView();
+    }
+  }
+
+  function onCorrThresholdChange() {
+    corrEntryThreshold = parseInt(document.getElementById("corr-entry-threshold").value) || 30;
+    localStorage.setItem("corrEntryThreshold", corrEntryThreshold);
+    buildCorrView();
+  }
+
+  function buildCorrView() {
+    const tickers = (lastFilteredTickers.length ? lastFilteredTickers : allTickers)
+      .filter(t => t.correlation != null)
+      .sort((a, b) => (b.correlation || 0) - (a.correlation || 0));
+
+    document.getElementById("corr-count").textContent = tickers.length + " tickers";
+
+    const entry = tickers.filter(t => Math.round(t.correlation * 100) >= corrEntryThreshold);
+    const watch = tickers.filter(t => Math.round(t.correlation * 100) <  corrEntryThreshold && t.correlation > 0);
+
+    const entrySec  = document.getElementById("corr-entry-section");
+    const entryList = document.getElementById("corr-entry-list");
+    const watchList = document.getElementById("corr-watch-list");
+    const watchHdr  = document.getElementById("corr-watch-hdr");
+
+    if (entry.length) {
+      entrySec.style.display  = "";
+      entryList.innerHTML = entry.map(t => _corrCardHTML(t, true)).join("");
+    } else {
+      entrySec.style.display = "none";
+    }
+
+    watchList.innerHTML = watch.length
+      ? watch.map(t => _corrCardHTML(t, false)).join("")
+      : '<div class="corr-empty">No tickers with positive correlation yet.</div>';
+    watchHdr.style.display = "";
+
+    renderCorrExitPanel();
+  }
+
+  function _corrCardHTML(t, isEntry) {
+    const r        = t.correlation;
+    const pct      = Math.round(r * 100);
+    const rClass   = r > 0 ? "corr-r-pos" : r < 0 ? "corr-r-neg" : "corr-r-neu";
+    const fillCls  = r > 0 ? "corr-bar-fill-pos" : "corr-bar-fill-neg";
+    const barWidth = Math.abs(pct);
+    const threshLeft = Math.min(corrEntryThreshold, 99);
+    const safeTk   = (t.ticker || "").replace(/'/g, "\\'");
+    const safeComp = (t.company || "--").replace(/'/g, "\\'");
+    const safeSec  = (t.sector  || "--").replace(/'/g, "\\'");
+    const safeInd  = (t.industry|| "--").replace(/'/g, "\\'");
+    const chgColor = (t.change || 0) > 0 ? "corr-change-up" : "corr-change-down";
+    const chgDisp  = t.change != null ? (t.change > 0 ? "+" : "") + t.change + "%" : "";
+    const density  = t.total_messages != null ? t.total_messages + " msgs" : "";
+    const inMonitor = corrEntered[t.ticker] ? " (monitoring)" : "";
+    return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openPopup('${safeTk}','${safeComp}','${safeSec}','${safeInd}')">
+      <div class="corr-card-hdr">
+        <span class="corr-ticker">${t.ticker}</span>
+        <span class="corr-price">${t.price ? "$"+t.price : ""}</span>
+        <span class="${chgColor}">${chgDisp}</span>
+        ${isEntry ? `<span class="corr-entry-badge">↑ Entry</span>` : ""}
+      </div>
+      <div class="corr-r-row">
+        <span class="corr-r-val ${rClass}">${pct}%</span>
+        <span style="font-size:10px;color:var(--text-dimmed)">correlation</span>
+      </div>
+      <div class="corr-bar-wrap">
+        <div class="corr-bar">
+          <div class="${fillCls} corr-bar-fill" style="width:${barWidth}%"></div>
+          <div class="corr-threshold-line" style="left:${threshLeft}%"></div>
+        </div>
+      </div>
+      <div class="corr-density-info">${density}${inMonitor}</div>
+      ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct})">Enter Trade</button>` : ""}
+    </div>`;
+  }
+
+  function enterTrade(ticker, corrPct) {
+    corrEntered[ticker] = { enteredAt: Date.now(), entryCorrPct: corrPct };
+    _saveCorrEntered();
+    buildCorrView();
+  }
+
+  function exitTrade(ticker) {
+    delete corrEntered[ticker];
+    _saveCorrEntered();
+    renderCorrExitPanel();
+    buildCorrView();
+  }
+
+  function renderCorrExitPanel() {
+    corrExitPct = parseInt(document.getElementById("corr-exit-pct")?.value) || corrExitPct;
+    localStorage.setItem("corrExitPct", corrExitPct);
+
+    const feed     = document.getElementById("corr-exit-feed");
+    const countEl  = document.getElementById("corr-exit-count");
+    const positions = Object.keys(corrEntered);
+    countEl.textContent = positions.length + " position" + (positions.length !== 1 ? "s" : "");
+
+    if (!positions.length) {
+      feed.innerHTML = '<div class="corr-exit-empty">No positions tracked.<br>Enter a trade from the Entry Zone.</div>';
+      return;
+    }
+
+    feed.innerHTML = positions.map(ticker => {
+      const entry   = corrEntered[ticker];
+      const tkData  = allTickers.find(t => t.ticker === ticker);
+      const pctOff  = tkData ? Math.round((tkData.density_pct_from_peak || 0) * 100) : 0;
+      const fillW   = Math.min(pctOff, 100);
+      const isExit  = pctOff >= corrExitPct;
+      const safeTk  = ticker.replace(/'/g, "\\'");
+      const entryTime = new Date(entry.enteredAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+      return `<div class="corr-exit-card">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span class="corr-exit-ticker">${ticker}</span>
+          ${isExit ? '<span class="corr-exit-signal">↓ EXIT SIGNAL</span>' : ""}
+        </div>
+        <div class="corr-exit-meta">Entered ${entryTime} · r=${entry.entryCorrPct}%</div>
+        <div class="corr-exit-bar-wrap"><div class="corr-exit-bar-fill" style="width:${fillW}%"></div></div>
+        <div class="corr-exit-pct-lbl">${pctOff}% off peak density (exit at ${corrExitPct}%)</div>
+        <div class="corr-exit-actions">
+          <button class="corr-exit-chart-btn" onclick="openPopup('${safeTk}')">View Chart</button>
+          <button class="corr-remove-btn" onclick="exitTrade('${safeTk}')">× Remove</button>
+        </div>
+      </div>`;
+    }).join("");
+  }
+
   function buildNewsView() {
     const container = document.getElementById("news-ticker-list");
     container.innerHTML = "";
@@ -3204,7 +3454,7 @@
           <span class="news-industry">${t.sector ? t.sector + (t.industry ? " · " + t.industry : "") : (t.industry || "")}</span>
           ${catalystPills}
           ${countdownBadge}
-          ${t.signal ? `<span class="signal-badge ${SIG_CLASSES[t.signal]||''}" style="margin-left:2px">${SIG_LABELS[t.signal]||t.signal}</span>` : ""}
+          ${t.correlation != null && Math.round(t.correlation * 100) >= corrEntryThreshold ? `<span class="signal-badge corr-entry" style="margin-left:2px">↑ Entry ${Math.round(t.correlation*100)}%</span>` : ""}
         </div>
         <div class="news-hdr-right">
           <span class="news-price">${t.price ? "$" + t.price : "--"}</span>
