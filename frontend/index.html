@@ -1104,7 +1104,7 @@
         <th onclick="sortTable('total_messages',event)">Total Msgs</th>
         <th onclick="sortTable('_density_col',event)">Msg Density</th>
         <th onclick="sortTable('surge_ratio',event)">Surge</th>
-        <th style="cursor:default">Signal</th>
+        <th onclick="sortTable('correlation',event)">Corr</th>
       </tr>
     </thead>
     <tbody id="table-body">
@@ -1727,9 +1727,9 @@
   const SORT_COL_KEYS = ["_rank","ticker","_toggle","company","industry",
                          "market_cap","pe","volume","avg_volume","rel_volume",
                          "price","change","_window","_window2","avg_composite_score",
-                         "scored_messages","total_messages","_density_col","surge_ratio"];
+                         "scored_messages","total_messages","_density_col","surge_ratio","correlation"];
   const TEXT_SORT_KEYS = ["ticker","company","industry"];
-  const NUM_SORT_KEYS  = ["avg_composite_score","scored_messages","total_messages","message_count","pe","surge_ratio"];
+  const NUM_SORT_KEYS  = ["avg_composite_score","scored_messages","total_messages","message_count","pe","surge_ratio","correlation"];
 
   const EVENT_META = {
     "FDA Final Approval":  { color: "#22c55e", pill: "FDA ✓✓"  },
@@ -1800,12 +1800,15 @@
     if (r == null) return '<span style="color:var(--text-muted);font-size:11px">—</span>';
     const pct = Math.round(r * 100);
     if (pct >= corrEntryThreshold) {
-      return `<span class="signal-badge corr-entry">↑ Entry ${pct}%</span>`;
+      return `<span style="font-size:12px;font-weight:700;color:#4ade80">↑ ${pct}%</span>`;
     }
     if (pct > 0) {
-      return `<span class="signal-badge corr-watch">${pct}%</span>`;
+      return `<span style="font-size:12px;color:#888">${pct}%</span>`;
     }
-    return '<span style="color:var(--text-muted);font-size:11px">—</span>';
+    if (pct < 0) {
+      return `<span style="font-size:12px;color:#f87171">${pct}%</span>`;
+    }
+    return '<span style="color:var(--text-muted);font-size:11px">0%</span>';
   }
 
   function formatWindow(min) {
