@@ -2280,7 +2280,7 @@
     try {
       const densityRollingW   = tickerDensityWindows[ticker]  || "5m";
       const sentimentRollingW = tickerSentimentWindows[ticker] || "5m";
-      const res  = await fetch("/api/ticker/" + ticker + "?window=" + currentPopupWindow + "&rolling=" + sentimentRollingW);
+      const res  = await fetch("/api/ticker/" + ticker + "?window=" + currentPopupWindow + "&rolling=" + sentimentRollingW + "&density_window=" + densityRollingW);
       const data = await res.json();
 
       // Compute rolling stats frontend-side so density and sentiment use their own windows
@@ -2494,15 +2494,28 @@
       return (_lastScore !== null && ++_lsGap <= 12) ? _lastScore : null;
     });
 
-    // Per-step message counts
-    const rawD = axisKeys.map(k => dMap[k] !== undefined ? dMap[k] : 0);
-
-    // Convert density rolling window minutes → label count so density is correct on long windows
+    // Time-based rolling density — sums all dMap entries within the last rollingMinutes
+    // of each axis point. Uses pre-window data fetched by the backend so the line is
+    // correctly primed at the chart's left edge instead of starting from zero.
     const rollingMinutes = WINDOW_MINUTES[densityRollingKey] || 5;
-    const rollingLabels  = Math.max(1, Math.round(rollingMinutes / axisStep));
-    const rollingD = rawD.map((_, i) => {
-      const start = Math.max(0, i - rollingLabels + 1);
-      return rawD.slice(start, i + 1).reduce((a, b) => a + b, 0);
+
+    function keyToMinutes(k) {
+      const timePart = k.includes(" ") ? k.split(" ")[1] : k;
+      const datePart = k.includes(" ") ? k.split(" ")[0] : null;
+      const [h, m]   = timePart.split(":").map(Number);
+      if (datePart) {
+        const dy = parseInt(datePart.split("-")[1] || "0");
+        return dy * 1440 + h * 60 + m;
+      }
+      return h * 60 + m;
+    }
+
+    const allDensityPts = Object.entries(dMap).map(([k, count]) => ({ min: keyToMinutes(k), count }));
+    const rollingD = axisKeys.map(k => {
+      const t = keyToMinutes(k);
+      return allDensityPts
+        .filter(d => d.min >= t - rollingMinutes && d.min <= t)
+        .reduce((s, d) => s + d.count, 0);
     });
 
     // Forward-fill price gaps — holds last known price through missing Finviz bars,

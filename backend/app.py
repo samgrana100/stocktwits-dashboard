@@ -875,11 +875,18 @@ def get_ticker_detail(ticker):
     ]
 
     # ─── Real message density from scored_messages ───
+    # Fetch density_rolling_min extra history before the chart window so the
+    # rolling sum is primed at the chart's left edge (not starting from zero).
+    density_window_key  = request.args.get("density_window", rolling_key)
+    density_config_d    = WINDOW_CONFIG.get(density_window_key, rolling_config)
+    density_rolling_min = density_config_d["minutes"]
+    density_start       = get_window_start_iso(window_min + density_rolling_min)
+
     pipeline_query = [
         {
             "$match": {
                 "ticker":         ticker,
-                "created_at_utc": {"$gte": window_start}
+                "created_at_utc": {"$gte": density_start}
             }
         },
         {
