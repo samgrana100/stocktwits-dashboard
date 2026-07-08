@@ -131,7 +131,7 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     window_start     = get_window_start_iso(rolling_window_minutes)
     short_window     = max(1, rolling_window_minutes // 12)
     short_start      = get_window_start_iso(short_window)
-    rolling_start_dt = datetime.now(timezone.utc) - timedelta(minutes=rolling_window_minutes)
+    rolling_start_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=rolling_window_minutes)
 
     scored_pipeline = [
         {

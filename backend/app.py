@@ -1029,7 +1029,7 @@ def get_tickers_batch():
     results   = {}
     uncached  = []
     for t in tickers:
-        ck = f"{t}|{window_key}|{rolling_key}"
+        ck = f"{t}|{window_key}|{rolling_key}|{density_window_key}"
         with _ticker_detail_lock:
             cached = ticker_detail_cache.get(ck)
             if cached and (now_ts - cached["ts"]) < TICKER_DETAIL_TTL:
