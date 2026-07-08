@@ -1001,8 +1001,8 @@
       <button class="sig-filter-btn active" onclick="setSignalFilter('all',this)">All</button>
       <button class="sig-filter-btn" onclick="setSignalFilter('bullish_corr',this)">↑ Bullish Corr</button>
       <button class="sig-filter-btn" onclick="setSignalFilter('bearish_corr',this)">↓ Bearish Corr</button>
-      <button class="sig-filter-btn" onclick="setSignalFilter('early_long',this)">⚡ Early Long</button>
-      <button class="sig-filter-btn" onclick="setSignalFilter('early_short',this)">⚡ Early Short</button>
+      <button class="sig-filter-btn" onclick="setSignalFilter('early_long',this)">↑ Density Rising</button>
+      <button class="sig-filter-btn" onclick="setSignalFilter('early_short',this)">↓ Density Falling</button>
     </div>
   </div>
   <div class="filter-sep"></div>
@@ -1074,9 +1074,9 @@
       <button class="sig-filter-btn active" onclick="setMomentumFilter('all',this)">All Active</button>
       <button class="sig-filter-btn" onclick="setMomentumFilter('bullish_corr',this)">↑ Bullish Corr</button>
       <button class="sig-filter-btn" onclick="setMomentumFilter('bearish_corr',this)">↓ Bearish Corr</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('peak_fade',this)">⚡ Peak Fade</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('early_long',this)">Early Long</button>
-      <button class="sig-filter-btn" onclick="setMomentumFilter('early_short',this)">Early Short</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('peak_fade',this)">↓ Momentum Fading</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('early_long',this)">↑ Density Rising</button>
+      <button class="sig-filter-btn" onclick="setMomentumFilter('early_short',this)">↓ Density Falling</button>
     </div>
     <span id="momentum-count" style="font-size:11px;color:var(--text-muted);margin-left:4px"></span>
   </div>
@@ -1694,7 +1694,7 @@
   }
 
   // ── Signal helpers ──
-  const SIG_LABELS  = { bullish_corr: "↑ Bullish Corr", bearish_corr: "↓ Bearish Corr", early_long: "⚡ Early Long", early_short: "⚡ Early Short", peak_fade: "⬇ Peak Fade" };
+  const SIG_LABELS  = { bullish_corr: "↑ Bullish Corr", bearish_corr: "↓ Bearish Corr", early_long: "↑ Density Rising", early_short: "↓ Density Falling", peak_fade: "↓ Momentum Fading" };
   const SIG_CLASSES = { bullish_corr: "sig-bullish-corr", bearish_corr: "sig-bearish-corr", early_long: "sig-early-long", early_short: "sig-early-short", peak_fade: "sig-peak-fade" };
 
   function formatWindow(min) {
