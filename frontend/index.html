@@ -2098,11 +2098,12 @@
     }
     tbody.innerHTML = tickers.map((t, i) => {
       const score      = t.avg_composite_score;
-      const scoreClass = score > 0.05 ? "up" : score < -0.05 ? "down" : "neutral";
-      const scoreNorm  = Math.round(Math.min(Math.max(score * 250, -100), 100));
-      const scoreDisp  = (scoreNorm > 0 ? "+" : "") + scoreNorm;
-      const barWidth   = Math.abs(scoreNorm);
-      const barClass   = score > 0.05 ? "score-fill-pos" : score < -0.05 ? "score-fill-neg" : "score-fill-neu";
+      const hasScore   = (t.scored_messages || 0) >= 3;
+      const scoreClass = hasScore ? (score > 0.05 ? "up" : score < -0.05 ? "down" : "neutral") : "neutral";
+      const scoreNorm  = hasScore ? Math.round(Math.min(Math.max(score * 250, -100), 100)) : null;
+      const scoreDisp  = hasScore ? (scoreNorm > 0 ? "+" : "") + scoreNorm : "--";
+      const barWidth   = hasScore ? Math.abs(scoreNorm) : 0;
+      const barClass   = hasScore ? (score > 0.05 ? "score-fill-pos" : score < -0.05 ? "score-fill-neg" : "score-fill-neu") : "score-fill-neu";
       const safeTicker   = (t.ticker   || "").replace(/'/g, "\\'");
       const safeCompany  = (t.company  || "--").replace(/'/g, "\\'");
       const safeSector   = (t.sector   || "--").replace(/'/g, "\\'");
