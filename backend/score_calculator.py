@@ -121,11 +121,14 @@ def score_unscored_messages(batch_size: int = 50):
     print("[SCORER] Done. Scored: " + str(scored_count) + " | Errors: " + str(error_count))
 
 
-CORR_WINDOW_MIN = 60  # minutes of history used for density-price correlation
+DENSITY_WINDOW_MIN = 60   # rolling window used to compute density at each point
+CORR_LOOKBACK_MIN  = 15   # how many minutes back to look for price snapshots
+CORR_FETCH_MIN     = CORR_LOOKBACK_MIN + DENSITY_WINDOW_MIN  # total message history needed
+CORR_MIN_POINTS    = 5    # minimum price points required to compute correlation
 
 def _pearson_r(x, y):
     n = len(x)
-    if n < 10:
+    if n < CORR_MIN_POINTS:
         return None
     mx, my = sum(x) / n, sum(y) / n
     num  = sum((a - mx) * (b - my) for a, b in zip(x, y))
@@ -202,9 +205,11 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         ])
     }
 
-    # ── Density-price correlation: per-minute vectors over CORR_WINDOW_MIN
-    corr_start_iso      = get_window_start_iso(CORR_WINDOW_MIN)
-    corr_price_start_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=CORR_WINDOW_MIN)
+    # ── Density-price correlation
+    # Fetch CORR_FETCH_MIN of message history so each price point can have a
+    # full DENSITY_WINDOW_MIN rolling count computed behind it.
+    corr_start_iso      = get_window_start_iso(CORR_FETCH_MIN)
+    corr_price_start_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=CORR_LOOKBACK_MIN)
 
     corr_density_docs = list(scored_messages.aggregate([
         {"$match": {"created_at_utc": {"$gte": corr_start_iso}}},
@@ -229,14 +234,23 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         corr_price_by_ticker[doc["ticker"]][mk] = doc["price"]
 
     def _compute_correlation(ticker):
-        d_map  = corr_density_by_ticker.get(ticker, {})
-        p_map  = corr_price_by_ticker.get(ticker, {})
-        common = sorted(set(d_map) & set(p_map))
-        if len(common) < 10:
+        d_map         = corr_density_by_ticker.get(ticker, {})
+        p_map         = corr_price_by_ticker.get(ticker, {})
+        price_minutes = sorted(p_map.keys())[-10:]  # last 10 price snapshots
+        if len(price_minutes) < CORR_MIN_POINTS:
             return None, 0.0
-        d_vec = [d_map[m] for m in common]
-        p_vec = [p_map[m] for m in common]
-        r     = _pearson_r(d_vec, p_vec)
+
+        d_vec, p_vec = [], []
+        for m in price_minutes:
+            m_dt    = datetime.strptime(m, "%Y-%m-%dT%H:%M")
+            rolling = sum(
+                d_map.get((m_dt - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M"), 0)
+                for i in range(DENSITY_WINDOW_MIN)
+            )
+            d_vec.append(rolling)
+            p_vec.append(p_map[m])
+
+        r       = _pearson_r(d_vec, p_vec)
         peak    = max(d_vec)
         current = d_vec[-1]
         pct_from_peak = round((peak - current) / peak, 4) if peak > 0 else 0.0
