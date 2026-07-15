@@ -3400,8 +3400,8 @@
   }
 
   function _buildTradeSVG(prices, entered_at, exited_at) {
-    const W = 560, H = 220;
-    const PAD = { l: 52, r: 16, t: 24, b: 36 };
+    const W = 560, H = 240;
+    const PAD = { l: 54, r: 16, t: 30, b: 40 };
     const pw = W - PAD.l - PAD.r;
     const ph = H - PAD.t - PAD.b;
 
@@ -3409,7 +3409,7 @@
     const vals  = prices.map(p => p.price);
     const tMin  = Math.min(...times), tMax = Math.max(...times);
     const vMin  = Math.min(...vals),  vMax = Math.max(...vals);
-    const vPad  = (vMax - vMin) * 0.08 || 0.01;
+    const vPad  = (vMax - vMin) * 0.12 || 0.02;
     const pMin  = vMin - vPad, pMax = vMax + vPad;
 
     const tx = t => PAD.l + (t - tMin) / (tMax - tMin) * pw;
@@ -3420,6 +3420,15 @@
     const entryX  = Math.max(PAD.l, Math.min(W - PAD.r, tx(entryMs)));
     const exitX   = Math.max(PAD.l, Math.min(W - PAD.r, tx(exitMs)));
 
+    // Find closest price to entry and exit time for arrow Y position
+    const closestY = (ms) => {
+      let best = prices[0], bestDiff = Infinity;
+      for (const p of prices) { const d = Math.abs(new Date(p.ts).getTime() - ms); if (d < bestDiff) { bestDiff = d; best = p; } }
+      return ty(best.price);
+    };
+    const entryY = closestY(entryMs);
+    const exitY  = closestY(exitMs);
+
     const linePts = prices.map((p, i) =>
       (i === 0 ? "M" : "L") + tx(new Date(p.ts).getTime()).toFixed(1) + "," + ty(p.price).toFixed(1)
     ).join(" ");
@@ -3429,18 +3438,27 @@
       return { y: ty(val), label: "$" + val.toFixed(2) };
     });
 
-    const fmt = iso => new Date(iso).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+    // X axis time ticks (5 evenly spaced)
+    const xTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
+      const ms = tMin + (tMax - tMin) * f;
+      return { x: tx(ms), label: new Date(ms).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}) };
+    });
 
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">
-      ${yTicks.map(t => `<line x1="${PAD.l}" y1="${t.y.toFixed(1)}" x2="${W-PAD.r}" y2="${t.y.toFixed(1)}" stroke="#2a2a3e" stroke-width="1"/>`).join("")}
-      <path d="${linePts}" fill="none" stroke="#60a5fa" stroke-width="1.8" stroke-linejoin="round"/>
-      <line x1="${entryX.toFixed(1)}" y1="${PAD.t}" x2="${entryX.toFixed(1)}" y2="${H-PAD.b}" stroke="#4ade80" stroke-width="1.5" stroke-dasharray="5,3"/>
-      <text x="${entryX.toFixed(1)}" y="${PAD.t - 7}" text-anchor="middle" fill="#4ade80" font-size="9" font-family="monospace">ENTRY ${fmt(entered_at)}</text>
-      <line x1="${exitX.toFixed(1)}" y1="${PAD.t}" x2="${exitX.toFixed(1)}" y2="${H-PAD.b}" stroke="#f87171" stroke-width="1.5" stroke-dasharray="5,3"/>
-      <text x="${exitX.toFixed(1)}" y="${PAD.t - 7}" text-anchor="middle" fill="#f87171" font-size="9" font-family="monospace">EXIT ${fmt(exited_at)}</text>
-      ${yTicks.map(t => `<text x="${PAD.l - 4}" y="${t.y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#666" font-size="9" font-family="monospace">${t.label}</text>`).join("")}
-      <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${H-PAD.b}" stroke="#444" stroke-width="1"/>
-      <line x1="${PAD.l}" y1="${H-PAD.b}" x2="${W-PAD.r}" y2="${H-PAD.b}" stroke="#444" stroke-width="1"/>
+    const AW = 8, AH = 12; // arrow half-width, height
+
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;font-family:monospace">
+      ${yTicks.map(t => `<line x1="${PAD.l}" y1="${t.y.toFixed(1)}" x2="${W-PAD.r}" y2="${t.y.toFixed(1)}" stroke="#252535" stroke-width="1"/>`).join("")}
+      <path d="${linePts}" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linejoin="round"/>
+      <!-- entry up-arrow -->
+      <polygon points="${entryX},${(entryY-AH-2).toFixed(1)} ${(entryX-AW).toFixed(1)},${(entryY+2).toFixed(1)} ${(entryX+AW).toFixed(1)},${(entryY+2).toFixed(1)}" fill="#4ade80"/>
+      <text x="${entryX.toFixed(1)}" y="${(entryY - AH - 6).toFixed(1)}" text-anchor="middle" fill="#4ade80" font-size="9">▲ ENTRY</text>
+      <!-- exit down-arrow -->
+      <polygon points="${exitX},${(exitY+AH+2).toFixed(1)} ${(exitX-AW).toFixed(1)},${(exitY-2).toFixed(1)} ${(exitX+AW).toFixed(1)},${(exitY-2).toFixed(1)}" fill="#f87171"/>
+      <text x="${exitX.toFixed(1)}" y="${(exitY + AH + 16).toFixed(1)}" text-anchor="middle" fill="#f87171" font-size="9">▼ EXIT</text>
+      ${yTicks.map(t => `<text x="${PAD.l - 4}" y="${t.y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#555" font-size="9">${t.label}</text>`).join("")}
+      ${xTicks.map(t => `<text x="${t.x.toFixed(1)}" y="${H - PAD.b + 14}" text-anchor="middle" fill="#444" font-size="8">${t.label}</text>`).join("")}
+      <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${H-PAD.b}" stroke="#333" stroke-width="1"/>
+      <line x1="${PAD.l}" y1="${H-PAD.b}" x2="${W-PAD.r}" y2="${H-PAD.b}" stroke="#333" stroke-width="1"/>
     </svg>`;
   }
 

@@ -1415,8 +1415,8 @@ def trade_chart_endpoint(ticker):
     except Exception:
         return jsonify({"error": "invalid timestamps"}), 400
 
-    start_dt = entered_dt - timedelta(minutes=15)
-    end_dt   = exited_dt  + timedelta(minutes=15)
+    start_dt = entered_dt - timedelta(minutes=60)
+    end_dt   = exited_dt  + timedelta(minutes=30)
 
     docs = list(price_history.find(
         {"ticker": ticker, "ts": {"$gte": start_dt, "$lte": end_dt}},
