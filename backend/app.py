@@ -1784,11 +1784,16 @@ def _check_auto_trades():
         corr           = s.get("correlation")
         price_rising   = s.get("price_rising", False)
         density_rising = s.get("density_rising", False)
-        total_msgs     = s.get("total_messages", 0)
         current_price  = finviz.get(ticker, {}).get("price")
 
         if ticker in active_map or ticker in recent_exits:
             continue
+
+        # Use direct count_documents for the same 1hr rolling density as exit monitor
+        total_msgs = scored_messages.count_documents({
+            "ticker":         ticker,
+            "created_at_utc": {"$gte": window_1h}
+        })
 
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
