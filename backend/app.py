@@ -1672,6 +1672,13 @@ def _et_now_str() -> str:
     return et.strftime(f"%I:%M %p {tz_label}")
 
 
+@app.route("/api/test-sms")
+def test_sms_endpoint():
+    _send_sms("Test from Stocktwits Dashboard — Twilio is working!", {"type": "test", "ticker": "TEST"})
+    status = "sent" if _twilio_ready else "disabled (check env vars)"
+    return jsonify({"status": status, "to": _NOTIFY_PHONE if _twilio_ready else None})
+
+
 def _send_sms(body: str, meta: dict):
     delivered = False
     if _twilio_ready:
