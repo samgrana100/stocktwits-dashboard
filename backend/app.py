@@ -60,6 +60,7 @@ except ImportError:
 AUTO_ENTRY_CORR    = 0.20   # minimum correlation to enter
 AUTO_ENTRY_DENSITY = 10     # minimum 1hr rolling density to enter (msgs/hr)
 AUTO_EXIT_PEAK     = 0.20   # density % off peak to exit
+AUTO_EXIT_MIN_DROP = 6      # minimum absolute message drop before exit fires
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
 REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker
 
@@ -1733,7 +1734,7 @@ def _check_auto_trades():
             )
             peak = total_msgs
 
-        if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK:
+        if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK and (peak - total_msgs) >= AUTO_EXIT_MIN_DROP:
             entry_price = trade.get("entry_price")
             return_pct  = None
             try:
@@ -1873,6 +1874,16 @@ def _start_background_services():
     _auto_stop = [False]
     threading.Thread(target=run_auto_trade_loop, args=(_auto_stop,), daemon=True).start()
     print("[APP] Auto trade loop started.")
+
+    global pipeline_thread, pipeline_stop_flag
+    pipeline_stop_flag = [False]
+    def _run_pipeline():
+        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+        from pipeline import run_pipeline
+        run_pipeline(rolling_window=60, stop_flag=pipeline_stop_flag)
+    pipeline_thread = threading.Thread(target=_run_pipeline, daemon=True)
+    pipeline_thread.start()
+    print("[APP] Pipeline started automatically.")
 
     def _screener_tickers():
         with _finviz_lock:
