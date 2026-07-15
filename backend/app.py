@@ -57,10 +57,11 @@ except ImportError:
     print("[SMS] twilio package not installed — SMS notifications disabled")
 
 # ── Auto trade config ──
-AUTO_ENTRY_CORR   = 0.20   # minimum correlation to enter
-AUTO_EXIT_PEAK    = 0.20   # density % off peak to exit
-AUTO_LOOP_SEC     = 60     # seconds between auto trade checks
-REENTRY_COOLDOWN  = 3600   # seconds before re-entering the same ticker
+AUTO_ENTRY_CORR    = 0.20   # minimum correlation to enter
+AUTO_ENTRY_DENSITY = 10     # minimum 1hr rolling density to enter (msgs/hr)
+AUTO_EXIT_PEAK     = 0.20   # density % off peak to exit
+AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
+REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker
 
 
 def refresh_finviz_token() -> bool:
@@ -1792,6 +1793,7 @@ def _check_auto_trades():
                 corr >= AUTO_ENTRY_CORR and
                 price_rising and
                 density_rising and
+                total_msgs >= AUTO_ENTRY_DENSITY and
                 current_price):
             corr_pct = round(corr * 100)
             now_str  = _et_now_str()
