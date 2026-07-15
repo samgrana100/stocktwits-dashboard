@@ -238,7 +238,7 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         p_map         = corr_price_by_ticker.get(ticker, {})
         price_minutes = sorted(p_map.keys())[-10:]  # last 10 price snapshots
         if len(price_minutes) < CORR_MIN_POINTS:
-            return None, 0.0
+            return None, 0.0, False, False
 
         d_vec, p_vec = [], []
         for m in price_minutes:
@@ -254,7 +254,16 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         peak    = max(d_vec)
         current = d_vec[-1]
         pct_from_peak = round((peak - current) / peak, 4) if peak > 0 else 0.0
-        return r, pct_from_peak
+
+        # 3-point average trend check — smooths single outlier minutes
+        early_d = sum(d_vec[:3]) / 3
+        late_d  = sum(d_vec[-3:]) / 3
+        early_p = sum(p_vec[:3]) / 3
+        late_p  = sum(p_vec[-3:]) / 3
+        density_rising = late_d > early_d
+        price_rising   = late_p > early_p
+
+        return r, pct_from_peak, price_rising, density_rising
 
     # Group by ticker
     ticker_msgs = defaultdict(list)
@@ -283,7 +292,7 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         expected_5m = count_1h / 12
         surge_ratio = round(count_5m / expected_5m, 1) if expected_5m > 0 and count_5m >= 3 else 0.0
 
-        corr, pct_from_peak = _compute_correlation(ticker)
+        corr, pct_from_peak, price_rising, density_rising = _compute_correlation(ticker)
 
         ticker_scores.append({
             "ticker":                ticker,
@@ -304,6 +313,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             "signal":                None,
             "correlation":           corr,
             "density_pct_from_peak": pct_from_peak,
+            "price_rising":          price_rising,
+            "density_rising":        density_rising,
         })
 
     # Add tickers with messages but no scored messages yet
@@ -313,7 +324,7 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         expected_5m = count_1h / 12
         surge_ratio = round(count_5m / expected_5m, 1) if expected_5m > 0 and count_5m >= 3 else 0.0
 
-        corr, pct_from_peak = _compute_correlation(ticker)
+        corr, pct_from_peak, price_rising, density_rising = _compute_correlation(ticker)
 
         ticker_scores.append({
             "ticker":                ticker,
@@ -334,6 +345,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             "signal":                None,
             "correlation":           corr,
             "density_pct_from_peak": pct_from_peak,
+            "price_rising":          price_rising,
+            "density_rising":        density_rising,
         })
 
     # Scored tickers first, ranked by weighted composite score; unscored at bottom

@@ -3288,8 +3288,8 @@
 
     document.getElementById("corr-count").textContent = tickers.length + " tickers";
 
-    const entry = tickers.filter(t => Math.round(t.correlation * 100) >= corrEntryThreshold);
-    const watch = tickers.filter(t => Math.round(t.correlation * 100) <  corrEntryThreshold && t.correlation > 0);
+    const entry = tickers.filter(t => Math.round(t.correlation * 100) >= corrEntryThreshold && t.price_rising && t.density_rising);
+    const watch = tickers.filter(t => Math.round(t.correlation * 100) <  corrEntryThreshold && t.correlation > 0 && t.price_rising && t.density_rising);
 
     const entrySec  = document.getElementById("corr-entry-section");
     const entryList = document.getElementById("corr-entry-list");
