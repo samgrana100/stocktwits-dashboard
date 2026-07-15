@@ -23,7 +23,7 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications
+from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications, price_history
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
@@ -1403,6 +1403,28 @@ def get_auto_trades_endpoint():
     } for n in trade_notifications.find({}, {"_id": 0}).sort("sent_at", -1).limit(20)]
 
     return jsonify({"active": active, "completed": completed, "notifications": notifications})
+
+
+@app.route("/api/trade-chart/<ticker>")
+def trade_chart_endpoint(ticker):
+    entered_at_str = request.args.get("entered_at", "")
+    exited_at_str  = request.args.get("exited_at",  "")
+    try:
+        entered_dt = datetime.strptime(entered_at_str, "%Y-%m-%dT%H:%M:%SZ")
+        exited_dt  = datetime.strptime(exited_at_str,  "%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return jsonify({"error": "invalid timestamps"}), 400
+
+    start_dt = entered_dt - timedelta(minutes=15)
+    end_dt   = exited_dt  + timedelta(minutes=15)
+
+    docs = list(price_history.find(
+        {"ticker": ticker, "ts": {"$gte": start_dt, "$lte": end_dt}},
+        {"_id": 0, "ts": 1, "price": 1}
+    ).sort("ts", 1))
+
+    prices = [{"ts": d["ts"].strftime("%Y-%m-%dT%H:%M:%SZ"), "price": d["price"]} for d in docs]
+    return jsonify({"prices": prices})
 
 
 @app.route("/api/ticker-messages/<ticker>")
