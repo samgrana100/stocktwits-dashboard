@@ -1198,6 +1198,11 @@
         <span class="corr-exit-count" id="corr-exit-count">0 positions</span>
       </div>
       <div id="corr-exit-feed"><div class="corr-exit-empty">No positions tracked.<br>Enter a trade from the Entry Zone.</div></div>
+      <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
+        <span class="corr-exit-title">Completed Trades</span>
+        <button onclick="clearCompletedTrades()" style="font-size:9px;background:none;border:none;color:var(--text-dimmed);cursor:pointer">Clear</button>
+      </div>
+      <div id="corr-completed-feed"><div class="corr-exit-empty">No completed trades yet.</div></div>
     </div>
   </div>
 </div>
@@ -3281,7 +3286,22 @@
     buildCorrView();
   }
 
+  function _updateCorrPeaks() {
+    let changed = false;
+    for (const ticker of Object.keys(corrEntered)) {
+      const tkData = allTickers.find(t => t.ticker === ticker);
+      if (!tkData) continue;
+      const current = tkData.total_messages || 0;
+      if (current > (corrEntered[ticker].peakDensity || 0)) {
+        corrEntered[ticker].peakDensity = current;
+        changed = true;
+      }
+    }
+    if (changed) _saveCorrEntered();
+  }
+
   function buildCorrView() {
+    _updateCorrPeaks();
     const tickers = (lastFilteredTickers.length ? lastFilteredTickers : allTickers)
       .filter(t => t.correlation != null)
       .sort((a, b) => (b.correlation || 0) - (a.correlation || 0));
@@ -3344,21 +3364,55 @@
         </div>
       </div>
       <div class="corr-density-info">${density}${inMonitor}</div>
-      ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct})">Enter Trade</button>` : ""}
+      ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},${t.total_messages||0},'${t.price||''}')">Enter Trade</button>` : ""}
     </div>`;
   }
 
-  function enterTrade(ticker, corrPct) {
-    corrEntered[ticker] = { enteredAt: Date.now(), entryCorrPct: corrPct };
+  function enterTrade(ticker, corrPct, density, price) {
+    corrEntered[ticker] = { enteredAt: Date.now(), entryCorrPct: corrPct, peakDensity: density || 0, entryPrice: price || null };
     _saveCorrEntered();
     buildCorrView();
   }
 
+  let completedTrades = JSON.parse(localStorage.getItem("completedTrades") || "[]");
+  function _saveCompletedTrades() { localStorage.setItem("completedTrades", JSON.stringify(completedTrades)); }
+
   function exitTrade(ticker) {
+    const entry  = corrEntered[ticker];
+    const tkData = allTickers.find(t => t.ticker === ticker);
+    if (entry) {
+      const exitPrice  = tkData ? parseFloat(tkData.price) || null : null;
+      const entryPrice = entry.entryPrice ? parseFloat(entry.entryPrice) : null;
+      const returnPct  = (entryPrice && exitPrice) ? ((exitPrice - entryPrice) / entryPrice * 100) : null;
+      completedTrades.unshift({
+        ticker,
+        entryPrice,
+        exitPrice,
+        returnPct:   returnPct !== null ? Math.round(returnPct * 100) / 100 : null,
+        enteredAt:   entry.enteredAt,
+        exitedAt:    Date.now(),
+        entryCorrPct: entry.entryCorrPct,
+        peakDensity: entry.peakDensity,
+      });
+      _saveCompletedTrades();
+    }
     delete corrEntered[ticker];
     _saveCorrEntered();
     renderCorrExitPanel();
     buildCorrView();
+  }
+
+  function removePosition(ticker) {
+    delete corrEntered[ticker];
+    _saveCorrEntered();
+    renderCorrExitPanel();
+    buildCorrView();
+  }
+
+  function clearCompletedTrades() {
+    completedTrades = [];
+    _saveCompletedTrades();
+    renderCorrExitPanel();
   }
 
   function renderCorrExitPanel() {
@@ -3378,7 +3432,9 @@
     feed.innerHTML = positions.map(ticker => {
       const entry   = corrEntered[ticker];
       const tkData  = allTickers.find(t => t.ticker === ticker);
-      const pctOff  = tkData ? Math.round((tkData.density_pct_from_peak || 0) * 100) : 0;
+      const current = tkData ? (tkData.total_messages || 0) : 0;
+      const peak    = entry.peakDensity || 0;
+      const pctOff  = peak > 0 ? Math.round((peak - current) / peak * 100) : 0;
       const fillW   = Math.min(pctOff, 100);
       const isExit  = pctOff >= corrExitPct;
       const safeTk  = ticker.replace(/'/g, "\\'");
@@ -3393,8 +3449,35 @@
         <div class="corr-exit-pct-lbl">${pctOff}% off peak density (exit at ${corrExitPct}%)</div>
         <div class="corr-exit-actions">
           <button class="corr-exit-chart-btn" onclick="openPopup('${safeTk}')">View Chart</button>
-          <button class="corr-remove-btn" onclick="exitTrade('${safeTk}')">× Remove</button>
+          <button class="corr-enter-btn" style="font-size:10px;padding:3px 8px" onclick="exitTrade('${safeTk}')">Exit Trade</button>
+          <button class="corr-remove-btn" onclick="removePosition('${safeTk}')">× Remove</button>
         </div>
+      </div>`;
+    }).join("");
+
+    // Completed trades
+    const completedFeed = document.getElementById("corr-completed-feed");
+    if (!completedFeed) return;
+    if (!completedTrades.length) {
+      completedFeed.innerHTML = '<div class="corr-exit-empty">No completed trades yet.</div>';
+      return;
+    }
+    completedFeed.innerHTML = completedTrades.map(tr => {
+      const retPct    = tr.returnPct;
+      const retColor  = retPct === null ? "var(--text-dimmed)" : retPct >= 0 ? "#4ade80" : "#f87171";
+      const retDisp   = retPct === null ? "N/A" : (retPct >= 0 ? "+" : "") + retPct + "%";
+      const entryTime = new Date(tr.enteredAt).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      const exitTime  = new Date(tr.exitedAt).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      const priceDisp = (tr.entryPrice && tr.exitPrice)
+        ? `$${tr.entryPrice} → $${tr.exitPrice}`
+        : "Price unavailable";
+      return `<div class="corr-exit-card">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span class="corr-exit-ticker">${tr.ticker}</span>
+          <span style="font-size:13px;font-weight:700;color:${retColor};margin-left:auto">${retDisp}</span>
+        </div>
+        <div class="corr-exit-meta">${priceDisp}</div>
+        <div class="corr-exit-meta">${entryTime} → ${exitTime} · r=${tr.entryCorrPct}%</div>
       </div>`;
     }).join("");
   }
