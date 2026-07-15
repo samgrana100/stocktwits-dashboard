@@ -1203,6 +1203,15 @@
         <button onclick="clearCompletedTrades()" style="font-size:9px;background:none;border:none;color:var(--text-dimmed);cursor:pointer">Clear</button>
       </div>
       <div id="corr-completed-feed"><div class="corr-exit-empty">No completed trades yet.</div></div>
+      <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
+        <span class="corr-exit-title">Auto — Active</span>
+        <span class="corr-exit-count" id="auto-active-count">0</span>
+      </div>
+      <div id="auto-active-feed"><div class="corr-exit-empty">No automated positions.</div></div>
+      <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
+        <span class="corr-exit-title">Auto — History</span>
+      </div>
+      <div id="auto-history-feed"><div class="corr-exit-empty">No automated trades yet.</div></div>
     </div>
   </div>
 </div>
@@ -2175,7 +2184,7 @@
 
       // Refresh stale news view cards so price data doesn't fall behind
       if (newsViewActive)  refreshStaleNewsCards();
-      if (corrViewActive)  buildCorrView();
+      if (corrViewActive)  { buildCorrView(); fetchAutoTrades(); }
 
     } catch(e) { console.error("Failed to fetch scores:", e); }
   }
@@ -3277,7 +3286,56 @@
       document.getElementById("corr-entry-threshold").value = corrEntryThreshold;
       document.getElementById("corr-exit-pct").value        = corrExitPct;
       buildCorrView();
+      fetchAutoTrades();
     }
+  }
+
+  async function fetchAutoTrades() {
+    try {
+      const res  = await fetch("/api/auto-trades");
+      if (!res.ok) return;
+      const data = await res.json();
+      renderAutoTrades(data);
+    } catch(e) { console.error("[auto-trades]", e); }
+  }
+
+  function renderAutoTrades(data) {
+    const activeFeed  = document.getElementById("auto-active-feed");
+    const histFeed    = document.getElementById("auto-history-feed");
+    const countEl     = document.getElementById("auto-active-count");
+    if (!activeFeed || !histFeed) return;
+
+    const active    = data.active    || [];
+    const completed = data.completed || [];
+    countEl.textContent = active.length;
+
+    activeFeed.innerHTML = active.length ? active.map(t => {
+      const entryTime = t.entered_at ? new Date(t.entered_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "--";
+      return `<div class="corr-exit-card">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span class="corr-exit-ticker">${t.ticker}</span>
+          <span style="font-size:10px;color:#4ade80;margin-left:auto">AUTO</span>
+        </div>
+        <div class="corr-exit-meta">Entry: $${t.entry_price} · r=${t.entry_corr}%</div>
+        <div class="corr-exit-meta">${t.entry_density} msgs/hr · ${entryTime}</div>
+        <div class="corr-exit-meta">Peak: ${t.peak_density} msgs/hr</div>
+      </div>`;
+    }).join("") : '<div class="corr-exit-empty">No automated positions.</div>';
+
+    histFeed.innerHTML = completed.length ? completed.map(t => {
+      const ret      = t.return_pct;
+      const retColor = ret === null ? "var(--text-dimmed)" : ret >= 0 ? "#4ade80" : "#f87171";
+      const retDisp  = ret === null ? "N/A" : (ret >= 0 ? "+" : "") + ret + "%";
+      const exitTime = t.exited_at ? new Date(t.exited_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "--";
+      return `<div class="corr-exit-card">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
+          <span class="corr-exit-ticker">${t.ticker}</span>
+          <span style="font-size:13px;font-weight:700;color:${retColor};margin-left:auto">${retDisp}</span>
+        </div>
+        <div class="corr-exit-meta">$${t.entry_price} → $${t.exit_price}</div>
+        <div class="corr-exit-meta">r=${t.entry_corr}% · peak ${t.peak_density} msgs/hr · ${exitTime}</div>
+      </div>`;
+    }).join("") : '<div class="corr-exit-empty">No automated trades yet.</div>';
   }
 
   function onCorrThresholdChange() {

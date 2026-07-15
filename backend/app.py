@@ -23,7 +23,7 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts
+from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
@@ -43,6 +43,24 @@ FINNHUB_API_KEY  = os.getenv("FINNHUB_API_KEY", "")
 _token_refresh_lock  = threading.Lock()
 _last_token_refresh  = 0.0
 _TOKEN_REFRESH_COOLDOWN = 300  # seconds between re-login attempts
+
+# ── Twilio SMS ──
+try:
+    from twilio.rest import Client as TwilioClient
+    _TWILIO_SID   = os.getenv("TWILIO_SID", "")
+    _TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
+    _TWILIO_FROM  = os.getenv("TWILIO_FROM_NUMBER", "")
+    _NOTIFY_PHONE = os.getenv("NOTIFY_PHONE", "")
+    _twilio_ready = all([_TWILIO_SID, _TWILIO_TOKEN, _TWILIO_FROM, _NOTIFY_PHONE])
+except ImportError:
+    _twilio_ready = False
+    print("[SMS] twilio package not installed — SMS notifications disabled")
+
+# ── Auto trade config ──
+AUTO_ENTRY_CORR   = 0.20   # minimum correlation to enter
+AUTO_EXIT_PEAK    = 0.20   # density % off peak to exit
+AUTO_LOOP_SEC     = 60     # seconds between auto trade checks
+REENTRY_COOLDOWN  = 3600   # seconds before re-entering the same ticker
 
 
 def refresh_finviz_token() -> bool:
@@ -1350,6 +1368,43 @@ def get_bullish_feed():
     return jsonify({"messages": result, "threshold": threshold})
 
 
+@app.route("/api/auto-trades")
+def get_auto_trades_endpoint():
+    def fmt(dt):
+        if not dt: return ""
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if hasattr(dt, "strftime") else str(dt)
+
+    active = [{
+        "ticker":        t["ticker"],
+        "entry_price":   t.get("entry_price"),
+        "entry_corr":    t.get("entry_corr"),
+        "entered_at":    fmt(t.get("entered_at")),
+        "peak_density":  t.get("peak_density", 0),
+        "entry_density": t.get("entry_density", 0),
+    } for t in auto_trades.find({"status": "active"}, {"_id": 0})]
+
+    completed = [{
+        "ticker":       t["ticker"],
+        "entry_price":  t.get("entry_price"),
+        "exit_price":   t.get("exit_price"),
+        "return_pct":   t.get("return_pct"),
+        "entered_at":   fmt(t.get("entered_at")),
+        "exited_at":    fmt(t.get("exited_at")),
+        "entry_corr":   t.get("entry_corr"),
+        "peak_density": t.get("peak_density", 0),
+    } for t in completed_auto_trades.find({}, {"_id": 0}).sort("exited_at", -1).limit(50)]
+
+    notifications = [{
+        "type":      n.get("type"),
+        "ticker":    n.get("ticker"),
+        "message":   n.get("message"),
+        "sent_at":   fmt(n.get("sent_at")),
+        "delivered": n.get("delivered", False),
+    } for n in trade_notifications.find({}, {"_id": 0}).sort("sent_at", -1).limit(20)]
+
+    return jsonify({"active": active, "completed": completed, "notifications": notifications})
+
+
 @app.route("/api/ticker-messages/<ticker>")
 def get_ticker_messages(ticker):
     """Returns recent scored messages for a specific ticker (for the news view)."""
@@ -1587,6 +1642,158 @@ def apply_screener():
     return jsonify({"status": "ok", "was_running": was_running})
 
 
+def _et_now_str() -> str:
+    now_utc  = datetime.now(timezone.utc)
+    offset   = -4 if 3 <= now_utc.month <= 11 else -5
+    et       = now_utc + timedelta(hours=offset)
+    tz_label = "EDT" if offset == -4 else "EST"
+    return et.strftime(f"%I:%M %p {tz_label}")
+
+
+def _send_sms(body: str, meta: dict):
+    delivered = False
+    if _twilio_ready:
+        try:
+            client = TwilioClient(_TWILIO_SID, _TWILIO_TOKEN)
+            client.messages.create(body=body, from_=_TWILIO_FROM, to=_NOTIFY_PHONE)
+            delivered = True
+            print(f"[SMS] Sent to {_NOTIFY_PHONE}: {body[:60]}...")
+        except Exception as e:
+            print(f"[SMS] Failed: {e}")
+    else:
+        print(f"[SMS] (disabled) Would send: {body}")
+
+    trade_notifications.insert_one({
+        **meta,
+        "message":   body,
+        "sent_at":   datetime.now(timezone.utc),
+        "delivered": delivered,
+    })
+
+
+def _check_auto_trades():
+    scores   = aggregate_ticker_scores(rolling_window_minutes=60)
+    finviz   = get_finviz_data()
+    now_utc  = datetime.now(timezone.utc)
+
+    active_map = {t["ticker"]: t for t in auto_trades.find({"status": "active"})}
+
+    cooldown_cutoff = now_utc - timedelta(seconds=REENTRY_COOLDOWN)
+    recent_exits    = {
+        t["ticker"] for t in completed_auto_trades.find(
+            {"exited_at": {"$gte": cooldown_cutoff}}, {"ticker": 1}
+        )
+    }
+
+    for s in scores:
+        ticker         = s["ticker"]
+        corr           = s.get("correlation")
+        price_rising   = s.get("price_rising", False)
+        density_rising = s.get("density_rising", False)
+        total_msgs     = s.get("total_messages", 0)
+        current_price  = finviz.get(ticker, {}).get("price")
+
+        if ticker in active_map:
+            trade = active_map[ticker]
+            peak  = trade.get("peak_density", 0)
+
+            if total_msgs > peak:
+                auto_trades.update_one(
+                    {"ticker": ticker, "status": "active"},
+                    {"$set": {"peak_density": total_msgs}}
+                )
+                peak = total_msgs
+
+            if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK:
+                entry_price = trade.get("entry_price")
+                return_pct  = None
+                try:
+                    if entry_price and current_price:
+                        return_pct = round(
+                            (float(current_price) - float(entry_price)) / float(entry_price) * 100, 2
+                        )
+                except Exception:
+                    pass
+
+                ret_str  = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
+                now_str  = _et_now_str()
+                msg = (
+                    f"EXIT: ${ticker}\n"
+                    f"Price: ${current_price}\n"
+                    f"Density: {total_msgs} msgs/hr\n"
+                    f"Return: {ret_str}\n"
+                    f"Time: {now_str}"
+                )
+                _send_sms(msg, {
+                    "type":       "exit",
+                    "ticker":     ticker,
+                    "exit_price": current_price,
+                    "density":    total_msgs,
+                    "return_pct": return_pct,
+                    "entry_corr": trade.get("entry_corr"),
+                })
+                completed_auto_trades.insert_one({
+                    "ticker":        ticker,
+                    "entry_price":   entry_price,
+                    "exit_price":    current_price,
+                    "return_pct":    return_pct,
+                    "entered_at":    trade["entered_at"],
+                    "exited_at":     now_utc,
+                    "entry_corr":    trade.get("entry_corr"),
+                    "peak_density":  peak,
+                    "exit_density":  total_msgs,
+                    "exit_reason":   "density_off_peak",
+                })
+                auto_trades.delete_one({"ticker": ticker, "status": "active"})
+                print(f"[AUTO TRADE] EXIT {ticker} | return: {ret_str}")
+
+        else:
+            if ticker in recent_exits:
+                continue
+            if (corr is not None and
+                    corr >= AUTO_ENTRY_CORR and
+                    price_rising and
+                    density_rising and
+                    current_price):
+                corr_pct = round(corr * 100)
+                now_str  = _et_now_str()
+                auto_trades.insert_one({
+                    "ticker":        ticker,
+                    "status":        "active",
+                    "entry_price":   current_price,
+                    "entry_corr":    corr_pct,
+                    "entered_at":    now_utc,
+                    "peak_density":  total_msgs,
+                    "entry_density": total_msgs,
+                })
+                msg = (
+                    f"ENTRY: ${ticker}\n"
+                    f"Price: ${current_price}\n"
+                    f"Correlation: +{corr_pct}%\n"
+                    f"Density: {total_msgs} msgs/hr\n"
+                    f"Time: {now_str}"
+                )
+                _send_sms(msg, {
+                    "type":        "entry",
+                    "ticker":      ticker,
+                    "entry_price": current_price,
+                    "correlation": corr_pct,
+                    "density":     total_msgs,
+                })
+                print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
+
+
+def run_auto_trade_loop(stop_flag: list):
+    print("[AUTO TRADE] Starting auto trade loop...")
+    while not stop_flag[0]:
+        try:
+            _check_auto_trades()
+        except Exception as e:
+            print(f"[AUTO TRADE] Error: {e}")
+        time.sleep(AUTO_LOOP_SEC)
+    print("[AUTO TRADE] Stopped.")
+
+
 def run_scorer_loop(stop_flag: list):
     """Runs the score calculator continuously in a background thread."""
     print("[SCORER THREAD] Starting continuous scoring loop...")
@@ -1622,6 +1829,10 @@ def _start_background_services():
     _scorer_stop = [False]
     threading.Thread(target=run_scorer_loop, args=(_scorer_stop,), daemon=True).start()
     print("[APP] Score calculator started automatically.")
+
+    _auto_stop = [False]
+    threading.Thread(target=run_auto_trade_loop, args=(_auto_stop,), daemon=True).start()
+    print("[APP] Auto trade loop started.")
 
     def _screener_tickers():
         with _finviz_lock:
