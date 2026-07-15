@@ -1577,6 +1577,7 @@
   let tickerDensityWindows  = {};
   let tickerSentimentWindows = {};
   let tickerDensityCounts   = {};
+  let positionDensity1h     = {};
 
   function loadTickerWindows() {
     try { tickerDensityWindows  = JSON.parse(localStorage.getItem("tickerDensityWindows")  || "{}"); }
@@ -1687,6 +1688,19 @@
     applyTickerDensityDisplay();
   }
 
+  async function _fetchPositionDensities() {
+    const tickers = Object.keys(corrEntered);
+    if (!tickers.length) return;
+    await Promise.all(tickers.map(async ticker => {
+      try {
+        const res = await fetch("/api/quickscore/" + ticker + "?window=1h");
+        if (!res.ok) return;
+        const data = await res.json();
+        positionDensity1h[ticker] = data.total_messages || 0;
+      } catch(_) {}
+    }));
+  }
+
   let _densityDisplayTimer = null;
   function scheduleDensityDisplay() {
     if (_densityDisplayTimer) clearTimeout(_densityDisplayTimer);
@@ -1697,7 +1711,7 @@
     const targets = lastFilteredTickers.length ? lastFilteredTickers : allTickers;
     if (!targets.length) return;
     await Promise.all(targets.map(async t => {
-      const densityW = tickerDensityWindows[t.ticker] || "5m";
+      const densityW = tickerDensityWindows[t.ticker] || "1h";
       if (densityW === currentWindow) return;
       try {
         const res = await fetch("/api/quickscore/" + t.ticker + "?window=" + densityW);
@@ -3347,9 +3361,7 @@
   function _updateCorrPeaks() {
     let changed = false;
     for (const ticker of Object.keys(corrEntered)) {
-      const tkData = allTickers.find(t => t.ticker === ticker);
-      if (!tkData) continue;
-      const current = tkData.total_messages || 0;
+      const current = positionDensity1h[ticker] ?? 0;
       if (current > (corrEntered[ticker].peakDensity || 0)) {
         corrEntered[ticker].peakDensity = current;
         changed = true;
@@ -3358,7 +3370,8 @@
     if (changed) _saveCorrEntered();
   }
 
-  function buildCorrView() {
+  async function buildCorrView() {
+    await _fetchPositionDensities();
     _updateCorrPeaks();
     const tickers = (lastFilteredTickers.length ? lastFilteredTickers : allTickers)
       .filter(t => t.correlation != null)
@@ -3422,12 +3435,17 @@
         </div>
       </div>
       <div class="corr-density-info">${density}${inMonitor}</div>
-      ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},${t.total_messages||0},'${t.price||''}')">Enter Trade</button>` : ""}
+      ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},'${t.price||''}')">Enter Trade</button>` : ""}
     </div>`;
   }
 
-  function enterTrade(ticker, corrPct, density, price) {
-    corrEntered[ticker] = { enteredAt: Date.now(), entryCorrPct: corrPct, peakDensity: density || 0, entryPrice: price || null };
+  async function enterTrade(ticker, corrPct, price) {
+    let density = 0;
+    try {
+      const res = await fetch("/api/quickscore/" + ticker + "?window=1h");
+      if (res.ok) { const d = await res.json(); density = d.total_messages || 0; positionDensity1h[ticker] = density; }
+    } catch(_) {}
+    corrEntered[ticker] = { enteredAt: Date.now(), entryCorrPct: corrPct, peakDensity: density, entryPrice: price || null };
     _saveCorrEntered();
     buildCorrView();
   }
@@ -3489,8 +3507,7 @@
 
     feed.innerHTML = positions.map(ticker => {
       const entry   = corrEntered[ticker];
-      const tkData  = allTickers.find(t => t.ticker === ticker);
-      const current = tkData ? (tkData.total_messages || 0) : 0;
+      const current = positionDensity1h[ticker] ?? 0;
       const peak    = entry.peakDensity || 0;
       const pctOff  = peak > 0 ? Math.round((peak - current) / peak * 100) : 0;
       const fillW   = Math.min(pctOff, 100);
