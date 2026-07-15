@@ -1578,6 +1578,7 @@
   let tickerSentimentWindows = {};
   let tickerDensityCounts   = {};
   let positionDensity1h     = {};
+  let _tradeMarkers         = null;
 
   function loadTickerWindows() {
     try { tickerDensityWindows  = JSON.parse(localStorage.getItem("tickerDensityWindows")  || "{}"); }
@@ -2526,6 +2527,7 @@
   function closePopupDirect() {
     document.getElementById("popup-overlay").classList.remove("active");
     currentPopupTicker = "";
+    _tradeMarkers = null;
     if (combinedChart) { combinedChart.destroy(); combinedChart = null; }
     if (popupTimeoutId)       { clearTimeout(popupTimeoutId);         popupTimeoutId = null; }
     if (popupRefreshInterval) { clearInterval(popupRefreshInterval);  popupRefreshInterval = null; }
@@ -2702,6 +2704,48 @@
     const evColors = evRaw.map(v => v ? ((EVENT_META[v.event_type] || {}).color || "#888") : "transparent");
     const evRadii  = evRaw.map(v => v ? 7 : 0);
 
+    // Trade entry/exit markers — injected when popup opened via openTradeChart
+    let tradeDataset = null;
+    if (_tradeMarkers && isPopup) {
+      const pKnown = rawPFilled.filter(v => v != null);
+      const pLo = pKnown.length ? Math.min(...pKnown) : 0;
+      const pHi = pKnown.length ? Math.max(...pKnown) : 1;
+      const normTrade = p => pHi > pLo ? (p - pLo) / (pHi - pLo) : 0.5;
+
+      const toAxisKey = isoUtc => {
+        const d   = new Date(isoUtc);
+        const etD = d.toLocaleDateString("en-US", {timeZone:"America/New_York", year:"numeric", month:"2-digit", day:"2-digit"});
+        const etT = d.toLocaleTimeString("en-US", {timeZone:"America/New_York", hour12:false, hour:"2-digit", minute:"2-digit"});
+        const [h, m]   = etT.split(":").map(Number);
+        const total    = h * 60 + m;
+        const snapped  = Math.floor(total / axisStep) * axisStep;
+        const sh = String(Math.floor(snapped / 60)).padStart(2, "0");
+        const sm = String(snapped % 60).padStart(2, "0");
+        if (needsDate) {
+          const [mo, day] = etD.split("/");
+          return mo.padStart(2,"0") + "-" + day.padStart(2,"0") + " " + sh + ":" + sm;
+        }
+        return sh + ":" + sm;
+      };
+
+      const entryKey = toAxisKey(_tradeMarkers.enteredAt);
+      const exitKey  = toAxisKey(_tradeMarkers.exitedAt);
+
+      const tmY     = axisKeys.map(k => k===entryKey ? normTrade(_tradeMarkers.entryPrice) : k===exitKey ? normTrade(_tradeMarkers.exitPrice) : null);
+      const tmRaw   = axisKeys.map(k => k===entryKey ? "▲ ENTRY $"+_tradeMarkers.entryPrice : k===exitKey ? "▼ EXIT $"+_tradeMarkers.exitPrice : null);
+      const tmColor = axisKeys.map(k => k===entryKey ? "#4ade80" : k===exitKey ? "#f87171" : "transparent");
+      const tmRot   = axisKeys.map(k => k===entryKey ? 0 : 180);
+      const tmRad   = axisKeys.map(k => (k===entryKey||k===exitKey) ? 11 : 0);
+
+      tradeDataset = {
+        label: "Trade", data: tmY, rawData: tmRaw,
+        borderWidth: 0, pointStyle: "triangle",
+        pointRotation: tmRot, pointBackgroundColor: tmColor, pointBorderColor: tmColor,
+        pointRadius: tmRad, pointHoverRadius: 14, pointHitRadius: 16,
+        fill: false, showLine: false, spanGaps: false, yAxisID: "y", order: 0
+      };
+    }
+
     // ── Live snapshot cards ──
     const lastPrice = [...rawP].reverse().find(v => v != null);
     if (isPopup) document.getElementById("live-price").textContent = lastPrice != null ? "$" + lastPrice.toFixed(2) : "--";
@@ -2759,7 +2803,8 @@
             pointHitRadius: 24,
             fill: false, showLine: false, spanGaps: false,
             yAxisID: "y", order: 0
-          }
+          },
+          ...(tradeDataset ? [tradeDataset] : [])
         ]
       },
       plugins: [noPricePlugin],
@@ -2774,6 +2819,7 @@
             titleColor: "#8888aa", bodyColor: "#e2e2f0", padding: 11,
             filter: item => {
               if (item.dataset.label === "Event") return item.dataset.rawData[item.dataIndex] != null;
+              if (item.dataset.label === "Trade") return item.dataset.rawData[item.dataIndex] != null;
               return true;
             },
             callbacks: {
@@ -2791,6 +2837,7 @@
                 if (ctx.dataset.label === "Price")         return "Price: $"  + raw.toFixed(2);
                 if (ctx.dataset.label === "Rolling Score") return "Score: "   + raw.toFixed(4);
                 if (ctx.dataset.label === "Msg Density")   return "Density: " + raw + " msgs/" + (densityRollingKey || "5m");
+                if (ctx.dataset.label === "Trade")         return raw;
                 return ctx.dataset.label + ": " + raw;
               }
             }
@@ -3352,114 +3399,15 @@
         <div class="corr-exit-meta">$${t.entry_price} → $${t.exit_price}</div>
         <div class="corr-exit-meta">r=${t.entry_corr}% · peak ${t.peak_density} msgs/hr · ${exitTime}</div>
         <div style="margin-top:6px">
-          <button class="corr-exit-chart-btn" onclick="openTradeChart('${safeTk}','${safeEn}','${safeEx}',${t.entry_price},${t.exit_price},${ret})">View Chart</button>
+          <button class="corr-exit-chart-btn" onclick="openTradeChart('${safeTk}','${safeEn}','${safeEx}',${t.entry_price},${t.exit_price})">View Chart</button>
         </div>
       </div>`;
     }).join("") : '<div class="corr-exit-empty">No automated trades yet.</div>';
   }
 
-  function openTradeChart(ticker, entered_at, exited_at, entry_price, exit_price, retPct) {
-    const existing = document.getElementById("trade-chart-overlay");
-    if (existing) existing.remove();
-
-    const overlay = document.createElement("div");
-    overlay.id = "trade-chart-overlay";
-    overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;display:flex;align-items:center;justify-content:center";
-    overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
-
-    const retColor = retPct === null ? "var(--text-dimmed)" : retPct >= 0 ? "#4ade80" : "#f87171";
-    const retDisp  = retPct === null ? "N/A" : (retPct >= 0 ? "+" : "") + retPct + "%";
-
-    const card = document.createElement("div");
-    card.style.cssText = "background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;width:620px;max-width:95vw;position:relative";
-    card.innerHTML = `
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="font-weight:700;font-size:15px;color:#e2e8f0">${ticker}</span>
-        <span style="font-weight:700;color:${retColor}">${retDisp}</span>
-        <button onclick="document.getElementById('trade-chart-overlay').remove()" style="margin-left:auto;background:none;border:none;color:#888;cursor:pointer;font-size:20px;line-height:1">×</button>
-      </div>
-      <div style="color:#888;font-size:11px;margin-bottom:14px">$${entry_price} → $${exit_price}</div>
-      <div id="trade-chart-body" style="min-height:160px;display:flex;align-items:center;justify-content:center;color:#666;font-size:12px">Loading…</div>
-    `;
-    overlay.appendChild(card);
-    document.body.appendChild(overlay);
-
-    fetch("/api/trade-chart/" + ticker + "?entered_at=" + encodeURIComponent(entered_at) + "&exited_at=" + encodeURIComponent(exited_at))
-      .then(r => r.json())
-      .then(data => {
-        const body = document.getElementById("trade-chart-body");
-        if (!body) return;
-        const prices = data.prices || [];
-        if (!prices.length) { body.textContent = "No price data available for this trade window."; return; }
-        body.innerHTML = _buildTradeSVG(prices, entered_at, exited_at);
-      })
-      .catch(() => {
-        const body = document.getElementById("trade-chart-body");
-        if (body) body.textContent = "Failed to load chart data.";
-      });
-  }
-
-  function _buildTradeSVG(prices, entered_at, exited_at) {
-    const W = 560, H = 240;
-    const PAD = { l: 54, r: 16, t: 30, b: 40 };
-    const pw = W - PAD.l - PAD.r;
-    const ph = H - PAD.t - PAD.b;
-
-    const times = prices.map(p => new Date(p.ts).getTime());
-    const vals  = prices.map(p => p.price);
-    const tMin  = Math.min(...times), tMax = Math.max(...times);
-    const vMin  = Math.min(...vals),  vMax = Math.max(...vals);
-    const vPad  = (vMax - vMin) * 0.12 || 0.02;
-    const pMin  = vMin - vPad, pMax = vMax + vPad;
-
-    const tx = t => PAD.l + (t - tMin) / (tMax - tMin) * pw;
-    const ty = p => PAD.t + (1 - (p - pMin) / (pMax - pMin)) * ph;
-
-    const entryMs = new Date(entered_at).getTime();
-    const exitMs  = new Date(exited_at).getTime();
-    const entryX  = Math.max(PAD.l, Math.min(W - PAD.r, tx(entryMs)));
-    const exitX   = Math.max(PAD.l, Math.min(W - PAD.r, tx(exitMs)));
-
-    // Find closest price to entry and exit time for arrow Y position
-    const closestY = (ms) => {
-      let best = prices[0], bestDiff = Infinity;
-      for (const p of prices) { const d = Math.abs(new Date(p.ts).getTime() - ms); if (d < bestDiff) { bestDiff = d; best = p; } }
-      return ty(best.price);
-    };
-    const entryY = closestY(entryMs);
-    const exitY  = closestY(exitMs);
-
-    const linePts = prices.map((p, i) =>
-      (i === 0 ? "M" : "L") + tx(new Date(p.ts).getTime()).toFixed(1) + "," + ty(p.price).toFixed(1)
-    ).join(" ");
-
-    const yTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-      const val = pMin + (pMax - pMin) * f;
-      return { y: ty(val), label: "$" + val.toFixed(2) };
-    });
-
-    // X axis time ticks (5 evenly spaced)
-    const xTicks = [0, 0.25, 0.5, 0.75, 1].map(f => {
-      const ms = tMin + (tMax - tMin) * f;
-      return { x: tx(ms), label: new Date(ms).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"}) };
-    });
-
-    const AW = 8, AH = 12; // arrow half-width, height
-
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block;font-family:monospace">
-      ${yTicks.map(t => `<line x1="${PAD.l}" y1="${t.y.toFixed(1)}" x2="${W-PAD.r}" y2="${t.y.toFixed(1)}" stroke="#252535" stroke-width="1"/>`).join("")}
-      <path d="${linePts}" fill="none" stroke="#60a5fa" stroke-width="2" stroke-linejoin="round"/>
-      <!-- entry up-arrow -->
-      <polygon points="${entryX},${(entryY-AH-2).toFixed(1)} ${(entryX-AW).toFixed(1)},${(entryY+2).toFixed(1)} ${(entryX+AW).toFixed(1)},${(entryY+2).toFixed(1)}" fill="#4ade80"/>
-      <text x="${entryX.toFixed(1)}" y="${(entryY - AH - 6).toFixed(1)}" text-anchor="middle" fill="#4ade80" font-size="9">▲ ENTRY</text>
-      <!-- exit down-arrow -->
-      <polygon points="${exitX},${(exitY+AH+2).toFixed(1)} ${(exitX-AW).toFixed(1)},${(exitY-2).toFixed(1)} ${(exitX+AW).toFixed(1)},${(exitY-2).toFixed(1)}" fill="#f87171"/>
-      <text x="${exitX.toFixed(1)}" y="${(exitY + AH + 16).toFixed(1)}" text-anchor="middle" fill="#f87171" font-size="9">▼ EXIT</text>
-      ${yTicks.map(t => `<text x="${PAD.l - 4}" y="${t.y.toFixed(1)}" text-anchor="end" dominant-baseline="middle" fill="#555" font-size="9">${t.label}</text>`).join("")}
-      ${xTicks.map(t => `<text x="${t.x.toFixed(1)}" y="${H - PAD.b + 14}" text-anchor="middle" fill="#444" font-size="8">${t.label}</text>`).join("")}
-      <line x1="${PAD.l}" y1="${PAD.t}" x2="${PAD.l}" y2="${H-PAD.b}" stroke="#333" stroke-width="1"/>
-      <line x1="${PAD.l}" y1="${H-PAD.b}" x2="${W-PAD.r}" y2="${H-PAD.b}" stroke="#333" stroke-width="1"/>
-    </svg>`;
+  function openTradeChart(ticker, entered_at, exited_at, entry_price, exit_price) {
+    _tradeMarkers = { enteredAt: entered_at, exitedAt: exited_at, entryPrice: entry_price, exitPrice: exit_price };
+    openPopup(ticker, "", "", "");
   }
 
   function onCorrThresholdChange() {
