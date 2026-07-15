@@ -1694,9 +1694,9 @@ def _send_sms(body: str, meta: dict):
 
 
 def _check_auto_trades():
-    scores   = aggregate_ticker_scores(rolling_window_minutes=60)
-    finviz   = get_finviz_data()
-    now_utc  = datetime.now(timezone.utc)
+    now_utc   = datetime.now(timezone.utc)
+    finviz    = get_finviz_data()
+    window_1h = get_window_start_iso(60)
 
     active_map = {t["ticker"]: t for t in auto_trades.find({"status": "active"})}
 
@@ -1707,6 +1707,69 @@ def _check_auto_trades():
         )
     }
 
+    # ── EXIT monitoring — direct 1hr rolling density per active trade ──
+    # Uses count_documents per ticker (same source as quickscore?window=1h) so the
+    # density value is never affected by the main table's rolling window selection.
+    for ticker, trade in active_map.items():
+        current_price = finviz.get(ticker, {}).get("price")
+        total_msgs    = scored_messages.count_documents({
+            "ticker":         ticker,
+            "created_at_utc": {"$gte": window_1h}
+        })
+        peak = trade.get("peak_density", 0)
+
+        if total_msgs > peak:
+            auto_trades.update_one(
+                {"ticker": ticker, "status": "active"},
+                {"$set": {"peak_density": total_msgs}}
+            )
+            peak = total_msgs
+
+        if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK:
+            entry_price = trade.get("entry_price")
+            return_pct  = None
+            try:
+                if entry_price and current_price:
+                    return_pct = round(
+                        (float(current_price) - float(entry_price)) / float(entry_price) * 100, 2
+                    )
+            except Exception:
+                pass
+
+            ret_str = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
+            now_str = _et_now_str()
+            msg = (
+                f"EXIT: ${ticker}\n"
+                f"Price: ${current_price}\n"
+                f"Density: {total_msgs} msgs/hr\n"
+                f"Return: {ret_str}\n"
+                f"Time: {now_str}"
+            )
+            _send_sms(msg, {
+                "type":       "exit",
+                "ticker":     ticker,
+                "exit_price": current_price,
+                "density":    total_msgs,
+                "return_pct": return_pct,
+                "entry_corr": trade.get("entry_corr"),
+            })
+            completed_auto_trades.insert_one({
+                "ticker":        ticker,
+                "entry_price":   entry_price,
+                "exit_price":    current_price,
+                "return_pct":    return_pct,
+                "entered_at":    trade["entered_at"],
+                "exited_at":     now_utc,
+                "entry_corr":    trade.get("entry_corr"),
+                "peak_density":  peak,
+                "exit_density":  total_msgs,
+                "exit_reason":   "density_off_peak",
+            })
+            auto_trades.delete_one({"ticker": ticker, "status": "active"})
+            print(f"[AUTO TRADE] EXIT {ticker} | return: {ret_str}")
+
+    # ── ENTRY monitoring — uses full correlation scores ──
+    scores = aggregate_ticker_scores(rolling_window_minutes=60)
     for s in scores:
         ticker         = s["ticker"]
         corr           = s.get("correlation")
@@ -1715,94 +1778,40 @@ def _check_auto_trades():
         total_msgs     = s.get("total_messages", 0)
         current_price  = finviz.get(ticker, {}).get("price")
 
-        if ticker in active_map:
-            trade = active_map[ticker]
-            peak  = trade.get("peak_density", 0)
+        if ticker in active_map or ticker in recent_exits:
+            continue
 
-            if total_msgs > peak:
-                auto_trades.update_one(
-                    {"ticker": ticker, "status": "active"},
-                    {"$set": {"peak_density": total_msgs}}
-                )
-                peak = total_msgs
-
-            if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK:
-                entry_price = trade.get("entry_price")
-                return_pct  = None
-                try:
-                    if entry_price and current_price:
-                        return_pct = round(
-                            (float(current_price) - float(entry_price)) / float(entry_price) * 100, 2
-                        )
-                except Exception:
-                    pass
-
-                ret_str  = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
-                now_str  = _et_now_str()
-                msg = (
-                    f"EXIT: ${ticker}\n"
-                    f"Price: ${current_price}\n"
-                    f"Density: {total_msgs} msgs/hr\n"
-                    f"Return: {ret_str}\n"
-                    f"Time: {now_str}"
-                )
-                _send_sms(msg, {
-                    "type":       "exit",
-                    "ticker":     ticker,
-                    "exit_price": current_price,
-                    "density":    total_msgs,
-                    "return_pct": return_pct,
-                    "entry_corr": trade.get("entry_corr"),
-                })
-                completed_auto_trades.insert_one({
-                    "ticker":        ticker,
-                    "entry_price":   entry_price,
-                    "exit_price":    current_price,
-                    "return_pct":    return_pct,
-                    "entered_at":    trade["entered_at"],
-                    "exited_at":     now_utc,
-                    "entry_corr":    trade.get("entry_corr"),
-                    "peak_density":  peak,
-                    "exit_density":  total_msgs,
-                    "exit_reason":   "density_off_peak",
-                })
-                auto_trades.delete_one({"ticker": ticker, "status": "active"})
-                print(f"[AUTO TRADE] EXIT {ticker} | return: {ret_str}")
-
-        else:
-            if ticker in recent_exits:
-                continue
-            if (corr is not None and
-                    corr >= AUTO_ENTRY_CORR and
-                    price_rising and
-                    density_rising and
-                    current_price):
-                corr_pct = round(corr * 100)
-                now_str  = _et_now_str()
-                auto_trades.insert_one({
-                    "ticker":        ticker,
-                    "status":        "active",
-                    "entry_price":   current_price,
-                    "entry_corr":    corr_pct,
-                    "entered_at":    now_utc,
-                    "peak_density":  total_msgs,
-                    "entry_density": total_msgs,
-                })
-                msg = (
-                    f"ENTRY: ${ticker}\n"
-                    f"Price: ${current_price}\n"
-                    f"Correlation: +{corr_pct}%\n"
-                    f"Density: {total_msgs} msgs/hr\n"
-                    f"Time: {now_str}"
-                )
-                _send_sms(msg, {
-                    "type":        "entry",
-                    "ticker":      ticker,
-                    "entry_price": current_price,
-                    "correlation": corr_pct,
-                    "density":     total_msgs,
-                })
-                print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
+        if (corr is not None and
+                corr >= AUTO_ENTRY_CORR and
+                price_rising and
+                density_rising and
+                current_price):
+            corr_pct = round(corr * 100)
+            now_str  = _et_now_str()
+            auto_trades.insert_one({
+                "ticker":        ticker,
+                "status":        "active",
+                "entry_price":   current_price,
+                "entry_corr":    corr_pct,
+                "entered_at":    now_utc,
+                "peak_density":  total_msgs,
+                "entry_density": total_msgs,
+            })
+            msg = (
+                f"ENTRY: ${ticker}\n"
+                f"Price: ${current_price}\n"
+                f"Correlation: +{corr_pct}%\n"
+                f"Density: {total_msgs} msgs/hr\n"
+                f"Time: {now_str}"
+            )
+            _send_sms(msg, {
+                "type":        "entry",
+                "ticker":      ticker,
+                "entry_price": current_price,
+                "correlation": corr_pct,
+                "density":     total_msgs,
+            })
+            print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
 
 
 def run_auto_trade_loop(stop_flag: list):
