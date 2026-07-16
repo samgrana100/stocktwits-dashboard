@@ -2570,7 +2570,7 @@
     // On 1d+ windows the same HH:MM appears twice (yesterday + today), so map keys must
     // include the date to prevent phantom price/score segments from the wrong day.
     const windowMin = data.window_minutes || 60;
-    const axisStep  = windowMin <= 60 ? 1 : (windowMin <= 1440 ? 5 : (windowMin <= 10080 ? 60 : 1440));
+    const axisStep  = windowMin <= 1440 ? 1 : (windowMin <= 10080 ? 60 : 1440);
     const needsDate = windowMin >= 1440;
 
     // Map key from a full ET time string ("2026-07-02T09:30:00 EDT" or "2026-07-02T09:30:47 EDT").

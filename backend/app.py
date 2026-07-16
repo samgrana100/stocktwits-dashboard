@@ -58,7 +58,6 @@ except ImportError:
 
 # ── Auto trade config ──
 AUTO_ENTRY_CORR    = 0.20   # minimum correlation to enter
-AUTO_ENTRY_DENSITY = 10     # minimum 1hr rolling density to enter (msgs/hr)
 AUTO_EXIT_PEAK     = 0.20   # density % off peak to exit
 AUTO_EXIT_MIN_DROP = 6      # minimum absolute message drop before exit fires
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
@@ -1705,7 +1704,9 @@ def _send_sms(body: str, meta: dict):
 def _check_auto_trades():
     now_utc   = datetime.now(timezone.utc)
     finviz    = get_finviz_data()
-    window_1h = get_window_start_iso(60)
+    window_1h  = get_window_start_iso(60)
+    window_20m = get_window_start_iso(20)
+    window_40m = get_window_start_iso(40)
 
     active_map = {t["ticker"]: t for t in auto_trades.find({"status": "active"})}
 
@@ -1780,26 +1781,33 @@ def _check_auto_trades():
     # ── ENTRY monitoring — uses full correlation scores ──
     scores = aggregate_ticker_scores(rolling_window_minutes=60)
     for s in scores:
-        ticker         = s["ticker"]
-        corr           = s.get("correlation")
-        price_rising   = s.get("price_rising", False)
-        density_rising = s.get("density_rising", False)
-        current_price  = finviz.get(ticker, {}).get("price")
+        ticker        = s["ticker"]
+        corr          = s.get("correlation")
+        current_price = finviz.get(ticker, {}).get("price")
 
         if ticker in active_map or ticker in recent_exits:
             continue
 
-        # Use direct count_documents for the same 1hr rolling density as exit monitor
+        # 1hr rolling density — recorded on entry for peak tracking
         total_msgs = scored_messages.count_documents({
             "ticker":         ticker,
             "created_at_utc": {"$gte": window_1h}
         })
 
+        # density_rising: last 20 min vs prior 20 min (rolling, same source as exit)
+        count_20m = scored_messages.count_documents({
+            "ticker":         ticker,
+            "created_at_utc": {"$gte": window_20m}
+        })
+        count_prior_20m = scored_messages.count_documents({
+            "ticker":         ticker,
+            "created_at_utc": {"$gte": window_40m, "$lt": window_20m}
+        })
+        density_rising = count_20m > count_prior_20m
+
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
-                price_rising and
                 density_rising and
-                total_msgs >= AUTO_ENTRY_DENSITY and
                 current_price):
             corr_pct = round(corr * 100)
             now_str  = _et_now_str()
