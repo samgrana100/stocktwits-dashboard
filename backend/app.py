@@ -1880,15 +1880,27 @@ def _start_background_services():
     threading.Thread(target=run_auto_trade_loop, args=(_auto_stop,), daemon=True).start()
     print("[APP] Auto trade loop started.")
 
-    global pipeline_thread, pipeline_stop_flag
-    pipeline_stop_flag = [False]
-    def _run_pipeline():
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from pipeline import run_pipeline
-        run_pipeline(rolling_window=60, stop_flag=pipeline_stop_flag)
-    pipeline_thread = threading.Thread(target=_run_pipeline, daemon=True)
-    pipeline_thread.start()
-    print("[APP] Pipeline started automatically.")
+    def _start_pipeline():
+        global pipeline_thread, pipeline_stop_flag
+        pipeline_stop_flag = [False]
+        def _run():
+            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+            from pipeline import run_pipeline
+            run_pipeline(rolling_window=60, stop_flag=pipeline_stop_flag)
+        pipeline_thread = threading.Thread(target=_run, daemon=True)
+        pipeline_thread.start()
+        print("[APP] Pipeline started automatically.")
+
+    _start_pipeline()
+
+    def _pipeline_watchdog():
+        while True:
+            time.sleep(30)
+            if pipeline_thread is None or not pipeline_thread.is_alive():
+                print("[APP] Pipeline watchdog: thread dead, restarting.")
+                _start_pipeline()
+
+    threading.Thread(target=_pipeline_watchdog, daemon=True).start()
 
     def _screener_tickers():
         with _finviz_lock:
