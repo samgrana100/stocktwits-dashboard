@@ -833,7 +833,7 @@ def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_
     # score/density data is never cut off by sparse price bar timestamps.
     # Axis is snapped to clean step boundaries so frontend snapKey lookups match.
     axis = []
-    step = 1 if window_min <= 60 else (5 if window_min <= 1440 else (60 if window_min <= 10080 else 1440))
+    step = 1 if window_min <= 1440 else (60 if window_min <= 10080 else 1440)
 
     # Snap start to the nearest step boundary (UTC minutes since midnight).
     # UTC-ET offset is always whole hours, so snapping in UTC = snapping in ET.
