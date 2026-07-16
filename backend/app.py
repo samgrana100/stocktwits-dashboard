@@ -1703,6 +1703,17 @@ def _send_sms(body: str, meta: dict):
 
 def _check_auto_trades():
     now_utc   = datetime.now(timezone.utc)
+
+    # Only run during extended trading hours: 4:00–20:00 ET (Mon–Fri)
+    et_offset = -4 if 3 <= now_utc.month <= 11 else -5
+    now_et    = now_utc + timedelta(hours=et_offset)
+    if now_et.weekday() >= 5:
+        return
+    market_open  = now_et.replace(hour=4,  minute=0, second=0, microsecond=0)
+    market_close = now_et.replace(hour=20, minute=0, second=0, microsecond=0)
+    if not (market_open <= now_et < market_close):
+        return
+
     finviz    = get_finviz_data()
     window_1h  = get_window_start_iso(60)
     window_20m = get_window_start_iso(20)
@@ -1721,7 +1732,8 @@ def _check_auto_trades():
     # Uses count_documents per ticker (same source as quickscore?window=1h) so the
     # density value is never affected by the main table's rolling window selection.
     for ticker, trade in active_map.items():
-        current_price = finviz.get(ticker, {}).get("price")
+        _bars         = get_finviz_price_history(ticker, "i1")
+        current_price = _bars[-1]["price"] if _bars else finviz.get(ticker, {}).get("price")
         total_msgs    = scored_messages.count_documents({
             "ticker":         ticker,
             "created_at_utc": {"$gte": window_1h}
@@ -1776,14 +1788,15 @@ def _check_auto_trades():
                 "exit_reason":   "density_off_peak",
             })
             auto_trades.delete_one({"ticker": ticker, "status": "active"})
-            print(f"[AUTO TRADE] EXIT {ticker} | return: {ret_str}")
+            drop_pct = round((peak - total_msgs) / peak * 100, 1) if peak else 0
+            print(f"[AUTO TRADE] EXIT {ticker} | peak={peak} density={total_msgs} drop={peak - total_msgs} ({drop_pct}%) | price={current_price} | return: {ret_str}")
 
     # ── ENTRY monitoring — uses full correlation scores ──
     scores = aggregate_ticker_scores(rolling_window_minutes=60)
     for s in scores:
-        ticker        = s["ticker"]
-        corr          = s.get("correlation")
-        current_price = finviz.get(ticker, {}).get("price")
+        ticker         = s["ticker"]
+        corr           = s.get("correlation")
+        screener_price = finviz.get(ticker, {}).get("price")
 
         if ticker in active_map or ticker in recent_exits:
             continue
@@ -1808,7 +1821,10 @@ def _check_auto_trades():
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
                 density_rising and
-                current_price):
+                screener_price):
+            # Use quote_export price (same source as chart) so stored price matches chart
+            _bars         = get_finviz_price_history(ticker, "i1")
+            current_price = _bars[-1]["price"] if _bars else screener_price
             corr_pct = round(corr * 100)
             now_str  = _et_now_str()
             auto_trades.insert_one({
