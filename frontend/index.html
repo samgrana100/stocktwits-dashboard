@@ -1179,8 +1179,16 @@
           <span class="corr-count" id="corr-count">-- tickers</span>
         </div>
         <div class="corr-controls">
-          <label class="corr-ctrl-label">Entry Threshold <input type="number" id="corr-entry-threshold" value="30" min="1" max="99" oninput="onCorrThresholdChange()"> %</label>
-          <label class="corr-ctrl-label">Exit from Peak <input type="number" id="corr-exit-pct" value="30" min="1" max="99" oninput="renderCorrExitPanel()"> %</label>
+          <label class="corr-ctrl-label">Entry Threshold
+            <input type="number" id="corr-entry-threshold" value="30" min="1" max="99" oninput="onCorrThresholdChange()"> %
+            <button onclick="applyAutoEntryCorr()" style="font-size:9px;padding:2px 7px;border:1px solid var(--border-subtle);border-radius:4px;background:none;color:var(--text-muted);cursor:pointer">Update</button>
+            <span id="auto-entry-corr-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+          </label>
+          <label class="corr-ctrl-label">Exit from Peak
+            <input type="number" id="corr-exit-pct" value="20" min="1" max="99" oninput="renderCorrExitPanel()"> %
+            <button onclick="applyAutoExitPeak()" style="font-size:9px;padding:2px 7px;border:1px solid var(--border-subtle);border-radius:4px;background:none;color:var(--text-muted);cursor:pointer">Update</button>
+            <span id="auto-exit-peak-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+          </label>
         </div>
       </div>
       <div id="corr-entry-section" class="corr-section-entry" style="display:none">
@@ -1203,6 +1211,21 @@
         <button onclick="clearCompletedTrades()" style="font-size:9px;background:none;border:none;color:var(--text-dimmed);cursor:pointer">Clear</button>
       </div>
       <div id="corr-completed-feed"><div class="corr-exit-empty">No completed trades yet.</div></div>
+      <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
+        <span class="corr-exit-title">Auto — Settings</span>
+      </div>
+      <div style="padding:10px 14px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--border-faint)">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <label style="font-size:10px;color:var(--text-dimmed);white-space:nowrap">Exit Min Drop</label>
+          <div style="display:flex;align-items:center;gap:4px">
+            <input id="auto-exit-min-drop" type="number" min="0" max="50" step="1"
+              style="width:46px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 5px;text-align:right"
+              onchange="applyAutoMinDrop()">
+            <span style="font-size:10px;color:var(--text-dimmed)">msgs</span>
+            <span id="auto-min-drop-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+          </div>
+        </div>
+      </div>
       <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
         <span class="corr-exit-title">Auto — Active</span>
         <span class="corr-exit-count" id="auto-active-count">0</span>
@@ -3356,8 +3379,54 @@
       const res  = await fetch("/api/auto-trades");
       if (!res.ok) return;
       const data = await res.json();
+      if (data.config) {
+        const corrEl = document.getElementById("corr-entry-threshold");
+        const peakEl = document.getElementById("corr-exit-pct");
+        const dropEl = document.getElementById("auto-exit-min-drop");
+        if (corrEl && corrEl !== document.activeElement) corrEl.value = Math.round(data.config.entry_corr * 100);
+        if (peakEl && peakEl !== document.activeElement) peakEl.value = Math.round(data.config.exit_peak * 100);
+        if (dropEl && dropEl !== document.activeElement) dropEl.value = data.config.exit_min_drop;
+      }
       renderAutoTrades(data);
     } catch(e) { console.error("[auto-trades]", e); }
+  }
+
+  async function _postAutoConfig(payload) {
+    try {
+      const res  = await fetch("/api/auto-trade-config", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      return await res.json();
+    } catch(e) { console.error("[auto-config]", e); return null; }
+  }
+
+  function _flashStatus(el, text, ok) {
+    if (!el) return;
+    el.textContent = text;
+    el.style.color = ok ? "#4ade80" : "#f87171";
+    setTimeout(() => { el.textContent = ""; }, 3000);
+  }
+
+  async function applyAutoEntryCorr() {
+    const val = parseFloat(document.getElementById("corr-entry-threshold").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ entry_corr: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-entry-corr-status"), `✓ Active: ${Math.round(cfg.entry_corr * 100)}%`, true);
+  }
+
+  async function applyAutoExitPeak() {
+    const val = parseFloat(document.getElementById("corr-exit-pct").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ exit_peak: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-exit-peak-status"), `✓ Active: ${Math.round(cfg.exit_peak * 100)}%`, true);
+  }
+
+  async function applyAutoMinDrop() {
+    const val = parseInt(document.getElementById("auto-exit-min-drop").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ exit_min_drop: val });
+    if (cfg) _flashStatus(document.getElementById("auto-min-drop-status"), `✓ ${cfg.exit_min_drop}`, true);
   }
 
   function renderAutoTrades(data) {

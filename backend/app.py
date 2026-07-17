@@ -57,7 +57,7 @@ except ImportError:
     print("[SMS] twilio package not installed — SMS notifications disabled")
 
 # ── Auto trade config ──
-AUTO_ENTRY_CORR    = 0.20   # minimum correlation to enter
+AUTO_ENTRY_CORR    = 0.30   # minimum correlation to enter
 AUTO_EXIT_PEAK     = 0.20   # density % off peak to exit
 AUTO_EXIT_MIN_DROP = 6      # minimum absolute message drop before exit fires
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
@@ -1403,7 +1403,30 @@ def get_auto_trades_endpoint():
         "delivered": n.get("delivered", False),
     } for n in trade_notifications.find({}, {"_id": 0}).sort("sent_at", -1).limit(20)]
 
-    return jsonify({"active": active, "completed": completed, "notifications": notifications})
+    return jsonify({
+        "active": active, "completed": completed, "notifications": notifications,
+        "config": {"entry_corr": AUTO_ENTRY_CORR, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP}
+    })
+
+
+@app.route("/api/auto-trade-config", methods=["POST"])
+def set_auto_trade_config():
+    global AUTO_ENTRY_CORR, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP
+    data = request.get_json(force=True) or {}
+    if "entry_corr" in data:
+        val = float(data["entry_corr"])
+        if 0.0 < val <= 1.0:
+            AUTO_ENTRY_CORR = round(val, 2)
+    if "exit_peak" in data:
+        val = float(data["exit_peak"])
+        if 0.0 < val <= 1.0:
+            AUTO_EXIT_PEAK = round(val, 2)
+    if "exit_min_drop" in data:
+        val = int(data["exit_min_drop"])
+        if val >= 0:
+            AUTO_EXIT_MIN_DROP = val
+    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP}")
+    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP})
 
 
 @app.route("/api/trade-chart/<ticker>")
@@ -1807,7 +1830,7 @@ def _check_auto_trades():
             "created_at_utc": {"$gte": window_1h}
         })
 
-        # density_rising: last 20 min vs prior 20 min (rolling, same source as exit)
+        # density_rising: last 20 min vs prior 20 min — blocks entries when both density and price are declining
         count_20m = scored_messages.count_documents({
             "ticker":         ticker,
             "created_at_utc": {"$gte": window_20m}
