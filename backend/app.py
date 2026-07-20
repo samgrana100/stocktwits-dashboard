@@ -1792,8 +1792,7 @@ def _check_auto_trades():
     # Uses count_documents per ticker (same source as quickscore?window=1h) so the
     # density value is never affected by the main table's rolling window selection.
     for ticker, trade in active_map.items():
-        _bars         = get_finviz_price_history(ticker, "i1")
-        current_price = _bars[-1]["price"] if _bars else finviz.get(ticker, {}).get("price")
+        current_price = finviz.get(ticker, {}).get("price")
         total_msgs    = scored_messages.count_documents({
             "ticker":         ticker,
             "created_at_utc": {"$gte": window_1h}
@@ -1883,9 +1882,7 @@ def _check_auto_trades():
                 total_msgs >= AUTO_ENTRY_MIN_DENS and
                 density_rising and
                 screener_price):
-            # Use quote_export price (same source as chart) so stored price matches chart
-            _bars         = get_finviz_price_history(ticker, "i1")
-            current_price = _bars[-1]["price"] if _bars else screener_price
+            current_price = screener_price
             corr_pct = round(corr * 100)
             now_str  = _et_now_str()
             auto_trades.insert_one({
