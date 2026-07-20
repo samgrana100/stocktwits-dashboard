@@ -57,9 +57,10 @@ except ImportError:
     print("[SMS] twilio package not installed — SMS notifications disabled")
 
 # ── Auto trade config ──
-AUTO_ENTRY_CORR    = 0.30   # minimum correlation to enter
-AUTO_EXIT_PEAK     = 0.20   # density % off peak to exit
-AUTO_EXIT_MIN_DROP = 6      # minimum absolute message drop before exit fires
+AUTO_ENTRY_CORR      = 0.30  # minimum correlation to enter
+AUTO_ENTRY_MIN_DENS  = 4    # minimum msgs/hr (1h rolling) to enter
+AUTO_EXIT_PEAK       = 0.20  # density % off peak to exit
+AUTO_EXIT_MIN_DROP   = 6    # minimum absolute message drop before exit fires
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
 REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker
 
@@ -1384,16 +1385,26 @@ def get_auto_trades_endpoint():
         "entry_density": t.get("entry_density", 0),
     } for t in auto_trades.find({"status": "active"}, {"_id": 0})]
 
-    completed = [{
-        "ticker":       t["ticker"],
-        "entry_price":  t.get("entry_price"),
-        "exit_price":   t.get("exit_price"),
-        "return_pct":   t.get("return_pct"),
-        "entered_at":   fmt(t.get("entered_at")),
-        "exited_at":    fmt(t.get("exited_at")),
-        "entry_corr":   t.get("entry_corr"),
-        "peak_density": t.get("peak_density", 0),
-    } for t in completed_auto_trades.find({}, {"_id": 0}).sort("exited_at", -1).limit(50)]
+    def _fmt_completed(t):
+        return {
+            "ticker":       t["ticker"],
+            "entry_price":  t.get("entry_price"),
+            "exit_price":   t.get("exit_price"),
+            "return_pct":   t.get("return_pct"),
+            "entered_at":   fmt(t.get("entered_at")),
+            "exited_at":    fmt(t.get("exited_at")),
+            "entry_corr":   t.get("entry_corr"),
+            "peak_density": t.get("peak_density", 0),
+            "saved":        t.get("saved", False),
+        }
+
+    recent_50   = list(completed_auto_trades.find({}, {"_id": 0}).sort("exited_at", -1).limit(50))
+    recent_keys = {(t["ticker"], str(t.get("exited_at"))): True for t in recent_50}
+    saved_extra = [
+        t for t in completed_auto_trades.find({"saved": True}, {"_id": 0})
+        if (t["ticker"], str(t.get("exited_at"))) not in recent_keys
+    ]
+    completed = [_fmt_completed(t) for t in recent_50 + saved_extra]
 
     notifications = [{
         "type":      n.get("type"),
@@ -1405,18 +1416,22 @@ def get_auto_trades_endpoint():
 
     return jsonify({
         "active": active, "completed": completed, "notifications": notifications,
-        "config": {"entry_corr": AUTO_ENTRY_CORR, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP}
+        "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP}
     })
 
 
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
-    global AUTO_ENTRY_CORR, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP
+    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP
     data = request.get_json(force=True) or {}
     if "entry_corr" in data:
         val = float(data["entry_corr"])
         if 0.0 < val <= 1.0:
             AUTO_ENTRY_CORR = round(val, 2)
+    if "entry_min_dens" in data:
+        val = int(data["entry_min_dens"])
+        if val >= 0:
+            AUTO_ENTRY_MIN_DENS = val
     if "exit_peak" in data:
         val = float(data["exit_peak"])
         if 0.0 < val <= 1.0:
@@ -1425,8 +1440,27 @@ def set_auto_trade_config():
         val = int(data["exit_min_drop"])
         if val >= 0:
             AUTO_EXIT_MIN_DROP = val
-    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP}")
-    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP})
+    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP}")
+    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP})
+
+
+@app.route("/api/auto-trade/save", methods=["POST"])
+def toggle_auto_trade_saved():
+    data      = request.get_json(force=True) or {}
+    ticker    = data.get("ticker", "")
+    exited_at = data.get("exited_at", "")
+    saved     = bool(data.get("saved", False))
+    if not ticker or not exited_at:
+        return jsonify({"error": "ticker and exited_at required"}), 400
+    try:
+        exited_dt = datetime.strptime(exited_at, "%Y-%m-%dT%H:%M:%SZ")
+    except Exception:
+        return jsonify({"error": "invalid exited_at format"}), 400
+    completed_auto_trades.update_one(
+        {"ticker": ticker, "exited_at": exited_dt},
+        {"$set": {"saved": saved}}
+    )
+    return jsonify({"ticker": ticker, "saved": saved})
 
 
 @app.route("/api/trade-chart/<ticker>")
@@ -1843,6 +1877,7 @@ def _check_auto_trades():
 
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
+                total_msgs >= AUTO_ENTRY_MIN_DENS and
                 density_rising and
                 screener_price):
             # Use quote_export price (same source as chart) so stored price matches chart

@@ -1225,6 +1225,16 @@
             <span id="auto-min-drop-status" style="font-size:9px;color:var(--text-dimmed)"></span>
           </div>
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <label style="font-size:10px;color:var(--text-dimmed);white-space:nowrap">Entry Min Density</label>
+          <div style="display:flex;align-items:center;gap:4px">
+            <input id="auto-entry-min-dens" type="number" min="0" max="200" step="1"
+              style="width:46px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 5px;text-align:right"
+              onchange="applyAutoMinDens()">
+            <span style="font-size:10px;color:var(--text-dimmed)">msgs/hr</span>
+            <span id="auto-min-dens-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+          </div>
+        </div>
       </div>
       <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
         <span class="corr-exit-title">Auto — Active</span>
@@ -3383,9 +3393,11 @@
         const corrEl = document.getElementById("corr-entry-threshold");
         const peakEl = document.getElementById("corr-exit-pct");
         const dropEl = document.getElementById("auto-exit-min-drop");
+        const densEl = document.getElementById("auto-entry-min-dens");
         if (corrEl && corrEl !== document.activeElement) corrEl.value = Math.round(data.config.entry_corr * 100);
         if (peakEl && peakEl !== document.activeElement) peakEl.value = Math.round(data.config.exit_peak * 100);
         if (dropEl && dropEl !== document.activeElement) dropEl.value = data.config.exit_min_drop;
+        if (densEl && densEl !== document.activeElement) densEl.value = data.config.entry_min_dens;
       }
       renderAutoTrades(data);
     } catch(e) { console.error("[auto-trades]", e); }
@@ -3429,6 +3441,13 @@
     if (cfg) _flashStatus(document.getElementById("auto-min-drop-status"), `✓ ${cfg.exit_min_drop}`, true);
   }
 
+  async function applyAutoMinDens() {
+    const val = parseInt(document.getElementById("auto-entry-min-dens").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ entry_min_dens: val });
+    if (cfg) _flashStatus(document.getElementById("auto-min-dens-status"), `✓ ${cfg.entry_min_dens}`, true);
+  }
+
   function renderAutoTrades(data) {
     const activeFeed  = document.getElementById("auto-active-feed");
     const histFeed    = document.getElementById("auto-history-feed");
@@ -3460,10 +3479,15 @@
       const safeTk   = t.ticker.replace(/'/g, "\\'");
       const safeEn   = (t.entered_at || "").replace(/'/g, "\\'");
       const safeEx   = (t.exited_at  || "").replace(/'/g, "\\'");
-      return `<div class="corr-exit-card">
+      const isSaved  = t.saved === true;
+      const starClr  = isSaved ? "#facc15" : "var(--text-dimmed)";
+      const starTip  = isSaved ? "Unsave" : "Save";
+      return `<div class="corr-exit-card" style="${isSaved ? 'border-left:2px solid #facc15;' : ''}">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span class="corr-exit-ticker">${t.ticker}</span>
           <span style="font-size:13px;font-weight:700;color:${retColor};margin-left:auto">${retDisp}</span>
+          <button title="${starTip}" onclick="toggleSaveTrade('${safeTk}','${safeEx}',${!isSaved})"
+            style="background:none;border:none;cursor:pointer;font-size:14px;color:${starClr};padding:0;line-height:1">★</button>
         </div>
         <div class="corr-exit-meta">$${t.entry_price} → $${t.exit_price}</div>
         <div class="corr-exit-meta">r=${t.entry_corr}% · peak ${t.peak_density} msgs/hr · ${exitTime}</div>
@@ -3472,6 +3496,16 @@
         </div>
       </div>`;
     }).join("") : '<div class="corr-exit-empty">No automated trades yet.</div>';
+  }
+
+  async function toggleSaveTrade(ticker, exited_at, save) {
+    try {
+      await fetch("/api/auto-trade/save", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ ticker, exited_at, saved: save })
+      });
+      fetchAutoTrades();
+    } catch(e) { console.error("[save-trade]", e); }
   }
 
   function openTradeChart(ticker, entered_at, exited_at, entry_price, exit_price) {
