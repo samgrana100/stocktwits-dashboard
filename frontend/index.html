@@ -2764,8 +2764,15 @@
       const entryKey = toAxisKey(_tradeMarkers.enteredAt);
       const exitKey  = toAxisKey(_tradeMarkers.exitedAt);
 
-      const tmY     = axisKeys.map(k => k===entryKey ? normTrade(_tradeMarkers.entryPrice) : k===exitKey ? normTrade(_tradeMarkers.exitPrice) : null);
-      const tmRaw   = axisKeys.map(k => k===entryKey ? "▲ ENTRY $"+_tradeMarkers.entryPrice : k===exitKey ? "▼ EXIT $"+_tradeMarkers.exitPrice : null);
+      // If exit price wasn't stored (429 at exit time), recover it from chart bar data
+      let exitPrice = _tradeMarkers.exitPrice;
+      if (exitPrice == null && exitKey) {
+        const exitIdx = axisKeys.indexOf(exitKey);
+        if (exitIdx !== -1 && rawPFilled[exitIdx] != null) exitPrice = rawPFilled[exitIdx];
+      }
+
+      const tmY     = axisKeys.map(k => k===entryKey ? normTrade(_tradeMarkers.entryPrice) : k===exitKey ? normTrade(exitPrice) : null);
+      const tmRaw   = axisKeys.map(k => k===entryKey ? "▲ ENTRY $"+_tradeMarkers.entryPrice : k===exitKey ? "▼ EXIT $"+exitPrice : null);
       const tmColor = axisKeys.map(k => k===entryKey ? "#4ade80" : k===exitKey ? "#f87171" : "transparent");
       const tmRot   = axisKeys.map(k => k===entryKey ? 0 : 180);
       const tmRad   = axisKeys.map(k => (k===entryKey||k===exitKey) ? 11 : 0);
