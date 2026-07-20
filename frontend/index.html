@@ -3486,7 +3486,7 @@
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span class="corr-exit-ticker">${t.ticker}</span>
           <span style="font-size:13px;font-weight:700;color:${retColor};margin-left:auto">${retDisp}</span>
-          <button title="${starTip}" onclick="toggleSaveTrade('${safeTk}','${safeEx}',${!isSaved})"
+          <button title="${starTip}" onclick="toggleSaveTrade('${safeTk}','${safeEx}',${!isSaved},this)"
             style="background:none;border:none;cursor:pointer;font-size:14px;color:${starClr};padding:0;line-height:1">★</button>
         </div>
         <div class="corr-exit-meta">$${t.entry_price} → $${t.exit_price}</div>
@@ -3498,14 +3498,24 @@
     }).join("") : '<div class="corr-exit-empty">No automated trades yet.</div>';
   }
 
-  async function toggleSaveTrade(ticker, exited_at, save) {
+  async function toggleSaveTrade(ticker, exited_at, save, btn) {
+    if (btn) {
+      btn.style.color = save ? "#facc15" : "var(--text-dimmed)";
+      btn.title = save ? "Unsave" : "Save";
+    }
     try {
       await fetch("/api/auto-trade/save", {
         method: "POST", headers: {"Content-Type": "application/json"},
         body: JSON.stringify({ ticker, exited_at, saved: save })
       });
       fetchAutoTrades();
-    } catch(e) { console.error("[save-trade]", e); }
+    } catch(e) {
+      console.error("[save-trade]", e);
+      if (btn) {
+        btn.style.color = save ? "var(--text-dimmed)" : "#facc15";
+        btn.title = save ? "Save" : "Unsave";
+      }
+    }
   }
 
   function openTradeChart(ticker, entered_at, exited_at, entry_price, exit_price) {
