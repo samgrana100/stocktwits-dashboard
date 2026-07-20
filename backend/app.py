@@ -10,6 +10,7 @@ import re
 import json
 import threading
 import time
+import random
 import requests
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -158,9 +159,10 @@ finviz_cache_time = 0
 _finviz_lock      = threading.Lock()
 
 # Per-ticker price cache: avoids hitting Finviz on every popup open
-price_cache     = {}
-PRICE_CACHE_TTL = 60  # seconds
-_price_lock     = threading.Lock()
+price_cache      = {}
+PRICE_CACHE_TTL  = 60  # seconds base TTL; each entry gets +0-30s jitter to stagger expiry
+_price_lock      = threading.Lock()
+_finviz_price_sem = threading.Semaphore(3)  # max 3 concurrent Finviz price requests
 
 # Per-ticker detail cache: shared by /api/ticker and /api/tickers/batch
 # Short TTL keeps the dashboard real-time while avoiding redundant aggregations
@@ -355,7 +357,7 @@ def get_finviz_price_history(ticker: str, finviz_param: str, multi_day: bool = F
     now_ts    = time.time()
     with _price_lock:
         cached = price_cache.get(cache_key)
-        if cached and (now_ts - cached["ts"]) < PRICE_CACHE_TTL:
+        if cached and (now_ts - cached["ts"]) < PRICE_CACHE_TTL + cached.get("jitter", 0):
             return cached["data"]
 
     url = (
@@ -363,99 +365,100 @@ def get_finviz_price_history(ticker: str, finviz_param: str, multi_day: bool = F
         f"?t={ticker}&p={finviz_param}&auth={FINVIZ_API_TOKEN}"
     )
 
-    try:
-        response = cffi_requests.get(url, impersonate="chrome", timeout=15)
+    with _finviz_price_sem:
+        try:
+            response = cffi_requests.get(url, impersonate="chrome", timeout=15)
 
-        if response.status_code != 200:
-            print(f"[FINVIZ PRICE] HTTP {response.status_code} for {ticker}")
-            return []
+            if response.status_code != 200:
+                print(f"[FINVIZ PRICE] HTTP {response.status_code} for {ticker}")
+                return []
 
-        df = pd.read_csv(StringIO(response.text))
-        df.columns = [c.strip() for c in df.columns]
+            df = pd.read_csv(StringIO(response.text))
+            df.columns = [c.strip() for c in df.columns]
 
-        if "Date" not in df.columns or "Close" not in df.columns:
-            print(f"[FINVIZ PRICE] Bad columns for {ticker}: {list(df.columns)}")
-            return []
+            if "Date" not in df.columns or "Close" not in df.columns:
+                print(f"[FINVIZ PRICE] Bad columns for {ticker}: {list(df.columns)}")
+                return []
 
-        df["Date"]  = df["Date"].astype(str).str.strip()
-        df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
-        df          = df.dropna(subset=["Close"])
-        df          = df[df["Date"] != ""]
+            df["Date"]  = df["Date"].astype(str).str.strip()
+            df["Close"] = pd.to_numeric(df["Close"], errors="coerce")
+            df          = df.dropna(subset=["Close"])
+            df          = df[df["Date"] != ""]
 
-        def parse_finviz_date(date_str):
-            s = str(date_str).strip()
-            # Finviz hybrid format: hours 0-12 use "HH:MM AM/PM" (12-hour),
-            # hours 13-23 use "HH:MM PM" (24-hour number but still appends PM).
-            # Some exports abbreviate to single char "P"/"A" — normalize first.
-            # %I:%M %p rejects hour>=13, so we strip the suffix and use %H:%M instead.
-            if s.endswith(" P"): s = s[:-2] + " PM"
-            if s.endswith(" A"): s = s[:-2] + " AM"
-            upper = s.upper()
-            if upper.endswith(" AM") or upper.endswith(" PM"):
-                parts = s.rsplit(" ", 2)
-                if len(parts) == 3:
-                    date_part, time_part, _ = parts
-                    try:
-                        hour = int(time_part.split(":")[0])
-                    except ValueError:
-                        hour = 0
-                    if hour >= 13:
+            def parse_finviz_date(date_str):
+                s = str(date_str).strip()
+                # Finviz hybrid format: hours 0-12 use "HH:MM AM/PM" (12-hour),
+                # hours 13-23 use "HH:MM PM" (24-hour number but still appends PM).
+                # Some exports abbreviate to single char "P"/"A" — normalize first.
+                # %I:%M %p rejects hour>=13, so we strip the suffix and use %H:%M instead.
+                if s.endswith(" P"): s = s[:-2] + " PM"
+                if s.endswith(" A"): s = s[:-2] + " AM"
+                upper = s.upper()
+                if upper.endswith(" AM") or upper.endswith(" PM"):
+                    parts = s.rsplit(" ", 2)
+                    if len(parts) == 3:
+                        date_part, time_part, _ = parts
                         try:
-                            return datetime.strptime(f"{date_part} {time_part}", "%m/%d/%Y %H:%M")
+                            hour = int(time_part.split(":")[0])
                         except ValueError:
-                            pass
-                    else:
-                        try:
-                            return datetime.strptime(s, "%m/%d/%Y %I:%M %p")
-                        except ValueError:
-                            pass
-            try:
-                return datetime.strptime(s, "%m/%d/%Y")
-            except ValueError:
-                return None
+                            hour = 0
+                        if hour >= 13:
+                            try:
+                                return datetime.strptime(f"{date_part} {time_part}", "%m/%d/%Y %H:%M")
+                            except ValueError:
+                                pass
+                        else:
+                            try:
+                                return datetime.strptime(s, "%m/%d/%Y %I:%M %p")
+                            except ValueError:
+                                pass
+                try:
+                    return datetime.strptime(s, "%m/%d/%Y")
+                except ValueError:
+                    return None
 
-        df["parsed_dt"] = df["Date"].apply(parse_finviz_date)
-        df = df.dropna(subset=["parsed_dt"])
+            df["parsed_dt"] = df["Date"].apply(parse_finviz_date)
+            df = df.dropna(subset=["parsed_dt"])
 
-        if df.empty:
-            print(f"[FINVIZ PRICE] No parseable dates for {ticker}")
+            if df.empty:
+                print(f"[FINVIZ PRICE] No parseable dates for {ticker}")
+                return []
+
+            df          = df.sort_values("parsed_dt")
+            session_end = df["parsed_dt"].max()
+            if not multi_day:
+                # Sub-day charts key price by HH:MM only (needsDate=False in frontend).
+                # Restrict to the most recent session date so yesterday's bars never
+                # collide with today's at the same minute key.
+                df = df[df["parsed_dt"].dt.date == session_end.date()]
+
+            month    = datetime.now(timezone.utc).month
+            tz_label = "EDT" if 3 <= month <= 11 else "EST"
+
+            price_hist = []
+            for _, row in df.iterrows():
+                try:
+                    dt          = row["parsed_dt"]
+                    close_price = round(float(row["Close"]), 2)
+                    price_hist.append({
+                        "time":     dt.strftime("%Y-%m-%dT%H:%M:%S") + " " + tz_label,
+                        "price":    close_price,
+                        "sort_key": dt.strftime("%Y-%m-%dT%H:%M:%S"),
+                    })
+                except Exception:
+                    continue
+
+            print(f"[FINVIZ PRICE] {ticker}: {len(price_hist)} points (param={finviz_param})")
+            with _price_lock:
+                stale = [k for k, v in price_cache.items() if (now_ts - v["ts"]) >= PRICE_CACHE_TTL + v.get("jitter", 0)]
+                for k in stale:
+                    del price_cache[k]
+                price_cache[cache_key] = {"data": price_hist, "ts": now_ts, "jitter": random.uniform(0, 30)}
+            return price_hist
+
+        except Exception as e:
+            print(f"[FINVIZ PRICE] Failed for {ticker}: {e}")
             return []
-
-        df          = df.sort_values("parsed_dt")
-        session_end = df["parsed_dt"].max()
-        if not multi_day:
-            # Sub-day charts key price by HH:MM only (needsDate=False in frontend).
-            # Restrict to the most recent session date so yesterday's bars never
-            # collide with today's at the same minute key.
-            df = df[df["parsed_dt"].dt.date == session_end.date()]
-
-        month    = datetime.now(timezone.utc).month
-        tz_label = "EDT" if 3 <= month <= 11 else "EST"
-
-        price_hist = []
-        for _, row in df.iterrows():
-            try:
-                dt          = row["parsed_dt"]
-                close_price = round(float(row["Close"]), 2)
-                price_hist.append({
-                    "time":     dt.strftime("%Y-%m-%dT%H:%M:%S") + " " + tz_label,
-                    "price":    close_price,
-                    "sort_key": dt.strftime("%Y-%m-%dT%H:%M:%S"),
-                })
-            except Exception:
-                continue
-
-        print(f"[FINVIZ PRICE] {ticker}: {len(price_hist)} points (param={finviz_param})")
-        with _price_lock:
-            stale = [k for k, v in price_cache.items() if (now_ts - v["ts"]) >= PRICE_CACHE_TTL]
-            for k in stale:
-                del price_cache[k]
-            price_cache[cache_key] = {"data": price_hist, "ts": now_ts}
-        return price_hist
-
-    except Exception as e:
-        print(f"[FINVIZ PRICE] Failed for {ticker}: {e}")
-        return []
 
 
 # ─── FINVIZ STOCKS NEWS CACHE ───
