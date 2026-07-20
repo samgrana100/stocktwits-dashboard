@@ -3472,16 +3472,18 @@
     }).join("") : '<div class="corr-exit-empty">No automated positions.</div>';
 
     histFeed.innerHTML = completed.length ? completed.map(t => {
-      const ret      = t.return_pct;
-      const retColor = ret === null ? "var(--text-dimmed)" : ret >= 0 ? "#4ade80" : "#f87171";
-      const retDisp  = ret === null ? "N/A" : (ret >= 0 ? "+" : "") + ret + "%";
-      const exitTime = t.exited_at ? new Date(t.exited_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "--";
-      const safeTk   = t.ticker.replace(/'/g, "\\'");
-      const safeEn   = (t.entered_at || "").replace(/'/g, "\\'");
-      const safeEx   = (t.exited_at  || "").replace(/'/g, "\\'");
-      const isSaved  = t.saved === true;
-      const starClr  = isSaved ? "#facc15" : "var(--text-dimmed)";
-      const starTip  = isSaved ? "Unsave" : "Save";
+      const ret        = t.return_pct;
+      const retColor   = ret === null ? "var(--text-dimmed)" : ret >= 0 ? "#4ade80" : "#f87171";
+      const retDisp    = ret === null ? "N/A" : (ret >= 0 ? "+" : "") + ret + "%";
+      const exitTime   = t.exited_at ? new Date(t.exited_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "--";
+      const safeTk     = t.ticker.replace(/'/g, "\\'");
+      const safeEn     = (t.entered_at || "").replace(/'/g, "\\'");
+      const safeEx     = (t.exited_at  || "").replace(/'/g, "\\'");
+      const isSaved    = t.saved === true;
+      const starClr    = isSaved ? "#facc15" : "var(--text-dimmed)";
+      const starTip    = isSaved ? "Unsave" : "Save";
+      const entryDisp  = t.entry_price != null ? `$${t.entry_price}` : "--";
+      const exitDisp   = t.exit_price  != null ? `$${t.exit_price}`  : "--";
       return `<div class="corr-exit-card" style="${isSaved ? 'border-left:2px solid #facc15;' : ''}">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span class="corr-exit-ticker">${t.ticker}</span>
@@ -3489,7 +3491,7 @@
           <button title="${starTip}" onclick="toggleSaveTrade('${safeTk}','${safeEx}',${!isSaved},this)"
             style="background:none;border:none;cursor:pointer;font-size:14px;color:${starClr};padding:0;line-height:1">★</button>
         </div>
-        <div class="corr-exit-meta">$${t.entry_price} → $${t.exit_price}</div>
+        <div class="corr-exit-meta">${entryDisp} → ${exitDisp}</div>
         <div class="corr-exit-meta">r=${t.entry_corr}% · peak ${t.peak_density} msgs/hr · ${exitTime}</div>
         <div style="margin-top:6px">
           <button class="corr-exit-chart-btn" onclick="openTradeChart('${safeTk}','${safeEn}','${safeEx}',${t.entry_price},${t.exit_price})">View Chart</button>
