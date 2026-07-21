@@ -2321,7 +2321,7 @@
 
       return `<tr onclick="openPopup('${safeTicker}','${safeCompany}','${safeSector}','${safeIndustry}')">
         <td class="rank">${i+1}</td>
-        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}<button onclick="event.stopPropagation();openBubbleMap('${safeTicker}')" title="3D Bubble Map" style="margin-left:6px;font-size:10px;padding:1px 5px;background:none;border:1px solid var(--border-subtle);border-radius:3px;color:var(--text-dimmed);cursor:pointer;vertical-align:middle;line-height:1.4">⊙</button></td>
+        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}<button onclick="event.stopPropagation();openBubbleMap('${safeTicker}',true)" title="View on Bubble Map" style="margin-left:6px;font-size:10px;padding:1px 5px;background:none;border:1px solid var(--border-subtle);border-radius:3px;color:var(--text-dimmed);cursor:pointer;vertical-align:middle;line-height:1.4">⊙</button></td>
         <td class="col-toggle-td"></td>
         <td class="col-details" style="color:#aaa">${t.company||"--"}</td>
         <td class="col-details" style="color:#666">${t.industry||"--"}</td>
@@ -3414,6 +3414,7 @@
   // ── Bubble Map ──
   let bubbleViewActive  = false;
   let _bubbleHighlight  = null;
+  let _bubbleSolo       = false;
   let _bubbleRefreshInt = null;
 
   function _hidePrimaryViews() {
@@ -3456,14 +3457,17 @@
   function closeBubbleView() {
     bubbleViewActive = false;
     _bubbleHighlight = null;
+    _bubbleSolo      = false;
     document.getElementById("bubble-view-btn").classList.remove("active");
     document.getElementById("bubble-view").style.display = "none";
     _showPrimaryViews();
     if (_bubbleRefreshInt) { clearInterval(_bubbleRefreshInt); _bubbleRefreshInt = null; }
   }
 
-  function openBubbleMap(ticker) {
+  function openBubbleMap(ticker, solo) {
     _bubbleHighlight = ticker;
+    _bubbleSolo      = !!solo;
+    document.getElementById("bubble-status").textContent = solo ? ticker : "";
     if (!bubbleViewActive) {
       toggleBubbleView(ticker);
     } else {
@@ -3476,7 +3480,7 @@
     try {
       const res  = await fetch("/api/3d-screener");
       const data = await res.json();
-      render3DChart(data, _bubbleHighlight);
+      render3DChart(data, _bubbleHighlight, _bubbleSolo);
       document.getElementById("bubble-status").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
     } catch(e) {
       document.getElementById("bubble-status").textContent = "Error loading data";
@@ -3484,16 +3488,20 @@
     }
   }
 
-  function render3DChart(data, highlight) {
+  function render3DChart(data, highlight, solo) {
     if (!data || !data.length) return;
 
+    // In solo mode show only the highlighted ticker
+    const visible = solo && highlight ? data.filter(d => d.ticker === highlight) : data;
+    if (!visible.length) return;
+
     const logVol = v => v > 0 ? Math.log10(v) : 0;
-    const maxVol = Math.max(...data.map(d => logVol(d.size)));
+    const maxVol = Math.max(...visible.map(d => logVol(d.size)));
     const sizeScale = v => Math.max(8, (logVol(v) / maxVol) * 50);
 
     // Separate highlighted ticker
-    const main   = data.filter(d => d.ticker !== highlight);
-    const hilite = data.filter(d => d.ticker === highlight);
+    const main   = solo ? [] : visible.filter(d => d.ticker !== highlight);
+    const hilite = visible.filter(d => d.ticker === highlight);
 
     const mkColor = (x, opacity) => {
       const r = x >= 0 ? Math.round(74 + x * 181) : 248;
