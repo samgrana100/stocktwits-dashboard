@@ -24,7 +24,7 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications, price_history
+from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications, price_history, screener_snapshots
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
@@ -332,6 +332,34 @@ def get_finviz_data() -> dict:
         with _finviz_lock:
             finviz_cache      = result
             finviz_cache_time = time.time()
+
+        # Snapshot screener data for 3D bubble trail (piggybacked — no new Finviz call)
+        try:
+            now_utc = datetime.now(timezone.utc)
+            def _pf(v):
+                try:
+                    return float(str(v).replace("%","").replace(",","").strip())
+                except Exception:
+                    return None
+            snaps = []
+            for tk, fv in result.items():
+                price_chg = _pf(fv.get("change"))
+                rel_vol   = _pf(fv.get("rel_volume"))
+                volume    = _pf(fv.get("volume"))
+                if price_chg is None or rel_vol is None or volume is None:
+                    continue
+                snaps.append({
+                    "ticker":    tk,
+                    "ts":        now_utc,
+                    "price_chg": price_chg,
+                    "rel_vol":   max(0.0, rel_vol),
+                    "volume":    volume,
+                })
+            if snaps:
+                screener_snapshots.insert_many(snaps, ordered=False)
+        except Exception:
+            pass
+
         return result
 
     except Exception as e:
@@ -1274,6 +1302,90 @@ def get_upcoming_catalysts():
             "days_until":  days_until,
             "description": doc.get("description", ""),
         }
+
+    return jsonify(result)
+
+
+@app.route("/api/3d-screener")
+def get_3d_screener():
+    scores = aggregate_ticker_scores(rolling_window_minutes=60)
+    finviz = get_finviz_data()
+
+    def _pf(v):
+        try:
+            return float(str(v).replace("%","").replace(",","").strip())
+        except Exception:
+            return None
+
+    # Today's screener snapshots for trail (all tickers, one query)
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    snap_docs   = list(screener_snapshots.find(
+        {"ts": {"$gte": today_start}},
+        {"ticker": 1, "ts": 1, "price_chg": 1, "rel_vol": 1, "_id": 0}
+    ).sort("ts", 1))
+    trail_map = defaultdict(list)
+    for d in snap_docs:
+        trail_map[d["ticker"]].append({
+            "price_chg": d["price_chg"],
+            "rel_vol":   d["rel_vol"],
+            "ts":        d["ts"].strftime("%H:%M"),
+        })
+
+    # Sentiment history from scored_messages (per-ticker per-5min bucket today)
+    today_str = today_start.strftime("%Y-%m-%dT%H:%M:%S")
+    sent_hist = list(scored_messages.aggregate([
+        {"$match": {"created_at_utc": {"$gte": today_str}, "sentiment_score": {"$ne": None}}},
+        {"$group": {
+            "_id": {
+                "ticker": "$ticker",
+                "bucket": {"$substr": ["$created_at_utc", 0, 15]}
+            },
+            "avg_sent": {"$avg": "$sentiment_score"}
+        }}
+    ]))
+    sent_map = defaultdict(dict)
+    for d in sent_hist:
+        sent_map[d["_id"]["ticker"]][d["_id"]["bucket"]] = round(d["avg_sent"], 4)
+
+    result = []
+    for s in scores:
+        ticker = s["ticker"]
+        if ticker not in finviz:
+            continue
+        fv        = finviz[ticker]
+        sentiment = s.get("avg_sentiment")
+        price_chg = _pf(fv.get("change"))
+        rel_vol   = _pf(fv.get("rel_volume"))
+        volume    = _pf(fv.get("volume"))
+        if any(v is None for v in [sentiment, price_chg, rel_vol, volume]):
+            continue
+
+        # Build trail: merge screener snapshots with nearest sentiment bucket
+        trail = []
+        tk_sent = sent_map.get(ticker, {})
+        for snap in trail_map.get(ticker, []):
+            snap_bucket = today_start.strftime("%Y-%m-%dT") + snap["ts"]
+            sent_val    = tk_sent.get(snap_bucket, sentiment)
+            trail.append({
+                "x": sent_val,
+                "y": snap["price_chg"],
+                "z": snap["rel_vol"],
+                "t": snap["ts"],
+            })
+
+        result.append({
+            "ticker":    ticker,
+            "x":         round(sentiment, 4),
+            "y":         price_chg,
+            "z":         max(0.0, rel_vol),
+            "size":      volume,
+            "density":   s.get("total_messages", 0),
+            "composite": round(s.get("avg_composite") or 0, 3),
+            "company":   fv.get("company", "--"),
+            "price":     fv.get("price", "--"),
+            "change":    fv.get("change", "--"),
+            "trail":     trail,
+        })
 
     return jsonify(result)
 

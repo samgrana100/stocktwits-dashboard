@@ -22,6 +22,7 @@ upcoming_catalysts    = db["upcoming_catalysts"]
 auto_trades           = db["auto_trades"]
 completed_auto_trades = db["completed_auto_trades"]
 trade_notifications   = db["trade_notifications"]
+screener_snapshots    = db["screener_snapshots"]
 
 
 def ensure_indexes():
@@ -70,6 +71,10 @@ def ensure_indexes():
     # trade_notifications indexes
     trade_notifications.create_index("sent_at")
     trade_notifications.create_index("sent_at", expireAfterSeconds=2592000)  # 30-day TTL
+
+    # screener_snapshots indexes
+    screener_snapshots.create_index([("ticker", ASCENDING), ("ts", DESCENDING)])
+    screener_snapshots.create_index("ts", expireAfterSeconds=86400)  # 1-day TTL
 
     print("[DB] All indexes verified successfully.")
 

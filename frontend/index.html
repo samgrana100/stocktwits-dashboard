@@ -7,6 +7,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
@@ -941,6 +942,7 @@
     <button class="news-view-btn" id="momentum-view-btn" onclick="toggleMomentumView()">Momentum</button>
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
     <button class="news-view-btn" id="corr-view-btn" onclick="toggleCorrView()">Correlation</button>
+    <button class="news-view-btn" id="bubble-view-btn" onclick="toggleBubbleView()">Bubble Map</button>
     <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
     <button class="pipeline-btn start" id="pipeline-btn" onclick="togglePipeline()">Start Pipeline</button>
@@ -1247,6 +1249,21 @@
       <div id="auto-history-feed"><div class="corr-exit-empty">No automated trades yet.</div></div>
     </div>
   </div>
+</div>
+
+<!-- Bubble Map View -->
+<div id="bubble-view" style="display:none;background:var(--bg-base);min-height:calc(100vh - 60px);padding:20px 24px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+    <div>
+      <span style="font-size:13px;font-weight:700;color:var(--text-primary);letter-spacing:0.05em">BUBBLE MAP</span>
+      <span style="font-size:11px;color:var(--text-dimmed);margin-left:12px">X = Sentiment · Y = Price Change · Z = Rel Volume · Size = Volume</span>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px">
+      <span id="bubble-status" style="font-size:10px;color:var(--text-dimmed)"></span>
+      <button onclick="fetch3DData()" style="font-size:10px;padding:4px 10px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer">Refresh</button>
+    </div>
+  </div>
+  <div id="bubble-chart" style="width:100%;height:calc(100vh - 140px);border-radius:8px;overflow:hidden"></div>
 </div>
 
 <div id="guide-view" class="guide-view">
@@ -3123,8 +3140,9 @@
     document.getElementById("momentum-view").classList.toggle("active", momentumViewActive);
 
     if (momentumViewActive) {
-      if (newsViewActive)  { newsViewActive  = false; document.getElementById("news-view-btn").classList.remove("active"); document.getElementById("news-view").classList.remove("active"); }
-      if (guideViewActive) { guideViewActive = false; document.getElementById("guide-btn").classList.remove("active"); document.getElementById("guide-view").classList.remove("active"); }
+      if (newsViewActive)    { newsViewActive  = false; document.getElementById("news-view-btn").classList.remove("active"); document.getElementById("news-view").classList.remove("active"); }
+      if (guideViewActive)   { guideViewActive = false; document.getElementById("guide-btn").classList.remove("active"); document.getElementById("guide-view").classList.remove("active"); }
+      if (bubbleViewActive)  closeBubbleView();
       if (filterBar)     filterBar.style.display     = "none";
       if (contentLayout) contentLayout.style.display = "none";
       if (statusBar)     statusBar.style.display     = "none";
@@ -3333,6 +3351,7 @@
 
   function toggleNewsView() {
     if (momentumViewActive) { momentumViewActive = false; document.getElementById("momentum-view-btn").classList.remove("active"); document.getElementById("momentum-view").classList.remove("active"); _cleanupMomentumCards(); }
+    if (bubbleViewActive) closeBubbleView();
     newsViewActive = !newsViewActive;
     document.getElementById("news-view-btn").classList.toggle("active", newsViewActive);
     document.getElementById("news-view").classList.toggle("active", newsViewActive);
@@ -3374,6 +3393,7 @@
   function toggleCorrView() {
     if (momentumViewActive) { momentumViewActive = false; document.getElementById("momentum-view-btn").classList.remove("active"); document.getElementById("momentum-view").classList.remove("active"); _cleanupMomentumCards(); }
     if (newsViewActive) toggleNewsView();
+    if (bubbleViewActive) toggleBubbleView();
     corrViewActive = !corrViewActive;
     document.getElementById("corr-view-btn").classList.toggle("active", corrViewActive);
     document.getElementById("corr-view").style.display = corrViewActive ? "" : "none";
@@ -3389,6 +3409,218 @@
       buildCorrView();
       fetchAutoTrades();
     }
+  }
+
+  // ── Bubble Map ──
+  let bubbleViewActive  = false;
+  let _bubbleHighlight  = null;
+  let _bubbleRefreshInt = null;
+
+  function _hidePrimaryViews() {
+    const filterBar     = document.querySelector(".filter-bar");
+    const contentLayout = document.querySelector(".content-layout");
+    const statusBar     = document.querySelector(".status-bar");
+    if (filterBar)     filterBar.style.display     = "none";
+    if (contentLayout) contentLayout.style.display = "none";
+    if (statusBar)     statusBar.style.display     = "none";
+  }
+  function _showPrimaryViews() {
+    const filterBar     = document.querySelector(".filter-bar");
+    const contentLayout = document.querySelector(".content-layout");
+    const statusBar     = document.querySelector(".status-bar");
+    if (filterBar)     filterBar.style.display     = "";
+    if (contentLayout) contentLayout.style.display = "";
+    if (statusBar)     statusBar.style.display     = "";
+  }
+
+  function toggleBubbleView(highlight) {
+    if (momentumViewActive) { momentumViewActive = false; document.getElementById("momentum-view-btn").classList.remove("active"); document.getElementById("momentum-view").classList.remove("active"); _cleanupMomentumCards(); }
+    if (newsViewActive) toggleNewsView();
+    if (corrViewActive) toggleCorrView();
+
+    if (highlight) _bubbleHighlight = highlight;
+
+    const opening = !bubbleViewActive || highlight;
+    if (!bubbleViewActive) {
+      bubbleViewActive = true;
+      document.getElementById("bubble-view-btn").classList.add("active");
+      document.getElementById("bubble-view").style.display = "";
+      _hidePrimaryViews();
+      fetch3DData();
+      _bubbleRefreshInt = setInterval(fetch3DData, 90000);
+    } else if (highlight) {
+      fetch3DData();
+    }
+  }
+
+  function closeBubbleView() {
+    bubbleViewActive = false;
+    _bubbleHighlight = null;
+    document.getElementById("bubble-view-btn").classList.remove("active");
+    document.getElementById("bubble-view").style.display = "none";
+    _showPrimaryViews();
+    if (_bubbleRefreshInt) { clearInterval(_bubbleRefreshInt); _bubbleRefreshInt = null; }
+  }
+
+  function openBubbleMap(ticker) {
+    _bubbleHighlight = ticker;
+    if (!bubbleViewActive) {
+      toggleBubbleView(ticker);
+    } else {
+      fetch3DData();
+    }
+  }
+
+  async function fetch3DData() {
+    document.getElementById("bubble-status").textContent = "Loading…";
+    try {
+      const res  = await fetch("/api/3d-screener");
+      const data = await res.json();
+      render3DChart(data, _bubbleHighlight);
+      document.getElementById("bubble-status").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    } catch(e) {
+      document.getElementById("bubble-status").textContent = "Error loading data";
+      console.error("[bubble-map]", e);
+    }
+  }
+
+  function render3DChart(data, highlight) {
+    if (!data || !data.length) return;
+
+    const logVol = v => v > 0 ? Math.log10(v) : 0;
+    const maxVol = Math.max(...data.map(d => logVol(d.size)));
+    const sizeScale = v => Math.max(8, (logVol(v) / maxVol) * 50);
+
+    // Separate highlighted ticker
+    const main   = data.filter(d => d.ticker !== highlight);
+    const hilite = data.filter(d => d.ticker === highlight);
+
+    const mkColor = (x, opacity) => {
+      const r = x >= 0 ? Math.round(74 + x * 181) : 248;
+      const g = x >= 0 ? Math.round(222) : Math.round(113 + x * 113);
+      const b = x >= 0 ? Math.round(128) : Math.round(113);
+      return `rgba(${r},${g},${b},${opacity})`;
+    };
+
+    const traces = [];
+
+    // Main bubbles
+    traces.push({
+      type: "scatter3d", mode: "markers+text",
+      x: main.map(d => d.x),
+      y: main.map(d => d.y),
+      z: main.map(d => d.z),
+      text: main.map(d => d.ticker),
+      textposition: "top center",
+      textfont: { size: 9, color: "rgba(200,200,220,0.8)" },
+      marker: {
+        size:  main.map(d => sizeScale(d.size)),
+        color: main.map(d => mkColor(d.x, 0.75)),
+        line:  { width: 1, color: "rgba(255,255,255,0.15)" },
+      },
+      hovertemplate: main.map(d =>
+        `<b>${d.ticker}</b><br>Sentiment: ${d.x}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.z}x<br>Density: ${d.density} msgs<br>Composite: ${d.composite}<extra></extra>`
+      ),
+      name: "Tickers",
+    });
+
+    // Highlighted ticker — larger, brighter
+    if (hilite.length) {
+      const h = hilite[0];
+      // Comet tail
+      if (h.trail && h.trail.length > 1) {
+        const tailN = h.trail.length;
+        traces.push({
+          type: "scatter3d", mode: "lines+markers",
+          x: h.trail.map(p => p.x),
+          y: h.trail.map(p => p.y),
+          z: h.trail.map(p => p.z),
+          line: { color: "rgba(250,204,21,0.4)", width: 3 },
+          marker: {
+            size:  h.trail.map((_, i) => 3 + (i / tailN) * 7),
+            color: h.trail.map((_, i) => `rgba(250,204,21,${0.15 + (i / tailN) * 0.5})`),
+          },
+          hovertemplate: h.trail.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t}<br>Sent: ${p.x}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
+          name: `${h.ticker} trail`,
+          showlegend: false,
+        });
+      }
+      // Main highlighted bubble
+      traces.push({
+        type: "scatter3d", mode: "markers+text",
+        x: [h.x], y: [h.y], z: [h.z],
+        text: [h.ticker],
+        textposition: "top center",
+        textfont: { size: 13, color: "#facc15" },
+        marker: {
+          size: [sizeScale(h.size) * 1.4],
+          color: ["rgba(250,204,21,0.9)"],
+          line: { width: 2, color: "#facc15" },
+          symbol: ["circle"],
+        },
+        hovertemplate: `<b>${h.ticker} ★</b><br>Sentiment: ${h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${h.z}x<br>Density: ${h.density} msgs<extra></extra>`,
+        name: h.ticker,
+        showlegend: false,
+      });
+    }
+
+    // Zero planes
+    traces.push({
+      type: "scatter3d", mode: "lines",
+      x: [-1, 1], y: [0, 0], z: [0, 0],
+      line: { color: "rgba(255,255,255,0.1)", width: 1 },
+      hoverinfo: "skip", showlegend: false,
+    });
+    traces.push({
+      type: "scatter3d", mode: "lines",
+      x: [0, 0], y: [-20, 20], z: [0, 0],
+      line: { color: "rgba(255,255,255,0.1)", width: 1 },
+      hoverinfo: "skip", showlegend: false,
+    });
+
+    const layout = {
+      paper_bgcolor: "#090910",
+      plot_bgcolor:  "#090910",
+      font: { color: "#a0a0b8", size: 10 },
+      margin: { l: 0, r: 0, t: 0, b: 0 },
+      legend: { x: 0.01, y: 0.99, bgcolor: "rgba(0,0,0,0)", font: { size: 10 } },
+      scene: {
+        bgcolor: "#0d0d16",
+        xaxis: {
+          title: { text: "Sentiment", font: { size: 11 } },
+          gridcolor: "#1a1a2e", zerolinecolor: "#333350",
+          tickfont: { size: 9 }, color: "#6060a0",
+        },
+        yaxis: {
+          title: { text: "Price Change %", font: { size: 11 } },
+          gridcolor: "#1a1a2e", zerolinecolor: "#333350",
+          tickfont: { size: 9 }, color: "#6060a0",
+        },
+        zaxis: {
+          title: { text: "Rel Volume", font: { size: 11 } },
+          gridcolor: "#1a1a2e", zerolinecolor: "#333350",
+          tickfont: { size: 9 }, color: "#6060a0",
+        },
+        camera: { eye: { x: 1.5, y: 1.5, z: 0.8 } },
+      },
+    };
+
+    const config = { responsive: true, displayModeBar: false };
+
+    Plotly.react("bubble-chart", traces, layout, config);
+
+    // Click bubble → open popup
+    const chartEl = document.getElementById("bubble-chart");
+    chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_click");
+    chartEl.on("plotly_click", evt => {
+      if (!evt.points || !evt.points.length) return;
+      const idx    = evt.points[0].pointIndex;
+      const trace  = evt.points[0].curveNumber;
+      const source = traces[trace];
+      if (!source || !source.text) return;
+      const tk = Array.isArray(source.text) ? source.text[idx] : source.text;
+      if (tk && tk.length <= 6) openPopup(tk, "", "", "");
+    });
   }
 
   async function fetchAutoTrades() {
@@ -3615,7 +3847,10 @@
         </div>
       </div>
       <div class="corr-density-info">${density}${inMonitor}</div>
-      ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},'${t.price||''}')">Enter Trade</button>` : ""}
+      <div style="display:flex;gap:6px;margin-top:6px">
+        ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},'${t.price||''}')">Enter Trade</button>` : ""}
+        <button onclick="event.stopPropagation();openBubbleMap('${safeTk}')" style="font-size:10px;padding:3px 8px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-dimmed);cursor:pointer">⊙ Map</button>
+      </div>
     </div>`;
   }
 
