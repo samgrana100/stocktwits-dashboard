@@ -2321,7 +2321,7 @@
 
       return `<tr onclick="openPopup('${safeTicker}','${safeCompany}','${safeSector}','${safeIndustry}')">
         <td class="rank">${i+1}</td>
-        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}</td>
+        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}<button onclick="event.stopPropagation();openBubbleMap('${safeTicker}')" title="3D Bubble Map" style="margin-left:6px;font-size:10px;padding:1px 5px;background:none;border:1px solid var(--border-subtle);border-radius:3px;color:var(--text-dimmed);cursor:pointer;vertical-align:middle;line-height:1.4">⊙</button></td>
         <td class="col-toggle-td"></td>
         <td class="col-details" style="color:#aaa">${t.company||"--"}</td>
         <td class="col-details" style="color:#666">${t.industry||"--"}</td>

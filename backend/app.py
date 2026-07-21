@@ -1353,7 +1353,7 @@ def get_3d_screener():
         if ticker not in finviz:
             continue
         fv        = finviz[ticker]
-        sentiment = s.get("avg_sentiment")
+        sentiment = s.get("avg_sentiment_score")
         price_chg = _pf(fv.get("change"))
         rel_vol   = _pf(fv.get("rel_volume"))
         volume    = _pf(fv.get("volume"))
@@ -1380,7 +1380,7 @@ def get_3d_screener():
             "z":         max(0.0, rel_vol),
             "size":      volume,
             "density":   s.get("total_messages", 0),
-            "composite": round(s.get("avg_composite") or 0, 3),
+            "composite": round(s.get("avg_composite_score") or 0, 3),
             "company":   fv.get("company", "--"),
             "price":     fv.get("price", "--"),
             "change":    fv.get("change", "--"),
