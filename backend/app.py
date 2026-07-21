@@ -1792,7 +1792,11 @@ def _check_auto_trades():
     # Uses count_documents per ticker (same source as quickscore?window=1h) so the
     # density value is never affected by the main table's rolling window selection.
     for ticker, trade in active_map.items():
-        current_price = finviz.get(ticker, {}).get("price")
+        # Use cached quote_export bars if available (no new HTTP request), else screener
+        with _price_lock:
+            _cached = price_cache.get(f"{ticker}_i1_today")
+            _bars   = _cached["data"] if _cached else []
+        current_price = _bars[-1]["price"] if _bars else finviz.get(ticker, {}).get("price")
         total_msgs    = scored_messages.count_documents({
             "ticker":         ticker,
             "created_at_utc": {"$gte": window_1h}
