@@ -45,6 +45,10 @@ _token_refresh_lock  = threading.Lock()
 _last_token_refresh  = 0.0
 _TOKEN_REFRESH_COOLDOWN = 300  # seconds between re-login attempts
 
+_bubble_screener_cache = {}
+_bubble_screener_lock  = threading.Lock()
+BUBBLE_SCREENER_TTL    = 120  # 2-minute cache to avoid rate limiting
+
 # ── Twilio SMS ──
 try:
     from twilio.rest import Client as TwilioClient
@@ -1302,6 +1306,136 @@ def get_upcoming_catalysts():
             "days_until":  days_until,
             "description": doc.get("description", ""),
         }
+
+    return jsonify(result)
+
+
+@app.route("/api/bubble-screener", methods=["POST"])
+def get_bubble_screener():
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    data = request.get_json(force=True) or {}
+
+    filters = []
+    cap = data.get("cap", "any")
+    if cap and cap != "any":
+        filters.append(cap)
+    relvol = data.get("relvol", "")
+    if relvol:
+        try:
+            if float(relvol) > 0:
+                filters.append(f"sh_relvol_o{relvol}")
+        except ValueError:
+            pass
+    vol = data.get("vol", "")
+    if vol:
+        try:
+            if int(float(vol)) > 0:
+                filters.append(f"sh_curvol_o{vol}")
+        except ValueError:
+            pass
+    float_max = data.get("float_max", "")
+    if float_max:
+        try:
+            if float(float_max) > 0:
+                filters.append(f"sh_float_u{int(float(float_max))}")
+        except ValueError:
+            pass
+    chg = data.get("chg", "any")
+    if chg and chg != "any":
+        filters.append(chg)
+
+    cache_key = ",".join(sorted(filters)) if filters else "_all_"
+    with _bubble_screener_lock:
+        cached = _bubble_screener_cache.get(cache_key)
+        if cached and (time.time() - cached["ts"]) < BUBBLE_SCREENER_TTL:
+            return jsonify(cached["data"])
+
+    token      = os.getenv("FINVIZ_API_TOKEN", "") or FINVIZ_API_TOKEN
+    export_url = os.getenv("FINVIZ_EXPORT_URL", "") or FINVIZ_EXPORT_URL
+    if not token or not export_url:
+        return jsonify({"error": "Finviz credentials not configured"}), 500
+
+    parsed = urlparse(export_url)
+    qs     = parse_qs(parsed.query, keep_blank_values=True)
+    new_qs = {k: v[0] for k, v in qs.items() if k not in ("f", "auth")}
+    if filters:
+        new_qs["f"] = ",".join(filters)
+    url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", urlencode(new_qs), "")) + "&auth=" + token
+
+    try:
+        resp = cffi_requests.get(url, impersonate="chrome120", timeout=15)
+        if resp.status_code != 200:
+            return jsonify({"error": f"Finviz returned {resp.status_code}"}), 502
+        df = pd.read_csv(StringIO(resp.text))
+        if "Ticker" not in df.columns:
+            return jsonify([])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    col_map = {
+        "Ticker": "ticker", "Company": "company", "Price": "price",
+        "Change": "change", "Volume": "volume", "Rel Volume": "rel_volume",
+        "Float": "float_shares",
+    }
+    df.rename(columns={k: v for k, v in col_map.items() if k in df.columns}, inplace=True)
+
+    ticker_list = df["ticker"].dropna().str.strip().str.upper().unique().tolist() if "ticker" in df.columns else []
+
+    def _pf(v):
+        try:
+            return float(str(v).replace("%", "").replace(",", "").strip())
+        except Exception:
+            return None
+
+    # Sentiment from scored_messages for these tickers (last 60 min)
+    window_start = get_window_start_iso(60)
+    sent_map = {}
+    if ticker_list:
+        for r in scored_messages.aggregate([
+            {"$match": {"created_at_utc": {"$gte": window_start}, "ticker": {"$in": ticker_list}, "sentiment_score": {"$ne": None}}},
+            {"$group": {"_id": "$ticker", "avg": {"$avg": "$sentiment_score"}, "cnt": {"$sum": 1}}}
+        ]):
+            sent_map[r["_id"]] = (round(r["avg"], 4), r["cnt"])
+
+    # Intraday trails from screener_snapshots
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    trail_map   = defaultdict(list)
+    if ticker_list:
+        for d in screener_snapshots.find(
+            {"ts": {"$gte": today_start}, "ticker": {"$in": ticker_list}},
+            {"ticker": 1, "ts": 1, "price_chg": 1, "rel_vol": 1, "_id": 0}
+        ).sort("ts", 1):
+            trail_map[d["ticker"]].append({
+                "price_chg": d["price_chg"],
+                "rel_vol":   d["rel_vol"],
+                "ts":        d["ts"].strftime("%H:%M"),
+            })
+
+    result = []
+    for _, row in df.iterrows():
+        tk        = str(row.get("ticker", "")).strip().upper()
+        price_chg = _pf(row.get("change"))
+        rel_vol   = _pf(row.get("rel_volume"))
+        volume    = _pf(row.get("volume"))
+        if not tk or any(v is None for v in [price_chg, rel_vol, volume]):
+            continue
+        sentiment, density = sent_map.get(tk, (0.0, 0))
+        result.append({
+            "ticker":    tk,
+            "x":         sentiment,
+            "y":         price_chg,
+            "z":         max(0.0, rel_vol),
+            "size":      volume,
+            "density":   density,
+            "composite": 0.0,
+            "company":   str(row.get("company", "--")),
+            "price":     str(row.get("price", "--")),
+            "change":    str(row.get("change", "--")),
+            "trail":     trail_map.get(tk, []),
+        })
+
+    with _bubble_screener_lock:
+        _bubble_screener_cache[cache_key] = {"data": result, "ts": time.time()}
 
     return jsonify(result)
 

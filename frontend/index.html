@@ -942,7 +942,7 @@
     <button class="news-view-btn" id="momentum-view-btn" onclick="toggleMomentumView()">Momentum</button>
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
     <button class="news-view-btn" id="corr-view-btn" onclick="toggleCorrView()">Correlation</button>
-    <button class="news-view-btn" id="bubble-view-btn" onclick="toggleBubbleView()">Bubble Map</button>
+    <button class="news-view-btn" id="bubble-view-btn" onclick="bubbleViewActive ? closeBubbleView() : openBubbleFilterModal()">Bubble Map</button>
     <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
     <button class="pipeline-btn start" id="pipeline-btn" onclick="togglePipeline()">Start Pipeline</button>
@@ -1503,6 +1503,80 @@
     <button class="epop-close" onclick="closeEventPopover()">&#x2715;</button>
   </div>
   <div id="epop-content"></div>
+</div>
+
+<div id="bubble-filter-overlay" class="screener-overlay">
+  <div class="screener-modal">
+    <div class="screener-modal-title">3D Bubble Map</div>
+    <div class="screener-modal-sub">Filter tickers for the bubble map — independent from the main screener</div>
+    <div class="screener-modal-grid">
+      <div class="screener-modal-field">
+        <label>Market Cap</label>
+        <select id="bm-cap">
+          <option value="any">Any</option>
+          <option value="cap_nano">Nano (&lt;50M)</option>
+          <option value="cap_micro">Micro (50–300M)</option>
+          <option value="cap_small" selected>Small (300M–2B)</option>
+          <option value="cap_mid">Mid (2–10B)</option>
+          <option value="cap_large">Large (10–200B)</option>
+          <option value="cap_mega">Mega (&gt;200B)</option>
+        </select>
+      </div>
+      <div class="screener-modal-field">
+        <label>% Change</label>
+        <select id="bm-chg">
+          <option value="any">Any</option>
+          <option value="ta_change_u" selected>Up (any)</option>
+          <option value="ta_change_d">Down (any)</option>
+          <option value="ta_change_u5">Up 5%+</option>
+          <option value="ta_change_u10">Up 10%+</option>
+          <option value="ta_change_u15">Up 15%+</option>
+          <option value="ta_change_u20">Up 20%+</option>
+          <option value="ta_change_d5">Down 5%+</option>
+          <option value="ta_change_d10">Down 10%+</option>
+        </select>
+      </div>
+      <div class="screener-modal-field">
+        <label>Min Relative Volume</label>
+        <select id="bm-relvol">
+          <option value="">Any</option>
+          <option value="0.5">0.5×</option>
+          <option value="1" selected>1×</option>
+          <option value="2">2×</option>
+          <option value="3">3×</option>
+          <option value="5">5×</option>
+          <option value="10">10×</option>
+        </select>
+      </div>
+      <div class="screener-modal-field">
+        <label>Min Volume</label>
+        <select id="bm-vol">
+          <option value="">Any</option>
+          <option value="100" selected>100K</option>
+          <option value="500">500K</option>
+          <option value="1000">1M</option>
+          <option value="5000">5M</option>
+          <option value="10000">10M</option>
+        </select>
+      </div>
+      <div class="screener-modal-field">
+        <label>Max Float</label>
+        <select id="bm-float">
+          <option value="">Any</option>
+          <option value="1">1M</option>
+          <option value="5">5M</option>
+          <option value="10">10M</option>
+          <option value="20">20M</option>
+          <option value="50" selected>50M</option>
+          <option value="100">100M</option>
+        </select>
+      </div>
+    </div>
+    <div class="screener-modal-actions">
+      <button class="screener-modal-apply" onclick="submitBubbleFilters()">View Bubble Map</button>
+      <button class="screener-modal-skip" style="display:block" onclick="closeBubbleFilterModal()">Cancel</button>
+    </div>
+  </div>
 </div>
 
 <div class="popup-overlay" id="popup-overlay" onclick="closePopup(event)">
@@ -3415,6 +3489,7 @@
   let bubbleViewActive  = false;
   let _bubbleHighlight  = null;
   let _bubbleSolo       = false;
+  let _bubbleFilters    = null;
   let _bubbleRefreshInt = null;
 
   function _hidePrimaryViews() {
@@ -3441,7 +3516,6 @@
 
     if (highlight) _bubbleHighlight = highlight;
 
-    const opening = !bubbleViewActive || highlight;
     if (!bubbleViewActive) {
       bubbleViewActive = true;
       document.getElementById("bubble-view-btn").classList.add("active");
@@ -3451,6 +3525,8 @@
       _bubbleRefreshInt = setInterval(fetch3DData, 90000);
     } else if (highlight) {
       fetch3DData();
+    } else {
+      closeBubbleView();
     }
   }
 
@@ -3458,6 +3534,7 @@
     bubbleViewActive = false;
     _bubbleHighlight = null;
     _bubbleSolo      = false;
+    _bubbleFilters   = null;
     document.getElementById("bubble-view-btn").classList.remove("active");
     document.getElementById("bubble-view").style.display = "none";
     _showPrimaryViews();
@@ -3478,13 +3555,44 @@
   async function fetch3DData() {
     document.getElementById("bubble-status").textContent = "Loading…";
     try {
-      const res  = await fetch("/api/3d-screener");
-      const data = await res.json();
+      let res, data;
+      if (_bubbleFilters) {
+        res  = await fetch("/api/bubble-screener", { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(_bubbleFilters) });
+      } else {
+        res  = await fetch("/api/3d-screener");
+      }
+      data = await res.json();
       render3DChart(data, _bubbleHighlight, _bubbleSolo);
       document.getElementById("bubble-status").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
     } catch(e) {
       document.getElementById("bubble-status").textContent = "Error loading data";
       console.error("[bubble-map]", e);
+    }
+  }
+
+  function openBubbleFilterModal() {
+    document.getElementById("bubble-filter-overlay").classList.add("active");
+  }
+
+  function closeBubbleFilterModal() {
+    document.getElementById("bubble-filter-overlay").classList.remove("active");
+  }
+
+  function submitBubbleFilters() {
+    _bubbleFilters = {
+      cap:       document.getElementById("bm-cap").value,
+      chg:       document.getElementById("bm-chg").value,
+      relvol:    document.getElementById("bm-relvol").value,
+      vol:       document.getElementById("bm-vol").value,
+      float_max: document.getElementById("bm-float").value,
+    };
+    _bubbleHighlight = null;
+    _bubbleSolo      = false;
+    closeBubbleFilterModal();
+    if (!bubbleViewActive) {
+      toggleBubbleView();
+    } else {
+      fetch3DData();
     }
   }
 
