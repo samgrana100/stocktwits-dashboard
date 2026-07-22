@@ -1245,6 +1245,7 @@
       <div id="auto-active-feed"><div class="corr-exit-empty">No automated positions.</div></div>
       <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
         <span class="corr-exit-title">Auto — History</span>
+        <button onclick="clearAutoTrades()" style="font-size:10px;padding:2px 8px;background:none;border:1px solid var(--border-subtle);border-radius:3px;color:var(--text-dimmed);cursor:pointer">Clear All</button>
       </div>
       <div id="auto-history-feed"><div class="corr-exit-empty">No automated trades yet.</div></div>
     </div>
@@ -3741,6 +3742,12 @@
       const tk = Array.isArray(source.text) ? source.text[idx] : source.text;
       if (tk && tk.length <= 6) openPopup(tk, "", "", "");
     });
+  }
+
+  async function clearAutoTrades() {
+    if (!confirm("Clear all active and completed auto trade history? This cannot be undone.")) return;
+    await fetch("/api/auto-trades/clear", { method: "POST" });
+    fetchAutoTrades();
   }
 
   async function fetchAutoTrades() {

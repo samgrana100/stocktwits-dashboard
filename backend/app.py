@@ -1731,6 +1731,13 @@ def set_auto_trade_config():
     return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP})
 
 
+@app.route("/api/auto-trades/clear", methods=["POST"])
+def clear_auto_trades():
+    auto_trades.delete_many({})
+    completed_auto_trades.delete_many({})
+    return jsonify({"cleared": True})
+
+
 @app.route("/api/auto-trade/save", methods=["POST"])
 def toggle_auto_trade_saved():
     data      = request.get_json(force=True) or {}
