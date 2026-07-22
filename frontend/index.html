@@ -1264,7 +1264,15 @@
       <button onclick="fetch3DData()" style="font-size:10px;padding:4px 10px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer">Refresh</button>
     </div>
   </div>
-  <div id="bubble-chart" style="width:100%;height:calc(100vh - 140px);border-radius:8px;overflow:hidden"></div>
+  <div id="bubble-chart" style="width:100%;height:calc(100vh - 185px);border-radius:8px;overflow:hidden"></div>
+  <div id="bubble-slider-row" style="display:none;align-items:center;gap:10px;margin-top:10px;padding:0 4px">
+    <span style="font-size:10px;color:var(--text-dimmed);white-space:nowrap" id="bubble-slider-start"></span>
+    <input id="bubble-time-slider" type="range" min="0" value="0"
+      style="flex:1;accent-color:var(--blue);cursor:pointer"
+      oninput="onBubbleSlider(this.value)">
+    <span style="font-size:10px;color:var(--text-dimmed);white-space:nowrap" id="bubble-slider-end">Live</span>
+    <span style="font-size:10px;font-weight:700;color:var(--blue);min-width:36px;text-align:right" id="bubble-slider-label"></span>
+  </div>
 </div>
 
 <div id="guide-view" class="guide-view">
@@ -3487,11 +3495,14 @@
   }
 
   // ── Bubble Map ──
-  let bubbleViewActive  = false;
-  let _bubbleHighlight  = null;
-  let _bubbleSolo       = false;
-  let _bubbleFilters    = null;
-  let _bubbleRefreshInt = null;
+  let bubbleViewActive   = false;
+  let _bubbleHighlight   = null;
+  let _bubbleSolo        = false;
+  let _bubbleFilters     = null;
+  let _bubbleRefreshInt  = null;
+  let _bubbleLastData    = null;   // cached API response for slider scrubbing
+  let _bubbleTimes       = [];     // sorted unique time strings from all trails
+  let _bubbleTimeIdx     = null;   // null = live, number = index into _bubbleTimes
 
   function _hidePrimaryViews() {
     const filterBar     = document.querySelector(".filter-bar");
@@ -3536,6 +3547,9 @@
     _bubbleHighlight = null;
     _bubbleSolo      = false;
     _bubbleFilters   = null;
+    _bubbleLastData  = null;
+    _bubbleTimes     = [];
+    _bubbleTimeIdx   = null;
     document.getElementById("bubble-view-btn").classList.remove("active");
     document.getElementById("bubble-view").style.display = "none";
     _showPrimaryViews();
@@ -3567,12 +3581,40 @@
         document.getElementById("bubble-status").textContent = "No tickers matched — try wider filters";
         return;
       }
-      render3DChart(data, _bubbleHighlight, _bubbleSolo);
+      _bubbleLastData = data;
+
+      // Build sorted unique time index from all ticker trails
+      const timeSet = new Set();
+      data.forEach(d => (d.trail || []).forEach(p => timeSet.add(p.t)));
+      _bubbleTimes = Array.from(timeSet).sort();
+
+      const slider     = document.getElementById("bubble-time-slider");
+      const sliderRow  = document.getElementById("bubble-slider-row");
+      if (_bubbleTimes.length > 1) {
+        slider.max   = _bubbleTimes.length;   // last step = live
+        slider.value = _bubbleTimes.length;   // default: live
+        _bubbleTimeIdx = null;
+        document.getElementById("bubble-slider-start").textContent = _bubbleTimes[0];
+        document.getElementById("bubble-slider-label").textContent = "Live";
+        sliderRow.style.display = "flex";
+      } else {
+        sliderRow.style.display = "none";
+      }
+
+      render3DChart(data, _bubbleHighlight, _bubbleSolo, null);
       document.getElementById("bubble-status").textContent = `${data.length} tickers · Updated ` + new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
     } catch(e) {
       document.getElementById("bubble-status").textContent = "Error loading data";
       console.error("[bubble-map]", e);
     }
+  }
+
+  function onBubbleSlider(val) {
+    val = parseInt(val);
+    const isLive = val >= _bubbleTimes.length;
+    _bubbleTimeIdx = isLive ? null : val;
+    document.getElementById("bubble-slider-label").textContent = isLive ? "Live" : _bubbleTimes[val];
+    if (_bubbleLastData) render3DChart(_bubbleLastData, _bubbleHighlight, _bubbleSolo, isLive ? null : _bubbleTimes[val]);
   }
 
   function openBubbleFilterModal() {
@@ -3601,11 +3643,29 @@
     }
   }
 
-  function render3DChart(data, highlight, solo) {
+  function render3DChart(data, highlight, solo, atTime) {
     if (!data || !data.length) return;
 
+    // Resolve each ticker's position: historical if atTime is set, else current
+    function resolvePos(d) {
+      if (!atTime) return { x: d.x, y: d.y, z: d.z };
+      const trail = d.trail || [];
+      // Latest trail point whose t <= atTime
+      let best = null;
+      for (const p of trail) { if (p.t <= atTime) best = p; }
+      if (!best) return null;   // ticker had no data yet at this time
+      return { x: best.x, y: best.y, z: best.z };
+    }
+
     // In solo mode show only the highlighted ticker
-    const visible = solo && highlight ? data.filter(d => d.ticker === highlight) : data;
+    const allVisible = solo && highlight ? data.filter(d => d.ticker === highlight) : data;
+    if (!allVisible.length) return;
+
+    // Apply historical positions and drop tickers with no data at selected time
+    const visible = allVisible.map(d => {
+      const pos = resolvePos(d);
+      return pos ? { ...d, x: pos.x, y: pos.y, z: pos.z } : null;
+    }).filter(Boolean);
     if (!visible.length) return;
 
     const logVol = v => v > 0 ? Math.log10(v) : 0;
