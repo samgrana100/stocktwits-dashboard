@@ -1611,10 +1611,13 @@
 <div class="popup-overlay" id="popup-overlay" onclick="closePopup(event)">
   <div class="popup-box">
     <div class="popup-header">
-      <div>
-        <div class="popup-ticker-name" id="popup-ticker">--</div>
-        <div class="popup-company" id="popup-meta">--</div>
-        <div class="popup-updated-line" id="popup-updated"></div>
+      <div style="display:flex;align-items:flex-start;gap:10px">
+        <button id="popup-back-btn" onclick="closePopupDirect()" style="display:none;margin-top:4px;padding:3px 9px;font-size:11px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-muted);cursor:pointer;white-space:nowrap;flex-shrink:0">← Map</button>
+        <div>
+          <div class="popup-ticker-name" id="popup-ticker">--</div>
+          <div class="popup-company" id="popup-meta">--</div>
+          <div class="popup-updated-line" id="popup-updated"></div>
+        </div>
       </div>
       <button class="popup-close" onclick="closePopupDirect()">&#x2715;</button>
     </div>
@@ -2618,6 +2621,8 @@
     currentPopupTicker  = ticker;
     currentPopupWindow  = currentWindow;
     document.getElementById("popup-overlay").classList.add("active");
+    // Show back-to-map button only when launched from the bubble map
+    document.getElementById("popup-back-btn").style.display = bubbleViewActive ? "" : "none";
     document.getElementById("popup-ticker").textContent = ticker;
     document.getElementById("popup-meta").textContent =
       company + "  \u00b7  " + sector + "  \u00b7  " + industry;
@@ -2733,6 +2738,7 @@
 
   function closePopupDirect() {
     document.getElementById("popup-overlay").classList.remove("active");
+    document.getElementById("popup-back-btn").style.display = "none";
     currentPopupTicker = "";
     _tradeMarkers = null;
     _lastPopupData = null;
