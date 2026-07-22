@@ -551,6 +551,22 @@
     .popup-window-btn:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border-mid); }
     .popup-window-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 0 12px var(--blue-glow); }
 
+    .popup-indicator-bar {
+      display: flex; align-items: center; gap: 5px;
+      padding: 6px 22px; border-top: 1px solid var(--border-subtle);
+      background: var(--bg-surface); flex-shrink: 0; flex-wrap: wrap;
+    }
+    .ind-group-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .1em; font-weight: 600; margin-right: 2px; }
+    .ind-sep { color: var(--border-mid); margin: 0 3px; font-size: 13px; }
+    .ind-btn {
+      font-size: 10px; padding: 2px 8px;
+      border: 1px solid var(--border-subtle); border-radius: 3px;
+      background: none; color: var(--text-dimmed); cursor: pointer;
+      transition: border-color .15s, color .15s;
+    }
+    .ind-btn:hover { color: var(--text-muted); border-color: var(--border-mid); }
+    .ind-btn.active { border-color: var(--ind-color, #fff); color: var(--ind-color, #fff); }
+
     .popup-chart-wrap { padding: 16px 22px; flex: 1; }
 
     .popup-confirmed-events {
@@ -1645,6 +1661,19 @@
       <button class="popup-window-btn" onclick="setPopupWindow('1w',this)">1w</button>
     </div>
 
+    <div class="popup-indicator-bar">
+      <span class="ind-group-label">SMA</span>
+      <button class="ind-btn" style="--ind-color:#f97316" onclick="toggleSMA(5,this)">5</button>
+      <button class="ind-btn" style="--ind-color:#a855f7" onclick="toggleSMA(10,this)">10</button>
+      <button class="ind-btn" style="--ind-color:#22d3ee" onclick="toggleSMA(20,this)">20</button>
+      <button class="ind-btn" style="--ind-color:#f59e0b" onclick="toggleSMA(30,this)">30</button>
+      <button class="ind-btn" style="--ind-color:#e879f9" onclick="toggleSMA(60,this)">60</button>
+      <button class="ind-btn" style="--ind-color:#86efac" onclick="toggleSMA(90,this)">90</button>
+      <button class="ind-btn" style="--ind-color:#94a3b8" onclick="toggleSMA(250,this)">250</button>
+      <span class="ind-sep">|</span>
+      <button class="ind-btn" id="ind-macd-btn" style="--ind-color:#60a5fa" onclick="toggleMACD(this)">MACD</button>
+    </div>
+
     <div class="popup-chart-wrap">
       <div class="chart-header">
         <div>
@@ -1681,6 +1710,47 @@
   let currentWindow      = "1h";
   let currentPopupWindow = "1h";
   let currentPopupTicker = "";
+
+  // ── Indicator overlay state ──
+  let _activeSMAs      = new Set();
+  let _macdEnabled     = false;
+  let _lastPopupData   = null;
+  let _lastPopupDensW  = "5m";
+  let _lastPopupSentW  = "5m";
+
+  const SMA_COLORS = {5:"#f97316",10:"#a855f7",20:"#22d3ee",30:"#f59e0b",60:"#e879f9",90:"#86efac",250:"#94a3b8"};
+
+  function _sma(data, period) {
+    return data.map((_, i) => {
+      const pts = [];
+      for (let j = i; j >= 0 && pts.length < period; j--) {
+        if (data[j] != null) pts.push(data[j]);
+      }
+      return pts.length === period ? pts.reduce((a, b) => a + b, 0) / period : null;
+    });
+  }
+
+  function _ema(data, period) {
+    const k = 2 / (period + 1);
+    let ema = null;
+    return data.map(v => {
+      if (v == null) return null;
+      ema = ema == null ? v : v * k + ema * (1 - k);
+      return ema;
+    });
+  }
+
+  function toggleSMA(period, btn) {
+    if (_activeSMAs.has(period)) { _activeSMAs.delete(period); btn.classList.remove("active"); }
+    else                          { _activeSMAs.add(period);    btn.classList.add("active"); }
+    if (_lastPopupData) renderCombinedChart(_lastPopupData, _lastPopupDensW, _lastPopupSentW);
+  }
+
+  function toggleMACD(btn) {
+    _macdEnabled = !_macdEnabled;
+    btn.classList.toggle("active", _macdEnabled);
+    if (_lastPopupData) renderCombinedChart(_lastPopupData, _lastPopupDensW, _lastPopupSentW);
+  }
 
   // ── Price-fetch throttle: max 3 concurrent Finviz price requests ──
   const _priceQueue = [];
@@ -2661,6 +2731,11 @@
     document.getElementById("popup-overlay").classList.remove("active");
     currentPopupTicker = "";
     _tradeMarkers = null;
+    _lastPopupData = null;
+    // Reset indicator toggles
+    _activeSMAs.clear();
+    _macdEnabled = false;
+    document.querySelectorAll(".ind-btn").forEach(b => b.classList.remove("active"));
     if (combinedChart) { combinedChart.destroy(); combinedChart = null; }
     if (popupTimeoutId)       { clearTimeout(popupTimeoutId);         popupTimeoutId = null; }
     if (popupRefreshInterval) { clearInterval(popupRefreshInterval);  popupRefreshInterval = null; }
@@ -2821,10 +2896,50 @@
       return _lp;
     });
 
-    const normP = normalize(rawPFilled);
+    // Cache for overlay re-renders (only when this is the popup chart)
+    if (isPopup) { _lastPopupData = data; _lastPopupDensW = densityRollingKey; _lastPopupSentW = sentimentRollingKey; }
+
+    // Extract price bounds so SMAs overlay on the exact same scale as price
+    const pVals = rawPFilled.filter(v => v != null);
+    const pMin  = pVals.length ? Math.min(...pVals) : 0;
+    const pMax  = pVals.length ? Math.max(...pVals) : 1;
+    const pRng  = pMax - pMin || 1;
+    const byPrice = v => v == null ? null : (v - pMin) / pRng;
+    const normP = rawPFilled.map(byPrice);
     const hasPriceData = rawP.some(v => v != null);
     // Score is in [-1, +1] — fixed mapping so 0 = Mid, +1 = High, -1 = Low
     const normS = rawSFilled.map(v => v == null ? null : (v + 1) / 2);
+
+    // ── SMA datasets ──
+    const smaDatasets = Array.from(_activeSMAs).map(period => ({
+      label: `SMA ${period}`,
+      data: _sma(rawPFilled, period).map(byPrice),
+      borderColor: SMA_COLORS[period] || "#fff",
+      borderWidth: 1.5,
+      borderDash: [4, 3],
+      pointRadius: 0, fill: false, tension: 0, spanGaps: false,
+      yAxisID: "y",
+    }));
+
+    // ── MACD datasets ──
+    let macdDatasets = [];
+    if (_macdEnabled) {
+      const macdLine  = _ema(rawPFilled, 12).map((v, i) => {
+        const s = _ema(rawPFilled, 26)[i]; return (v != null && s != null) ? v - s : null;
+      });
+      const sigLine   = _ema(macdLine, 9);
+      const histLine  = macdLine.map((v, i) => v != null && sigLine[i] != null ? v - sigLine[i] : null);
+      macdDatasets = [
+        { type: "bar", label: "MACD Hist", data: histLine, yAxisID: "yMACD",
+          backgroundColor: histLine.map(v => v == null ? "transparent" : v >= 0 ? "rgba(74,222,128,0.4)" : "rgba(248,113,113,0.4)"),
+          borderColor:     histLine.map(v => v == null ? "transparent" : v >= 0 ? "#4ade80" : "#f87171"),
+          borderWidth: 1, barPercentage: 1, categoryPercentage: 1 },
+        { label: "MACD",   data: macdLine, borderColor: "#60a5fa", borderWidth: 1.5,
+          pointRadius: 0, fill: false, tension: 0, spanGaps: false, yAxisID: "yMACD" },
+        { label: "Signal", data: sigLine,  borderColor: "#f87171", borderWidth: 1.5,
+          borderDash: [4,3], pointRadius: 0, fill: false, tension: 0, spanGaps: false, yAxisID: "yMACD" },
+      ];
+    }
 
     // Event markers — first tagged event per step bucket
     const eMap = {};
@@ -2944,7 +3059,9 @@
             fill: false, showLine: false, spanGaps: false,
             yAxisID: "y", order: 0
           },
-          ...(tradeDataset ? [tradeDataset] : [])
+          ...(tradeDataset ? [tradeDataset] : []),
+          ...smaDatasets,
+          ...macdDatasets,
         ]
       },
       plugins: [noPricePlugin],
@@ -2978,6 +3095,10 @@
                 if (ctx.dataset.label === "Rolling Score") return "Score: "   + raw.toFixed(4);
                 if (ctx.dataset.label === "Msg Density")   return "Density: " + raw + " msgs/" + (densityRollingKey || "5m");
                 if (ctx.dataset.label === "Trade")         return raw;
+                if (ctx.dataset.label === "MACD Hist")     return "Hist: "    + raw.toFixed(4);
+                if (ctx.dataset.label === "MACD")          return "MACD: "    + raw.toFixed(4);
+                if (ctx.dataset.label === "Signal")        return "Signal: "  + raw.toFixed(4);
+                if (ctx.dataset.label.startsWith("SMA "))  return ctx.dataset.label + ": $" + (pMin + raw * pRng).toFixed(2);
                 return ctx.dataset.label + ": " + raw;
               }
             }
@@ -3016,6 +3137,12 @@
               callback: v => Number.isInteger(v) ? v : ""
             },
             grid: { drawOnChartArea: false }
+          },
+          yMACD: {
+            position: "right",
+            display: _macdEnabled,
+            ticks: { color: "#60a5fa", font: { size: 9 }, callback: v => v.toFixed(2) },
+            grid:  { drawOnChartArea: false },
           }
         }
       }
