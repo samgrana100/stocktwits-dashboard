@@ -162,6 +162,11 @@ finviz_cache      = {}
 finviz_cache_time = 0
 _finviz_lock      = threading.Lock()
 
+# First Finviz price seen per ticker each day — used to compute intraday % change
+_fv_open_prices = {}   # {ticker: float}
+_fv_open_date   = None # "YYYY-MM-DD" string; cleared on new trading day
+_fv_open_lock   = threading.Lock()
+
 # Per-ticker price cache: avoids hitting Finviz on every popup open
 price_cache      = {}
 PRICE_CACHE_TTL  = 60  # seconds base TTL; each entry gets +0-30s jitter to stagger expiry
@@ -225,6 +230,29 @@ def _utc_dt_to_et_hhmm(dt: datetime) -> str:
     """Convert a UTC datetime object to Eastern Time HH:MM string."""
     offset = timedelta(hours=-4) if 3 <= dt.month <= 11 else timedelta(hours=-5)
     return (dt + offset).strftime("%H:%M")
+
+
+def _fv_price_chg(ticker: str, current_price: float) -> float | None:
+    """
+    Compute intraday % change using Finviz prices only:
+      (current_price - first_seen_today) / first_seen_today * 100
+    The first Finviz price observed per ticker each trading day is stored
+    in _fv_open_prices. Returns None if current_price is falsy.
+    """
+    global _fv_open_date
+    if not current_price:
+        return None
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    with _fv_open_lock:
+        if _fv_open_date != today:
+            _fv_open_prices.clear()
+            _fv_open_date = today
+        if ticker not in _fv_open_prices:
+            _fv_open_prices[ticker] = current_price
+        open_price = _fv_open_prices[ticker]
+    if open_price:
+        return round((current_price - open_price) / open_price * 100, 2)
+    return None
 
 
 def get_et_now() -> datetime:
@@ -359,7 +387,8 @@ def get_finviz_data() -> dict:
                         return None
                 snaps = []
                 for tk, fv in result.items():
-                    price_chg = _pf(fv.get("change"))
+                    curr_p    = _pf(fv.get("price"))
+                    price_chg = _fv_price_chg(tk, curr_p) if curr_p is not None else _pf(fv.get("change"))
                     rel_vol   = _pf(fv.get("rel_volume"))
                     volume    = _pf(fv.get("volume"))
                     if price_chg is None or rel_vol is None or volume is None:
@@ -1478,7 +1507,8 @@ def get_bubble_screener():
 
     result = []
     for tk, fv in merged.items():
-        price_chg = _pf(fv.get("change"))
+        curr_p    = _pf(fv.get("price"))
+        price_chg = _fv_price_chg(tk, curr_p) if curr_p is not None else _pf(fv.get("change"))
         rel_vol   = _pf(fv.get("rel_volume"))
         volume    = _pf(fv.get("volume"))
         if not tk or any(v is None for v in [price_chg, rel_vol, volume]):
@@ -1505,7 +1535,7 @@ def get_bubble_screener():
             "composite": 0.0,
             "company":   fv.get("company", "--"),
             "price":     fv.get("price", "--"),
-            "change":    fv.get("change", "--"),
+            "change":    price_chg if price_chg is not None else fv.get("change", "--"),
             "trail":     trail,
         })
 
@@ -1569,7 +1599,8 @@ def get_3d_screener():
             continue
         fv        = finviz[ticker]
         sentiment = s.get("avg_sentiment_score")
-        price_chg = _pf(fv.get("change"))
+        curr_p    = _pf(fv.get("price"))
+        price_chg = _fv_price_chg(ticker, curr_p) if curr_p is not None else _pf(fv.get("change"))
         rel_vol   = _pf(fv.get("rel_volume"))
         volume    = _pf(fv.get("volume"))
         if any(v is None for v in [sentiment, price_chg, rel_vol, volume]):
@@ -1601,7 +1632,7 @@ def get_3d_screener():
             "composite": round(s.get("avg_composite_score") or 0, 3),
             "company":   fv.get("company", "--"),
             "price":     fv.get("price", "--"),
-            "change":    fv.get("change", "--"),
+            "change":    price_chg if price_chg is not None else fv.get("change", "--"),
             "trail":     trail,
         })
 

@@ -12,39 +12,42 @@
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
 
     :root {
-      --bg-base:      #090910;
-      --bg-surface:   #0d0d16;
-      --bg-elevated:  #11111a;
-      --bg-hover:     #131320;
-      --bg-overlay:   #18182a;
+      /* Backgrounds — dark navy rather than pure black; each layer is clearly distinct */
+      --bg-base:      #0a0c18;
+      --bg-surface:   #0e1020;
+      --bg-elevated:  #141728;
+      --bg-hover:     #181c30;
+      --bg-overlay:   #1d2138;
 
-      --border-faint:  #111120;
-      --border-subtle: #191928;
-      --border-mid:    #222236;
+      /* Borders — visible but not distracting */
+      --border-faint:  #1e2240;
+      --border-subtle: #282d4e;
+      --border-mid:    #363c62;
 
-      --text-primary:  #e2e2f0;
-      --text-secondary:#8888aa;
-      --text-muted:    #454560;
-      --text-dimmed:   #252540;
+      /* Text — large contrast jump for muted/dimmed (the main readability fix) */
+      --text-primary:   #f0f1ff;
+      --text-secondary: #b8bcd8;
+      --text-muted:     #8c92be;   /* was #454560 — now ~8:1 contrast on dark bg */
+      --text-dimmed:    #5e659a;   /* was #252540 — now clearly readable */
 
-      --blue:       #3b82f6;
-      --blue-dim:   rgba(59,130,246,0.14);
-      --blue-glow:  rgba(59,130,246,0.28);
+      --blue:       #4f8ef7;
+      --blue-dim:   rgba(79,142,247,0.15);
+      --blue-glow:  rgba(79,142,247,0.32);
       --green:      #22c55e;
-      --green-dim:  rgba(34,197,94,0.11);
-      --green-glow: rgba(34,197,94,0.32);
+      --green-dim:  rgba(34,197,94,0.13);
+      --green-glow: rgba(34,197,94,0.35);
       --red:        #ef4444;
-      --red-dim:    rgba(239,68,68,0.11);
-      --red-glow:   rgba(239,68,68,0.32);
+      --red-dim:    rgba(239,68,68,0.13);
+      --red-glow:   rgba(239,68,68,0.35);
       --orange:     #f97316;
 
-      --r-sm: 6px;  --r-md: 10px;  --r-lg: 14px;
+      --r-sm: 7px;  --r-md: 11px;  --r-lg: 16px;
 
       --t-fast: 120ms ease;
       --t-base: 180ms ease;
       --t-slow: 280ms cubic-bezier(0.16,1,0.3,1);
 
-      --shadow-popup: 0 32px 100px rgba(0,0,0,0.92), 0 0 0 1px rgba(255,255,255,0.04);
+      --shadow-popup: 0 32px 100px rgba(0,0,0,0.88), 0 0 0 1px rgba(255,255,255,0.07);
     }
 
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -60,21 +63,23 @@
 
     /* ── ACCENT BAR ── */
     .accent-bar {
-      height: 2px;
-      background: linear-gradient(90deg, #3b82f6 0%, #8b5cf6 50%, #06b6d4 100%);
+      height: 3px;
+      background: linear-gradient(90deg, #4f8ef7 0%, #8b5cf6 50%, #06b6d4 100%);
       position: sticky; top: 0; z-index: 51;
       flex-shrink: 0;
     }
 
     /* ── TOPBAR ── */
     .topbar {
-      background: var(--bg-surface);
+      background: rgba(14,16,32,0.92);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
       border-bottom: 1px solid var(--border-subtle);
-      padding: 0 18px;
-      height: 46px;
+      padding: 0 20px;
+      height: 48px;
       display: flex; align-items: center;
       justify-content: space-between; gap: 12px;
-      position: sticky; top: 2px; z-index: 50;
+      position: sticky; top: 3px; z-index: 50;
     }
     .topbar-left { display: flex; align-items: center; gap: 16px; }
     .topbar-title {
@@ -93,17 +98,17 @@
       0%, 100% { opacity: 1; box-shadow: 0 0 8px var(--green-glow); }
       50%       { opacity: 0.3; box-shadow: none; }
     }
-    .ticker-count { color: var(--text-dimmed); font-size: 11px; font-weight: 500; }
-    .topbar-right { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-    .window-label { color: var(--text-muted); font-size: 11px; font-weight: 500; margin-right: 2px; }
+    .ticker-count { color: var(--text-muted); font-size: 11px; font-weight: 500; }
+    .topbar-right { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .window-label { color: var(--text-secondary); font-size: 11px; font-weight: 600; margin-right: 2px; }
 
     .window-btn {
-      background: transparent; border: 1px solid var(--border-subtle);
-      color: var(--text-muted); padding: 3px 9px; border-radius: var(--r-sm);
+      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+      color: var(--text-secondary); padding: 4px 10px; border-radius: var(--r-sm);
       cursor: pointer; font-size: 11px; font-weight: 500;
       transition: background var(--t-fast), color var(--t-fast), border-color var(--t-fast);
     }
-    .window-btn:hover { background: var(--bg-elevated); color: var(--text-primary); border-color: var(--border-mid); }
+    .window-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--border-mid); }
     .window-btn.active { background: var(--blue); border-color: var(--blue); color: #fff; box-shadow: 0 0 14px var(--blue-glow); }
 
     .pipeline-btn {
@@ -123,18 +128,18 @@
     }
     .metric-card {
       flex: 1; background: var(--bg-surface);
-      padding: 9px 18px;
-      display: flex; flex-direction: column; gap: 2px;
-      border-right: 1px solid var(--border-faint);
+      padding: 10px 18px;
+      display: flex; flex-direction: column; gap: 3px;
+      border-right: 1px solid var(--border-subtle);
       transition: background var(--t-fast); cursor: default;
     }
     .metric-card:last-child { border-right: none; }
     .metric-card:hover { background: var(--bg-elevated); }
-    .metric-label { font-size: 9px; font-weight: 600; color: var(--text-dimmed); text-transform: uppercase; letter-spacing: 0.1em; }
-    .metric-value { font-size: 14px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+    .metric-label { font-size: 9px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+    .metric-value { font-size: 15px; font-weight: 700; color: var(--text-primary); letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
     .metric-value.up   { color: var(--green); }
     .metric-value.down { color: var(--red); }
-    .metric-sub { font-size: 10px; color: var(--text-muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+    .metric-sub { font-size: 10px; color: var(--text-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
 
     /* ── FILTER BAR ── */
     .filter-bar {
@@ -142,13 +147,13 @@
       padding: 8px 16px; background: var(--bg-surface);
       border-bottom: 1px solid var(--border-subtle);
     }
-    .filter-label { font-size: 10px; font-weight: 700; color: var(--text-muted);
+    .filter-label { font-size: 10px; font-weight: 700; color: var(--text-secondary);
       text-transform: uppercase; letter-spacing: 0.08em; margin-right: 4px; }
     .filter-item { display: flex; align-items: center; gap: 5px; }
-    .filter-item span { font-size: 10px; color: var(--text-muted); white-space: nowrap; font-weight: 500; }
+    .filter-item span { font-size: 10px; color: var(--text-secondary); white-space: nowrap; font-weight: 500; }
     .filter-item select, .filter-item input {
-      background: var(--bg-overlay); border: 1px solid var(--border-subtle);
-      color: var(--text-secondary); font-size: 11px; padding: 3px 7px;
+      background: var(--bg-elevated); border: 1px solid var(--border-subtle);
+      color: var(--text-primary); font-size: 11px; padding: 4px 8px;
       border-radius: var(--r-sm); outline: none;
       transition: border-color var(--t-fast);
     }
@@ -225,8 +230,8 @@
       border-bottom: 1px solid var(--border-subtle);
     }
     thead th {
-      padding: 7px 12px; text-align: left; color: var(--text-muted);
-      font-size: 10px; font-weight: 600; text-transform: uppercase;
+      padding: 8px 12px; text-align: left; color: var(--text-secondary);
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
       letter-spacing: 0.07em; cursor: pointer; user-select: none;
       transition: color var(--t-fast);
     }
@@ -235,7 +240,7 @@
     .sort-arrow { font-size: 9px; margin-left: 3px; opacity: 0.8; }
     tbody tr { border-bottom: 1px solid var(--border-faint); cursor: pointer; transition: background var(--t-fast); }
     tbody tr:hover { background: var(--bg-hover); }
-    tbody td { padding: 6px 12px; color: var(--text-secondary); }
+    tbody td { padding: 7px 12px; color: var(--text-secondary); }
     tbody tr:hover td { color: var(--text-primary); }
 
     .rank    { color: var(--text-dimmed); font-size: 11px; font-weight: 500; }
@@ -341,10 +346,11 @@
     }
     .signals-toggle-btn {
       font-size: 11px; padding: 4px 11px; border-radius: 5px; cursor: pointer; font-weight: 500;
-      border: 1px solid var(--border-subtle); background: none; color: var(--text-muted);
-      transition: border-color var(--t-fast), color var(--t-fast);
+      border: 1px solid var(--border-mid); background: var(--bg-elevated); color: var(--text-secondary);
+      transition: border-color var(--t-fast), color var(--t-fast), background var(--t-fast);
     }
-    .signals-toggle-btn.active { border-color: var(--blue); color: var(--blue); }
+    .signals-toggle-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+    .signals-toggle-btn.active { border-color: var(--blue); color: #7eb8ff; background: var(--blue-dim); }
 
     /* ── CORRELATION VIEW ── */
     .corr-view-layout { display: flex; gap: 0; align-items: flex-start; }
@@ -561,10 +567,10 @@
     .ind-btn {
       font-size: 10px; padding: 2px 8px;
       border: 1px solid var(--border-subtle); border-radius: 3px;
-      background: none; color: var(--text-dimmed); cursor: pointer;
-      transition: border-color .15s, color .15s;
+      background: var(--bg-elevated); color: var(--text-muted); cursor: pointer;
+      transition: border-color .15s, color .15s, background .15s;
     }
-    .ind-btn:hover { color: var(--text-muted); border-color: var(--border-mid); }
+    .ind-btn:hover { color: var(--text-secondary); border-color: var(--border-mid); background: var(--bg-hover); }
     .ind-btn.active { border-color: var(--ind-color, #fff); color: var(--ind-color, #fff); }
 
     .popup-chart-wrap { padding: 16px 22px; flex: 1; }
@@ -803,18 +809,18 @@
     .news-msg-body { color: var(--text-secondary); font-size: 12px; line-height: 1.45; word-break: break-word; }
 
     .news-view-btn, .guide-btn {
-      height: 28px; padding: 0 12px;
+      height: 30px; padding: 0 13px;
       border: 1px solid var(--border-mid);
       border-radius: var(--r-sm);
-      background: transparent;
+      background: var(--bg-elevated);
       color: var(--text-secondary);
-      cursor: pointer; font-size: 12px;
+      cursor: pointer; font-size: 12px; font-weight: 500;
       transition: all var(--t-fast);
     }
-    .news-view-btn:hover  { border-color: var(--blue); color: var(--text-primary); }
-    .news-view-btn.active { background: var(--blue-dim); border-color: var(--blue); color: var(--blue); }
-    .guide-btn:hover  { border-color: #a855f7; color: var(--text-primary); }
-    .guide-btn.active { background: rgba(168,85,247,0.12); border-color: #a855f7; color: #a855f7; }
+    .news-view-btn:hover  { background: var(--bg-hover); border-color: var(--blue); color: var(--text-primary); }
+    .news-view-btn.active { background: var(--blue-dim); border-color: var(--blue); color: #7eb8ff; }
+    .guide-btn:hover  { background: var(--bg-hover); border-color: #a855f7; color: var(--text-primary); }
+    .guide-btn.active { background: rgba(168,85,247,0.13); border-color: #a855f7; color: #c084fc; }
 
     /* ── SCREENER MODAL ── */
     .screener-overlay {
@@ -824,26 +830,26 @@
     }
     .screener-overlay.active { display: flex; }
     .screener-modal {
-      background: var(--bg-surface); border: 1px solid var(--border-subtle);
+      background: var(--bg-elevated); border: 1px solid var(--border-mid);
       border-radius: var(--r-lg); width: 540px; max-width: 95vw;
       padding: 28px 28px 24px;
-      box-shadow: 0 24px 60px rgba(0,0,0,0.6);
+      box-shadow: 0 24px 80px rgba(0,0,0,0.7);
     }
     .screener-modal-title { font-size: 18px; font-weight: 700; color: #fff; margin-bottom: 4px; }
-    .screener-modal-sub   { font-size: 12px; color: var(--text-muted); margin-bottom: 22px; }
+    .screener-modal-sub   { font-size: 12px; color: var(--text-secondary); margin-bottom: 22px; }
     .screener-modal-grid  {
       display: grid; grid-template-columns: 1fr 1fr; gap: 14px 18px; margin-bottom: 16px;
     }
     .screener-modal-field { display: flex; flex-direction: column; gap: 5px; }
     .screener-modal-field.full { grid-column: 1 / -1; }
     .screener-modal-field label {
-      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      font-size: 10px; font-weight: 700; color: var(--text-secondary);
       text-transform: uppercase; letter-spacing: 0.07em;
     }
     .screener-modal-field select,
     .screener-modal-field input {
       background: var(--bg-overlay); border: 1px solid var(--border-subtle);
-      color: var(--text-secondary); font-size: 12px; padding: 7px 10px;
+      color: var(--text-primary); font-size: 12px; padding: 7px 10px;
       border-radius: var(--r-sm); outline: none; width: 100%;
       transition: border-color var(--t-fast);
     }
@@ -853,7 +859,7 @@
       font-size: 9px; color: var(--blue); font-weight: 600;
       text-transform: none; letter-spacing: 0; margin-left: 4px;
     }
-    .screener-modal-saved { font-size: 10px; color: var(--text-dimmed); margin-bottom: 16px; min-height: 14px; }
+    .screener-modal-saved { font-size: 10px; color: var(--text-muted); margin-bottom: 16px; min-height: 14px; }
     .screener-modal-actions { display: flex; gap: 10px; }
     .screener-modal-apply {
       flex: 1; padding: 10px; background: var(--green); border: none;
@@ -869,11 +875,11 @@
     }
     .screener-modal-skip:hover { border-color: var(--blue); color: var(--text-secondary); }
     .update-filters-btn {
-      height: 28px; padding: 0 12px; border: 1px solid var(--border-mid);
-      border-radius: var(--r-sm); background: transparent; color: var(--text-secondary);
-      cursor: pointer; font-size: 12px; transition: all var(--t-fast);
+      height: 30px; padding: 0 13px; border: 1px solid var(--border-mid);
+      border-radius: var(--r-sm); background: var(--bg-elevated); color: var(--text-secondary);
+      cursor: pointer; font-size: 12px; font-weight: 500; transition: all var(--t-fast);
     }
-    .update-filters-btn:hover { border-color: var(--green); color: var(--green); }
+    .update-filters-btn:hover { background: var(--bg-hover); border-color: var(--green); color: var(--green); }
 
     /* ── GUIDE VIEW ── */
     .guide-view { display: none; overflow-y: auto; padding: 20px 24px 40px; background: var(--bg-base); }
@@ -3805,7 +3811,8 @@
   function render3DChart(data, highlight, solo, atTime) {
     if (!data || !data.length) return;
 
-    const isDens = _bubbleXMode === "density";
+    const isDens  = _bubbleXMode === "density";
+    const Z_CAP   = 20; // cap rel_vol for display so trail and bubble stay on the same scale
 
     // Pick the X value for a data point or trail point
     const getX   = d  => isDens ? (d.density || 0) : d.x;
@@ -3813,13 +3820,13 @@
 
     // Resolve each ticker's position: historical if atTime is set, else current
     function resolvePos(d) {
-      if (!atTime) return { x: getX(d), y: d.y, z: d.z };
+      if (!atTime) return { x: getX(d), y: d.y, z: Math.min(d.z, Z_CAP) };
       const trail = d.trail || [];
       // Latest trail point whose t <= atTime
       let best = null;
       for (const p of trail) { if (p.t <= atTime) best = p; }
       if (!best) return null;   // ticker had no data yet at this time
-      return { x: trailX(best), y: best.y, z: best.z };
+      return { x: trailX(best), y: best.y, z: Math.min(best.z, Z_CAP) };
     }
 
     // In solo mode show only the highlighted ticker
@@ -3827,9 +3834,10 @@
     if (!allVisible.length) return;
 
     // Apply historical positions and drop tickers with no data at selected time
+    // raw_z preserves the uncapped rel_vol for hover tooltip display
     const visible = allVisible.map(d => {
       const pos = resolvePos(d);
-      return pos ? { ...d, x: pos.x, y: pos.y, z: pos.z } : null;
+      return pos ? { ...d, raw_z: d.z, x: pos.x, y: pos.y, z: pos.z } : null;
     }).filter(Boolean);
     if (!visible.length) return;
 
@@ -3871,7 +3879,7 @@
         line:  { width: 1, color: "rgba(255,255,255,0.15)" },
       },
       hovertemplate: main.map(d =>
-        `<b>${d.ticker}</b><br>${isDens ? "Density" : "Sentiment"}: ${d.x.toFixed ? d.x.toFixed(isDens ? 0 : 4) : d.x}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.z}x<br>Density: ${d.density} msgs<br>Composite: ${d.composite}<extra></extra>`
+        `<b>${d.ticker}</b><br>${isDens ? "Density" : "Sentiment"}: ${d.x.toFixed ? d.x.toFixed(isDens ? 0 : 4) : d.x}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.raw_z}x${d.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${d.density} msgs<br>Composite: ${d.composite}<extra></extra>`
       ),
       name: "Tickers",
     });
@@ -3906,31 +3914,28 @@
       if (tailPts.length > 36) tailPts = tailPts.slice(tailPts.length - 36);
       const minTailPts = (atTime !== null && atTime !== undefined) ? 2 : 4;
       if (tailPts.length >= minTailPts) {
-        const tailN = tailPts.length;
-        // Thin path line — shows direction without thick zigzag spider web
+        // Gradient rocket tail: fades from invisible at the old end to bright gold at the bubble tip.
+        // Append the current bubble position so the line terminates exactly at the bubble.
+        const tip = { x: h.x, density: h.density, y: h.y, z: h.z };
+        const gradPts = [...tailPts, tip];
+        const nG = gradPts.length;
         traces.push({
           type: "scatter3d", mode: "lines",
-          x: tailPts.map(p => trailX(p)),
-          y: tailPts.map(p => p.y),
-          z: tailPts.map(p => p.z),
-          line: { color: "rgba(250,204,21,0.25)", width: 2 },
+          x: gradPts.map(p => trailX(p)),
+          y: gradPts.map(p => p.y),
+          z: gradPts.map(p => p.z),
+          line: {
+            color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
+            colorscale: [
+              [0,   "rgba(250,204,21,0.0)"],
+              [0.4, "rgba(250,204,21,0.25)"],
+              [1,   "rgba(250,204,21,1.0)"],
+            ],
+            width: 6,
+          },
           hoverinfo: "skip",
           showlegend: false,
-          name: `${h.ticker}_path`,
-        });
-        // Breadcrumb dots: older = smaller + more transparent
-        traces.push({
-          type: "scatter3d", mode: "markers",
-          x: tailPts.map(p => trailX(p)),
-          y: tailPts.map(p => p.y),
-          z: tailPts.map(p => p.z),
-          marker: {
-            size:  tailPts.map((_, i) => 4 + (i / Math.max(tailN - 1, 1)) * 7),
-            color: tailPts.map((_, i) => `rgba(250,204,21,${0.25 + (i / Math.max(tailN - 1, 1)) * 0.65})`),
-          },
-          hovertemplate: tailPts.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t} ET<br>${isDens ? "Density" : "Sent"}: ${trailX(p)}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
           name: `${h.ticker} trail`,
-          showlegend: false,
         });
       }
       // Main highlighted bubble
@@ -3946,7 +3951,7 @@
           line: { width: 2, color: "#facc15" },
           symbol: ["circle"],
         },
-        hovertemplate: `<b>${h.ticker} ★</b><br>${isDens ? "Density" : "Sentiment"}: ${h.x.toFixed ? h.x.toFixed(isDens ? 0 : 4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${h.z}x<br>Density: ${h.density} msgs<extra></extra>`,
+        hovertemplate: `<b>${h.ticker} ★</b><br>${isDens ? "Density" : "Sentiment"}: ${h.x.toFixed ? h.x.toFixed(isDens ? 0 : 4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${h.raw_z}x${h.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${h.density} msgs<extra></extra>`,
         name: h.ticker,
         showlegend: false,
       });
