@@ -2233,6 +2233,94 @@ def run_scorer_loop(stop_flag: list):
     print("[SCORER THREAD] Stopped.")
 
 
+def _backfill_screener_snapshots():
+    """
+    Seeds screener_snapshots from price_history for the current day so bubble
+    map tails have history immediately after deploy rather than waiting for the
+    5-min screener cycle to accumulate data.
+
+    Uses current Finviz rel_vol as a proxy for historical relative volume
+    (the Z axis). Price_chg is computed accurately from the first observed
+    price of the day per ticker. Runs once in a background thread at startup.
+    """
+    time.sleep(15)  # let Finviz cache warm up first
+
+    def _pf(v):
+        try:
+            return float(str(v).replace("%", "").replace(",", "").strip())
+        except Exception:
+            return None
+
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    ph_docs = list(price_history.find(
+        {"ts": {"$gte": today_start}},
+        {"ticker": 1, "price": 1, "ts": 1}
+    ).sort("ts", 1))
+
+    if not ph_docs:
+        print("[BACKFILL] No price_history for today — skipping snapshot backfill.")
+        return
+
+    # Group by ticker, track first price of day and per-bucket point
+    first_price  = {}
+    ticker_buckets = defaultdict(dict)  # ticker → {bucket_ts: price}
+
+    for doc in ph_docs:
+        tk    = doc.get("ticker", "")
+        price = doc.get("price")
+        ts    = doc.get("ts")
+        if not tk or not price or not ts:
+            continue
+        if isinstance(ts, str):
+            try:
+                ts = datetime.fromisoformat(ts)
+            except Exception:
+                continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
+        if tk not in first_price:
+            first_price[tk] = price
+
+        # Round down to 5-min bucket
+        bucket = ts.replace(minute=(ts.minute // 5) * 5, second=0, microsecond=0)
+        ticker_buckets[tk][bucket] = price
+
+    # Get current Finviz data for rel_vol / volume proxy
+    finviz = get_finviz_data()
+
+    inserted = 0
+    for tk, buckets in ticker_buckets.items():
+        fv      = finviz.get(tk, {})
+        rel_vol = max(0.0, _pf(fv.get("rel_volume")) or 1.0)
+        volume  = _pf(fv.get("volume")) or 0.0
+        fp      = first_price.get(tk)
+        if not fp:
+            continue
+
+        for bucket_ts, price in sorted(buckets.items()):
+            price_chg = round((price - fp) / fp * 100, 2)
+            try:
+                res = screener_snapshots.update_one(
+                    {"ticker": tk, "ts": bucket_ts},
+                    {"$setOnInsert": {
+                        "ticker":    tk,
+                        "ts":        bucket_ts,
+                        "price_chg": price_chg,
+                        "rel_vol":   rel_vol,
+                        "volume":    volume,
+                    }},
+                    upsert=True
+                )
+                if res.upserted_id:
+                    inserted += 1
+            except Exception:
+                pass
+
+    print(f"[BACKFILL] Screener snapshot backfill complete — {inserted} new buckets inserted.")
+
+
 def _start_background_services():
     """
     Initialises DB indexes, refreshes the Finviz token, and starts the
@@ -2256,6 +2344,9 @@ def _start_background_services():
     _auto_stop = [False]
     threading.Thread(target=run_auto_trade_loop, args=(_auto_stop,), daemon=True).start()
     print("[APP] Auto trade loop started.")
+
+    threading.Thread(target=_backfill_screener_snapshots, daemon=True).start()
+    print("[APP] Screener snapshot backfill scheduled.")
 
     def _start_pipeline():
         global pipeline_thread, pipeline_stop_flag
