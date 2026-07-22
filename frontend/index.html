@@ -3895,27 +3895,17 @@
       // Only show trail points during regular market hours (09:30–16:00 ET).
       // Pre/post market rel_vol is meaningless and causes the Z axis to spike wildly.
       const mktHours = p => p.t >= "09:30" && p.t <= "16:00";
-      const fullTrail = (h.trail || []).filter(mktHours);
-      // Cap Z at 20× so early-morning volume spikes don't warp the axis
+      // Keep every snapshot — filtering by movement creates angular jumps instead of smooth curves
       const capZ = p => ({ ...p, z: Math.min(p.z, 20) });
-      let tailPts;
-      if (atTime !== null && atTime !== undefined) {
-        tailPts = fullTrail.filter(p => p.t <= atTime).map(capZ);
-      } else {
-        // Live mode: drop redundant points (no significant 3D movement)
-        tailPts = fullTrail.filter((p, i, a) =>
-          i === 0 ||
-          Math.abs(p.y - a[i-1].y) > 0.4 ||
-          Math.abs(trailX(p) - trailX(a[i-1])) > (isDens ? 2 : 0.02) ||
-          Math.abs(p.z - a[i-1].z) > 1.5
-        ).map(capZ);
-      }
-      // Keep last 36 points (≈3 hours of 5-min data) to avoid clutter
-      if (tailPts.length > 36) tailPts = tailPts.slice(tailPts.length - 36);
+      const fullTrail = (h.trail || []).filter(mktHours).map(capZ);
+      const tailPts = atTime !== null && atTime !== undefined
+        ? fullTrail.filter(p => p.t <= atTime)
+        : fullTrail;
       const minTailPts = (atTime !== null && atTime !== undefined) ? 2 : 4;
       if (tailPts.length >= minTailPts) {
-        // Gradient rocket tail: fades from invisible at the old end to bright gold at the bubble tip.
-        // Append the current bubble position so the line terminates exactly at the bubble.
+        // Rocket tail: dark-amber at tail → bright gold at tip.
+        // Use dark-to-bright RGB (not RGBA) — Plotly scatter3d ignores alpha in colorscale.
+        // Append current bubble position so the line flows directly into the bubble.
         const tip = { x: h.x, density: h.density, y: h.y, z: h.z };
         const gradPts = [...tailPts, tip];
         const nG = gradPts.length;
@@ -3927,9 +3917,11 @@
           line: {
             color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
             colorscale: [
-              [0,   "rgba(250,204,21,0.0)"],
-              [0.4, "rgba(250,204,21,0.25)"],
-              [1,   "rgba(250,204,21,1.0)"],
+              [0,    "#1a1400"],
+              [0.25, "#3d2e00"],
+              [0.55, "#906d00"],
+              [0.8,  "#c9a80e"],
+              [1,    "#facc15"],
             ],
             width: 6,
           },
