@@ -1510,7 +1510,7 @@ def get_3d_screener():
         {"$group": {
             "_id": {
                 "ticker": "$ticker",
-                "bucket": {"$substr": ["$created_at_utc", 0, 15]}
+                "bucket": {"$substr": ["$created_at_utc", 0, 16]}
             },
             "avg_sent": {"$avg": "$sentiment_score"}
         }}
