@@ -1354,34 +1354,71 @@ def get_bubble_screener():
     if not token or not export_url:
         return jsonify({"error": "Finviz credentials not configured"}), 500
 
-    # Strip any existing f= and auth= from the base URL, keep everything else (v=, r=, etc.)
-    # Use regex rather than urlencode so commas in the filter list stay unencoded
-    clean = re.sub(r"&?f=[^&]+", "", export_url)
-    clean = re.sub(r"&?auth=[^&]+", "", clean).rstrip("?").rstrip("&")
-    sep   = "&" if "?" in clean else "?"
-    if filters:
-        url = f"{clean}{sep}f={','.join(filters)}&auth={token}"
-    else:
-        url = f"{clean}{sep}auth={token}"
+    def _bubble_build_url(base, v, filt_list):
+        """Build a Finviz export URL: swap view, replace f=, append auth."""
+        u = re.sub(r"v=\d+", f"v={v}", base)
+        u = re.sub(r"&?f=[^&]+", "", u)
+        u = re.sub(r"&?auth=[^&]+", "", u).rstrip("?").rstrip("&")
+        sep = "&" if "?" in u else "?"
+        f_part = f"f={','.join(filt_list)}&" if filt_list else ""
+        return f"{u}{sep}{f_part}auth={token}"
 
-    try:
-        resp = cffi_requests.get(url, impersonate="chrome120", timeout=15)
-        if resp.status_code != 200:
-            return jsonify({"error": f"Finviz returned {resp.status_code}"}), 502
-        df = pd.read_csv(StringIO(resp.text))
-        if "Ticker" not in df.columns:
-            return jsonify([])
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    def _bubble_fetch_df(v):
+        url = _bubble_build_url(export_url, v, filters)
+        try:
+            r = cffi_requests.get(url, impersonate="chrome120", timeout=15)
+            if r.status_code != 200:
+                print(f"[BUBBLE] Finviz v={v} returned {r.status_code}")
+                return None
+            df = pd.read_csv(StringIO(r.text))
+            df.columns = [c.strip() for c in df.columns]
+            return df
+        except Exception as e:
+            print(f"[BUBBLE] Finviz v={v} error: {e}")
+            return None
 
-    col_map = {
-        "Ticker": "ticker", "Company": "company", "Price": "price",
-        "Change": "change", "Volume": "volume", "Rel Volume": "rel_volume",
-        "Float": "float_shares",
-    }
-    df.rename(columns={k: v for k, v in col_map.items() if k in df.columns}, inplace=True)
+    # v=111 (Overview): Company, Price, Change, Volume
+    # v=151 (Technical): Rel Volume, Avg Volume
+    df_ov  = _bubble_fetch_df(111)
+    df_tec = _bubble_fetch_df(151)
 
-    ticker_list = df["ticker"].dropna().str.strip().str.upper().unique().tolist() if "ticker" in df.columns else []
+    if df_ov is None and df_tec is None:
+        return jsonify({"error": "Both Finviz views failed"}), 502
+
+    # Merge both views by ticker (same pattern as get_finviz_data)
+    merged = {}
+    if df_ov is not None and "Ticker" in df_ov.columns:
+        for _, row in df_ov.iterrows():
+            tk = str(row.get("Ticker", "")).strip().upper()
+            if tk:
+                merged[tk] = {
+                    "company": str(row.get("Company", "--")),
+                    "price":   str(row.get("Price",   "--")),
+                    "change":  str(row.get("Change",  "--")),
+                    "volume":  str(row.get("Volume",  "--")),
+                    "rel_volume": "--",
+                }
+    if df_tec is not None and "Ticker" in df_tec.columns:
+        for _, row in df_tec.iterrows():
+            tk = str(row.get("Ticker", "")).strip().upper()
+            if not tk:
+                continue
+            rv = str(row.get("Rel Volume") or row.get("Relative Volume") or "--")
+            if tk in merged:
+                merged[tk]["rel_volume"] = rv
+            else:
+                merged[tk] = {
+                    "company": str(row.get("Company", "--")),
+                    "price":   str(row.get("Price",   "--")),
+                    "change":  str(row.get("Change",  "--")),
+                    "volume":  str(row.get("Volume",  "--")),
+                    "rel_volume": rv,
+                }
+
+    if not merged:
+        return jsonify([])
+
+    ticker_list = list(merged.keys())
 
     def _pf(v):
         try:
@@ -1414,11 +1451,10 @@ def get_bubble_screener():
             })
 
     result = []
-    for _, row in df.iterrows():
-        tk        = str(row.get("ticker", "")).strip().upper()
-        price_chg = _pf(row.get("change"))
-        rel_vol   = _pf(row.get("rel_volume"))
-        volume    = _pf(row.get("volume"))
+    for tk, fv in merged.items():
+        price_chg = _pf(fv.get("change"))
+        rel_vol   = _pf(fv.get("rel_volume"))
+        volume    = _pf(fv.get("volume"))
         if not tk or any(v is None for v in [price_chg, rel_vol, volume]):
             continue
         sentiment, density = sent_map.get(tk, (0.0, 0))
@@ -1430,9 +1466,9 @@ def get_bubble_screener():
             "size":      volume,
             "density":   density,
             "composite": 0.0,
-            "company":   str(row.get("company", "--")),
-            "price":     str(row.get("price", "--")),
-            "change":    str(row.get("change", "--")),
+            "company":   fv.get("company", "--"),
+            "price":     fv.get("price", "--"),
+            "change":    fv.get("change", "--"),
             "trail":     trail_map.get(tk, []),
         })
 
