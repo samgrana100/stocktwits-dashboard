@@ -3884,10 +3884,15 @@
       //   bubble appears to slide along its path as the user scrubs
       // - In live mode: show full trail but require 4 distinct positions so sparse
       //   backfill data doesn't render as random prongs
-      const fullTrail = h.trail || [];
+      // Only show trail points during regular market hours (09:30–16:00 ET).
+      // Pre/post market rel_vol is meaningless and causes the Z axis to spike wildly.
+      const mktHours = p => p.t >= "09:30" && p.t <= "16:00";
+      const fullTrail = (h.trail || []).filter(mktHours);
+      // Cap Z at 20× so early-morning volume spikes don't warp the axis
+      const capZ = p => ({ ...p, z: Math.min(p.z, 20) });
       let tailPts;
       if (atTime !== null && atTime !== undefined) {
-        tailPts = fullTrail.filter(p => p.t <= atTime);
+        tailPts = fullTrail.filter(p => p.t <= atTime).map(capZ);
       } else {
         // Live mode: drop redundant points (no significant 3D movement)
         tailPts = fullTrail.filter((p, i, a) =>
@@ -3895,7 +3900,7 @@
           Math.abs(p.y - a[i-1].y) > 0.4 ||
           Math.abs(trailX(p) - trailX(a[i-1])) > (isDens ? 2 : 0.02) ||
           Math.abs(p.z - a[i-1].z) > 1.5
-        );
+        ).map(capZ);
       }
       // Keep last 36 points (≈3 hours of 5-min data) to avoid clutter
       if (tailPts.length > 36) tailPts = tailPts.slice(tailPts.length - 36);

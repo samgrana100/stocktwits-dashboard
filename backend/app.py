@@ -344,29 +344,35 @@ def get_finviz_data() -> dict:
             finviz_cache_time = time.time()
 
         # Snapshot screener data for 3D bubble trail (piggybacked — no new Finviz call)
+        # Only during regular market hours: rel_vol is meaningless pre/post market
         try:
-            now_utc = datetime.now(timezone.utc)
-            def _pf(v):
-                try:
-                    return float(str(v).replace("%","").replace(",","").strip())
-                except Exception:
-                    return None
-            snaps = []
-            for tk, fv in result.items():
-                price_chg = _pf(fv.get("change"))
-                rel_vol   = _pf(fv.get("rel_volume"))
-                volume    = _pf(fv.get("volume"))
-                if price_chg is None or rel_vol is None or volume is None:
-                    continue
-                snaps.append({
-                    "ticker":    tk,
-                    "ts":        now_utc,
-                    "price_chg": price_chg,
-                    "rel_vol":   max(0.0, rel_vol),
-                    "volume":    volume,
-                })
-            if snaps:
-                screener_snapshots.insert_many(snaps, ordered=False)
+            now_utc  = datetime.now(timezone.utc)
+            et_off   = timedelta(hours=-4) if 3 <= now_utc.month <= 11 else timedelta(hours=-5)
+            now_et   = now_utc + et_off
+            et_min   = now_et.hour * 60 + now_et.minute
+            in_hours = (9 * 60 + 25) <= et_min <= (16 * 60 + 5)
+            if in_hours:
+                def _pf(v):
+                    try:
+                        return float(str(v).replace("%","").replace(",","").strip())
+                    except Exception:
+                        return None
+                snaps = []
+                for tk, fv in result.items():
+                    price_chg = _pf(fv.get("change"))
+                    rel_vol   = _pf(fv.get("rel_volume"))
+                    volume    = _pf(fv.get("volume"))
+                    if price_chg is None or rel_vol is None or volume is None:
+                        continue
+                    snaps.append({
+                        "ticker":    tk,
+                        "ts":        now_utc,
+                        "price_chg": price_chg,
+                        "rel_vol":   max(0.0, rel_vol),
+                        "volume":    volume,
+                    })
+                if snaps:
+                    screener_snapshots.insert_many(snaps, ordered=False)
         except Exception:
             pass
 
@@ -1600,6 +1606,42 @@ def get_3d_screener():
         })
 
     return jsonify(result)
+
+
+@app.route("/api/debug/trail/<ticker>")
+def debug_trail(ticker):
+    """Return raw screener_snapshots for a ticker today so trail Y values can be validated."""
+    ticker = ticker.upper()
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    snaps = list(screener_snapshots.find(
+        {"ts": {"$gte": today_start}, "ticker": ticker},
+        {"_id": 0, "ticker": 1, "ts": 1, "price_chg": 1, "rel_vol": 1, "volume": 1}
+    ).sort("ts", 1))
+
+    # Also grab the first price_history record today to show the baseline price
+    first_ph = price_history.find_one(
+        {"ticker": ticker, "timestamp": {"$gte": today_start.isoformat()}},
+        sort=[("timestamp", 1)]
+    )
+
+    return jsonify({
+        "ticker":       ticker,
+        "snap_count":   len(snaps),
+        "first_price_history": {
+            "timestamp": first_ph.get("timestamp") if first_ph else None,
+            "price":     first_ph.get("price")     if first_ph else None,
+        },
+        "snapshots": [
+            {
+                "ts_utc":    s["ts"].strftime("%Y-%m-%dT%H:%M"),
+                "ts_et":     _utc_dt_to_et_hhmm(s["ts"]),
+                "price_chg": s.get("price_chg"),
+                "rel_vol":   s.get("rel_vol"),
+                "volume":    s.get("volume"),
+            }
+            for s in snaps
+        ]
+    })
 
 
 @app.route("/api/quickscore/<ticker>")
