@@ -1312,7 +1312,6 @@ def get_upcoming_catalysts():
 
 @app.route("/api/bubble-screener", methods=["POST"])
 def get_bubble_screener():
-    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
     data = request.get_json(force=True) or {}
 
     filters = []
@@ -1355,12 +1354,15 @@ def get_bubble_screener():
     if not token or not export_url:
         return jsonify({"error": "Finviz credentials not configured"}), 500
 
-    parsed = urlparse(export_url)
-    qs     = parse_qs(parsed.query, keep_blank_values=True)
-    new_qs = {k: v[0] for k, v in qs.items() if k not in ("f", "auth")}
+    # Strip any existing f= and auth= from the base URL, keep everything else (v=, r=, etc.)
+    # Use regex rather than urlencode so commas in the filter list stay unencoded
+    clean = re.sub(r"&?f=[^&]+", "", export_url)
+    clean = re.sub(r"&?auth=[^&]+", "", clean).rstrip("?").rstrip("&")
+    sep   = "&" if "?" in clean else "?"
     if filters:
-        new_qs["f"] = ",".join(filters)
-    url = urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", urlencode(new_qs), "")) + "&auth=" + token
+        url = f"{clean}{sep}f={','.join(filters)}&auth={token}"
+    else:
+        url = f"{clean}{sep}auth={token}"
 
     try:
         resp = cffi_requests.get(url, impersonate="chrome120", timeout=15)

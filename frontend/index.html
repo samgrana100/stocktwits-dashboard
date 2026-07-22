@@ -3562,8 +3562,12 @@
         res  = await fetch("/api/3d-screener");
       }
       data = await res.json();
+      if (!data || !data.length) {
+        document.getElementById("bubble-status").textContent = "No tickers matched — try wider filters";
+        return;
+      }
       render3DChart(data, _bubbleHighlight, _bubbleSolo);
-      document.getElementById("bubble-status").textContent = "Updated " + new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+      document.getElementById("bubble-status").textContent = `${data.length} tickers · Updated ` + new Date().toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
     } catch(e) {
       document.getElementById("bubble-status").textContent = "Error loading data";
       console.error("[bubble-map]", e);
