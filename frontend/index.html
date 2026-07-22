@@ -4053,7 +4053,7 @@
       <div class="corr-density-info">${density}${inMonitor}</div>
       <div style="display:flex;gap:6px;margin-top:6px">
         ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},'${t.price||''}')">Enter Trade</button>` : ""}
-        <button onclick="event.stopPropagation();openBubbleMap('${safeTk}')" style="font-size:10px;padding:3px 8px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-dimmed);cursor:pointer">⊙ Map</button>
+        <button onclick="event.stopPropagation();openBubbleMap('${safeTk}',true)" style="font-size:10px;padding:3px 8px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-dimmed);cursor:pointer">⊙ Map</button>
       </div>
     </div>`;
   }

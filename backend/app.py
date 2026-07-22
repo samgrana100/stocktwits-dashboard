@@ -221,6 +221,12 @@ def utc_to_et(utc_str: str) -> str:
         return utc_str
 
 
+def _utc_dt_to_et_hhmm(dt: datetime) -> str:
+    """Convert a UTC datetime object to Eastern Time HH:MM string."""
+    offset = timedelta(hours=-4) if 3 <= dt.month <= 11 else timedelta(hours=-5)
+    return (dt + offset).strftime("%H:%M")
+
+
 def get_et_now() -> datetime:
     """Returns current datetime in Eastern Time (timezone-aware)."""
     now_utc = datetime.now(timezone.utc)
@@ -1447,7 +1453,7 @@ def get_bubble_screener():
             trail_map[d["ticker"]].append({
                 "price_chg": d["price_chg"],
                 "rel_vol":   d["rel_vol"],
-                "ts":        d["ts"].strftime("%H:%M"),
+                "ts_et":     _utc_dt_to_et_hhmm(d["ts"]),
             })
 
     result = []
@@ -1458,6 +1464,10 @@ def get_bubble_screener():
         if not tk or any(v is None for v in [price_chg, rel_vol, volume]):
             continue
         sentiment, density = sent_map.get(tk, (0.0, 0))
+        trail = [
+            {"x": sentiment, "y": snap["price_chg"], "z": snap["rel_vol"], "t": snap["ts_et"]}
+            for snap in trail_map.get(tk, [])
+        ]
         result.append({
             "ticker":    tk,
             "x":         sentiment,
@@ -1469,7 +1479,7 @@ def get_bubble_screener():
             "company":   fv.get("company", "--"),
             "price":     fv.get("price", "--"),
             "change":    fv.get("change", "--"),
-            "trail":     trail_map.get(tk, []),
+            "trail":     trail,
         })
 
     with _bubble_screener_lock:
@@ -1500,7 +1510,8 @@ def get_3d_screener():
         trail_map[d["ticker"]].append({
             "price_chg": d["price_chg"],
             "rel_vol":   d["rel_vol"],
-            "ts":        d["ts"].strftime("%H:%M"),
+            "ts":        d["ts"].strftime("%H:%M"),       # UTC — used for sentiment key lookup
+            "ts_et":     _utc_dt_to_et_hhmm(d["ts"]),   # ET — used for display/slider
         })
 
     # Sentiment history from scored_messages (per-ticker per-5min bucket today)
@@ -1542,7 +1553,7 @@ def get_3d_screener():
                 "x": sent_val,
                 "y": snap["price_chg"],
                 "z": snap["rel_vol"],
-                "t": snap["ts"],
+                "t": snap["ts_et"],
             })
 
         result.append({
