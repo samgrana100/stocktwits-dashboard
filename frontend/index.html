@@ -3734,16 +3734,26 @@
       const minTailPts = (atTime !== null && atTime !== undefined) ? 2 : 4;
       if (tailPts.length >= minTailPts) {
         const tailN = tailPts.length;
-        // Breadcrumb dots: older = smaller + more transparent, no connecting lines
+        // Thin path line — shows direction without thick zigzag spider web
+        traces.push({
+          type: "scatter3d", mode: "lines",
+          x: tailPts.map(p => p.x),
+          y: tailPts.map(p => p.y),
+          z: tailPts.map(p => p.z),
+          line: { color: "rgba(250,204,21,0.25)", width: 2 },
+          hoverinfo: "skip",
+          showlegend: false,
+          name: `${h.ticker}_path`,
+        });
+        // Breadcrumb dots: older = smaller + more transparent
         traces.push({
           type: "scatter3d", mode: "markers",
           x: tailPts.map(p => p.x),
           y: tailPts.map(p => p.y),
           z: tailPts.map(p => p.z),
           marker: {
-            size:    tailPts.map((_, i) => 2.5 + (i / Math.max(tailN - 1, 1)) * 5.5),
-            color:   tailPts.map((_, i) => `rgba(250,204,21,${0.1 + (i / Math.max(tailN - 1, 1)) * 0.7})`),
-            symbol: "circle",
+            size:  tailPts.map((_, i) => 4 + (i / Math.max(tailN - 1, 1)) * 7),
+            color: tailPts.map((_, i) => `rgba(250,204,21,${0.25 + (i / Math.max(tailN - 1, 1)) * 0.65})`),
           },
           hovertemplate: tailPts.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t} ET<br>Sent: ${p.x}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
           name: `${h.ticker} trail`,
