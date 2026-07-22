@@ -3711,23 +3711,34 @@
     // Highlighted ticker — larger, brighter
     if (hilite.length) {
       const h = hilite[0];
-      // Comet tail — only draw when we have enough distinct positions to look meaningful
-      const _distinctTrail = (h.trail || []).filter((p, i, a) =>
-        i === 0 || Math.abs(p.y - a[i-1].y) > 0.5 || Math.abs(p.x - a[i-1].x) > 0.02
-      );
-      if (_distinctTrail.length >= 4) {
-        const tailN = _distinctTrail.length;
+      // Comet tail:
+      // - In slider mode (atTime set): show only points up to current time so the
+      //   bubble appears to slide along its path as the user scrubs
+      // - In live mode: show full trail but require 4 distinct positions so sparse
+      //   backfill data doesn't render as random prongs
+      const fullTrail = h.trail || [];
+      let tailPts;
+      if (atTime !== null && atTime !== undefined) {
+        tailPts = fullTrail.filter(p => p.t <= atTime);
+      } else {
+        tailPts = fullTrail.filter((p, i, a) =>
+          i === 0 || Math.abs(p.y - a[i-1].y) > 0.5 || Math.abs(p.x - a[i-1].x) > 0.02
+        );
+      }
+      const minTailPts = (atTime !== null && atTime !== undefined) ? 2 : 4;
+      if (tailPts.length >= minTailPts) {
+        const tailN = tailPts.length;
         traces.push({
           type: "scatter3d", mode: "lines+markers",
-          x: _distinctTrail.map(p => p.x),
-          y: _distinctTrail.map(p => p.y),
-          z: _distinctTrail.map(p => p.z),
+          x: tailPts.map(p => p.x),
+          y: tailPts.map(p => p.y),
+          z: tailPts.map(p => p.z),
           line: { color: "rgba(250,204,21,0.4)", width: 3 },
           marker: {
-            size:  _distinctTrail.map((_, i) => 3 + (i / tailN) * 7),
-            color: _distinctTrail.map((_, i) => `rgba(250,204,21,${0.15 + (i / tailN) * 0.5})`),
+            size:  tailPts.map((_, i) => 3 + (i / tailN) * 7),
+            color: tailPts.map((_, i) => `rgba(250,204,21,${0.15 + (i / tailN) * 0.5})`),
           },
-          hovertemplate: _distinctTrail.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t}<br>Sent: ${p.x}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
+          hovertemplate: tailPts.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t}<br>Sent: ${p.x}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
           name: `${h.ticker} trail`,
           showlegend: false,
         });
