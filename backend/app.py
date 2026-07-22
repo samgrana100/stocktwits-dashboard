@@ -1454,7 +1454,21 @@ def get_bubble_screener():
                 "price_chg": d["price_chg"],
                 "rel_vol":   d["rel_vol"],
                 "ts_et":     _utc_dt_to_et_hhmm(d["ts"]),
+                "ts_bkt":    d["ts"].strftime("%Y-%m-%dT%H:%M"),   # UTC bucket for density lookup
             })
+
+    # Per-bucket density counts for trail points (density mode)
+    today_str = today_start.strftime("%Y-%m-%dT%H:%M:%S")
+    dens_map_bkt = defaultdict(dict)
+    if ticker_list:
+        for d in scored_messages.aggregate([
+            {"$match": {"created_at_utc": {"$gte": today_str}, "ticker": {"$in": ticker_list}}},
+            {"$group": {
+                "_id": {"ticker": "$ticker", "bucket": {"$substr": ["$created_at_utc", 0, 16]}},
+                "count": {"$sum": 1}
+            }}
+        ]):
+            dens_map_bkt[d["_id"]["ticker"]][d["_id"]["bucket"]] = d["count"]
 
     result = []
     for tk, fv in merged.items():
@@ -1464,8 +1478,15 @@ def get_bubble_screener():
         if not tk or any(v is None for v in [price_chg, rel_vol, volume]):
             continue
         sentiment, density = sent_map.get(tk, (0.0, 0))
+        tk_dens_bkt = dens_map_bkt.get(tk, {})
         trail = [
-            {"x": sentiment, "y": snap["price_chg"], "z": snap["rel_vol"], "t": snap["ts_et"]}
+            {
+                "x":       sentiment,
+                "density": tk_dens_bkt.get(snap["ts_bkt"], 0),
+                "y":       snap["price_chg"],
+                "z":       snap["rel_vol"],
+                "t":       snap["ts_et"],
+            }
             for snap in trail_map.get(tk, [])
         ]
         result.append({
@@ -1523,12 +1544,17 @@ def get_3d_screener():
                 "ticker": "$ticker",
                 "bucket": {"$substr": ["$created_at_utc", 0, 16]}
             },
-            "avg_sent": {"$avg": "$sentiment_score"}
+            "avg_sent": {"$avg": "$sentiment_score"},
+            "count":    {"$sum": 1}
         }}
     ]))
     sent_map = defaultdict(dict)
+    dens_map = defaultdict(dict)
     for d in sent_hist:
-        sent_map[d["_id"]["ticker"]][d["_id"]["bucket"]] = round(d["avg_sent"], 4)
+        tk  = d["_id"]["ticker"]
+        bkt = d["_id"]["bucket"]
+        sent_map[tk][bkt] = round(d["avg_sent"], 4)
+        dens_map[tk][bkt] = d["count"]
 
     result = []
     for s in scores:
@@ -1546,14 +1572,17 @@ def get_3d_screener():
         # Build trail: merge screener snapshots with nearest sentiment bucket
         trail = []
         tk_sent = sent_map.get(ticker, {})
+        tk_dens = dens_map.get(ticker, {})
         for snap in trail_map.get(ticker, []):
             snap_bucket = today_start.strftime("%Y-%m-%dT") + snap["ts"]
             sent_val    = tk_sent.get(snap_bucket, sentiment)
+            dens_val    = tk_dens.get(snap_bucket, 0)
             trail.append({
-                "x": sent_val,
-                "y": snap["price_chg"],
-                "z": snap["rel_vol"],
-                "t": snap["ts_et"],
+                "x":       sent_val,
+                "density": dens_val,
+                "y":       snap["price_chg"],
+                "z":       snap["rel_vol"],
+                "t":       snap["ts_et"],
             })
 
         result.append({
