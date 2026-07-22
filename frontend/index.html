@@ -3721,24 +3721,31 @@
       if (atTime !== null && atTime !== undefined) {
         tailPts = fullTrail.filter(p => p.t <= atTime);
       } else {
+        // Live mode: drop redundant points (no significant 3D movement)
         tailPts = fullTrail.filter((p, i, a) =>
-          i === 0 || Math.abs(p.y - a[i-1].y) > 0.5 || Math.abs(p.x - a[i-1].x) > 0.02
+          i === 0 ||
+          Math.abs(p.y - a[i-1].y) > 0.4 ||
+          Math.abs(p.x - a[i-1].x) > 0.02 ||
+          Math.abs(p.z - a[i-1].z) > 1.5
         );
       }
+      // Keep last 36 points (≈3 hours of 5-min data) to avoid clutter
+      if (tailPts.length > 36) tailPts = tailPts.slice(tailPts.length - 36);
       const minTailPts = (atTime !== null && atTime !== undefined) ? 2 : 4;
       if (tailPts.length >= minTailPts) {
         const tailN = tailPts.length;
+        // Breadcrumb dots: older = smaller + more transparent, no connecting lines
         traces.push({
-          type: "scatter3d", mode: "lines+markers",
+          type: "scatter3d", mode: "markers",
           x: tailPts.map(p => p.x),
           y: tailPts.map(p => p.y),
           z: tailPts.map(p => p.z),
-          line: { color: "rgba(250,204,21,0.4)", width: 3 },
           marker: {
-            size:  tailPts.map((_, i) => 3 + (i / tailN) * 7),
-            color: tailPts.map((_, i) => `rgba(250,204,21,${0.15 + (i / tailN) * 0.5})`),
+            size:    tailPts.map((_, i) => 2.5 + (i / Math.max(tailN - 1, 1)) * 5.5),
+            color:   tailPts.map((_, i) => `rgba(250,204,21,${0.1 + (i / Math.max(tailN - 1, 1)) * 0.7})`),
+            symbol: "circle",
           },
-          hovertemplate: tailPts.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t}<br>Sent: ${p.x}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
+          hovertemplate: tailPts.map(p => `<b>${h.ticker} trail</b><br>Time: ${p.t} ET<br>Sent: ${p.x}<br>Price Δ: ${p.y}%<br>Rel Vol: ${p.z}x<extra></extra>`),
           name: `${h.ticker} trail`,
           showlegend: false,
         });
