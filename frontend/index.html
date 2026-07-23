@@ -3909,9 +3909,16 @@
         const tip = { x: h.x, density: h.density, y: h.y, z: h.z };
         const gradPts = [...tailPts, tip];
         const nG = gradPts.length;
+        // Smooth the X axis (sentiment oscillates every snapshot, creating a spider web).
+        // EMA with α=0.2 follows the trend while suppressing short-term noise.
+        const rawX = gradPts.map(p => trailX(p));
+        const smoothX = rawX.reduce((acc, v, i) => {
+          acc.push(i === 0 ? v : 0.2 * v + 0.8 * acc[i - 1]);
+          return acc;
+        }, []);
         traces.push({
           type: "scatter3d", mode: "lines",
-          x: gradPts.map(p => trailX(p)),
+          x: smoothX,
           y: gradPts.map(p => p.y),
           z: gradPts.map(p => p.z),
           line: {
