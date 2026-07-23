@@ -3894,23 +3894,20 @@
       //   backfill data doesn't render as random prongs
       // Show pre-market and after-hours data (04:00–20:00 ET) — matches backend gate.
       const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
-      // Keep every snapshot — filtering by movement creates angular jumps instead of smooth curves
-      const capZ = p => ({ ...p, z: Math.min(p.z, 20) });
-      const fullTrail = (h.trail || []).filter(mktHours).map(capZ);
+      // Solo mode: no Z cap — show actual rel_vol so the trail reflects the real trajectory.
+      // (Z_CAP only matters for multi-bubble view where one outlier can warp the shared axis.)
+      const fullTrail = (h.trail || []).filter(mktHours);
       const tailPts = atTime !== null && atTime !== undefined
         ? fullTrail.filter(p => p.t <= atTime)
         : fullTrail;
-      // Show tail as soon as 2 snapshots exist — waiting for 4 hides it for the first 20 min
       const minTailPts = 2;
+      // Use raw (uncapped) Z for the solo bubble so it sits at the tip of the trail
+      const soloZ = h.raw_z ?? h.z;
       if (tailPts.length >= minTailPts) {
-        // Rocket tail: dark-amber at tail → bright gold at tip.
-        // Use dark-to-bright RGB (not RGBA) — Plotly scatter3d ignores alpha in colorscale.
-        // Append current bubble position so the line flows directly into the bubble.
-        const tip = { x: h.x, density: h.density, y: h.y, z: h.z };
+        const tip = { x: h.x, density: h.density, y: h.y, z: soloZ };
         const gradPts = [...tailPts, tip];
         const nG = gradPts.length;
-        // Smooth the X axis (sentiment oscillates every snapshot, creating a spider web).
-        // EMA with α=0.2 follows the trend while suppressing short-term noise.
+        // Smooth X (sentiment) with EMA α=0.2 to suppress per-snapshot oscillation noise
         const rawX = gradPts.map(p => trailX(p));
         const smoothX = rawX.reduce((acc, v, i) => {
           acc.push(i === 0 ? v : 0.2 * v + 0.8 * acc[i - 1]);
@@ -3937,10 +3934,10 @@
           name: `${h.ticker} trail`,
         });
       }
-      // Main highlighted bubble
+      // Solo bubble — plotted at actual rel_vol (no cap) so it sits at the tail tip
       traces.push({
         type: "scatter3d", mode: "markers+text",
-        x: [h.x], y: [h.y], z: [h.z],
+        x: [h.x], y: [h.y], z: [soloZ],
         text: [h.ticker],
         textposition: "top center",
         textfont: { size: 13, color: "#facc15" },
@@ -3950,7 +3947,7 @@
           line: { width: 2, color: "#facc15" },
           symbol: ["circle"],
         },
-        hovertemplate: `<b>${h.ticker} ★</b><br>${isDens ? "Density" : "Sentiment"}: ${h.x.toFixed ? h.x.toFixed(isDens ? 0 : 4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${h.raw_z}x${h.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${h.density} msgs<extra></extra>`,
+        hovertemplate: `<b>${h.ticker} ★</b><br>${isDens ? "Density" : "Sentiment"}: ${h.x.toFixed ? h.x.toFixed(isDens ? 0 : 4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${soloZ}x<br>Density: ${h.density} msgs<extra></extra>`,
         name: h.ticker,
         showlegend: false,
       });
