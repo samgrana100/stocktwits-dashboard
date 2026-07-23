@@ -3892,16 +3892,17 @@
       //   bubble appears to slide along its path as the user scrubs
       // - In live mode: show full trail but require 4 distinct positions so sparse
       //   backfill data doesn't render as random prongs
-      // Only show trail points during regular market hours (09:30–16:00 ET).
-      // Pre/post market rel_vol is meaningless and causes the Z axis to spike wildly.
-      const mktHours = p => p.t >= "09:30" && p.t <= "16:00";
+      // Filter to regular market hours — matches backend gate (09:25–16:05 ET).
+      // Pre/post market rel_vol is meaningless and would spike the Z axis wildly.
+      const mktHours = p => p.t >= "09:25" && p.t <= "16:05";
       // Keep every snapshot — filtering by movement creates angular jumps instead of smooth curves
       const capZ = p => ({ ...p, z: Math.min(p.z, 20) });
       const fullTrail = (h.trail || []).filter(mktHours).map(capZ);
       const tailPts = atTime !== null && atTime !== undefined
         ? fullTrail.filter(p => p.t <= atTime)
         : fullTrail;
-      const minTailPts = (atTime !== null && atTime !== undefined) ? 2 : 4;
+      // Show tail as soon as 2 snapshots exist — waiting for 4 hides it for the first 20 min
+      const minTailPts = 2;
       if (tailPts.length >= minTailPts) {
         // Rocket tail: dark-amber at tail → bright gold at tip.
         // Use dark-to-bright RGB (not RGBA) — Plotly scatter3d ignores alpha in colorscale.
