@@ -3907,10 +3907,11 @@
         const tip = { x: h.x, density: h.density, y: h.y, z: soloZ };
         const gradPts = [...tailPts, tip];
         const nG = gradPts.length;
-        // Smooth X (sentiment) with EMA α=0.2 to suppress per-snapshot oscillation noise
+        // Smooth X (sentiment) — heavy EMA (α=0.08) so per-snapshot oscillations
+        // don't create a spider-web fan; the trend still comes through over many points.
         const rawX = gradPts.map(p => trailX(p));
         const smoothX = rawX.reduce((acc, v, i) => {
-          acc.push(i === 0 ? v : 0.2 * v + 0.8 * acc[i - 1]);
+          acc.push(i === 0 ? v : 0.08 * v + 0.92 * acc[i - 1]);
           return acc;
         }, []);
         traces.push({

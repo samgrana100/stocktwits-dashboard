@@ -1448,14 +1448,14 @@ def get_bubble_screener():
         ]):
             sent_map[r["_id"]] = (round(r["avg"], 4), r["cnt"])
 
-    # Intraday trails from screener_snapshots — rolling 24h so yesterday's moves are included
-    now_utc     = datetime.now(timezone.utc)
-    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    trail_start = now_utc - timedelta(hours=24)
+    # Intraday trails from screener_snapshots — today only (UTC midnight).
+    # Finviz "change" is always vs prior close, so mixing two calendar days
+    # creates artificial baseline jumps in the Y axis.
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     trail_map   = defaultdict(list)
     if ticker_list:
         for d in screener_snapshots.find(
-            {"ts": {"$gte": trail_start}, "ticker": {"$in": ticker_list}},
+            {"ts": {"$gte": today_start}, "ticker": {"$in": ticker_list}},
             {"ticker": 1, "ts": 1, "price_chg": 1, "rel_vol": 1, "_id": 0}
         ).sort("ts", 1):
             trail_map[d["ticker"]].append({
@@ -1528,13 +1528,11 @@ def get_3d_screener():
         except Exception:
             return None
 
-    # Trail uses a rolling 24h window so yesterday's intraday moves are included.
-    # today_start (UTC midnight) is kept for sentiment/density bucket lookups only.
-    now_utc     = datetime.now(timezone.utc)
-    today_start = now_utc.replace(hour=0, minute=0, second=0, microsecond=0)
-    trail_start = now_utc - timedelta(hours=24)
+    # Today only — Finviz "change" baseline shifts between calendar days,
+    # so mixing yesterday's snapshots with today's creates unnatural Y-axis jumps.
+    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
     snap_docs   = list(screener_snapshots.find(
-        {"ts": {"$gte": trail_start}},
+        {"ts": {"$gte": today_start}},
         {"ticker": 1, "ts": 1, "price_chg": 1, "rel_vol": 1, "_id": 0}
     ).sort("ts", 1))
     trail_map = defaultdict(list)
