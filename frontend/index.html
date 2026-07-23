@@ -3892,9 +3892,8 @@
       //   bubble appears to slide along its path as the user scrubs
       // - In live mode: show full trail but require 4 distinct positions so sparse
       //   backfill data doesn't render as random prongs
-      // Filter to regular market hours — matches backend gate (09:25–16:05 ET).
-      // Pre/post market rel_vol is meaningless and would spike the Z axis wildly.
-      const mktHours = p => p.t >= "09:25" && p.t <= "16:05";
+      // Show pre-market and after-hours data (04:00–20:00 ET) — matches backend gate.
+      const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
       // Keep every snapshot — filtering by movement creates angular jumps instead of smooth curves
       const capZ = p => ({ ...p, z: Math.min(p.z, 20) });
       const fullTrail = (h.trail || []).filter(mktHours).map(capZ);

@@ -350,7 +350,7 @@ def get_finviz_data() -> dict:
             et_off   = timedelta(hours=-4) if 3 <= now_utc.month <= 11 else timedelta(hours=-5)
             now_et   = now_utc + et_off
             et_min   = now_et.hour * 60 + now_et.minute
-            in_hours = (9 * 60 + 25) <= et_min <= (16 * 60 + 5)
+            in_hours = (4 * 60) <= et_min <= (20 * 60)
             if in_hours:
                 def _pf(v):
                     try:
