@@ -3934,9 +3934,13 @@
           acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
           return acc;
         }, []);
-        const smoothX = ema(gradPts.map(p => trailX(p)), 0.08);
-        const smoothY = ema(gradPts.map(p => p.y),       0.15);
-        const smoothZ = ema(gradPts.map(p => p.z),       0.15);
+        // Apply EMA to historical points only; append raw tip so the trail
+        // terminates exactly at the bubble's current position without EMA lag.
+        const histPts = gradPts.slice(0, -1);
+        const tipPt   = gradPts[gradPts.length - 1];
+        const smoothX = [...ema(histPts.map(p => trailX(p)), 0.08), trailX(tipPt)];
+        const smoothY = [...ema(histPts.map(p => p.y),       0.15), tipPt.y];
+        const smoothZ = [...ema(histPts.map(p => p.z),       0.15), tipPt.z];
         traces.push({
           type: "scatter3d", mode: "lines",
           x: smoothX,
@@ -4088,9 +4092,12 @@
           acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
           return acc;
         }, []);
-        const smoothX = hEma(gradPts.map(p => trailX(p)), 0.08);
-        const smoothY = hEma(gradPts.map(p => p.y ?? 0),  0.15);
-        const smoothZ = hEma(gradPts.map(p => p.z ?? 0),  0.15);
+        // Apply EMA to historical points only; raw tip anchors trail to bubble.
+        const hHistPts = gradPts.slice(0, -1);
+        const hTipPt   = gradPts[gradPts.length - 1];
+        const smoothX = [...hEma(hHistPts.map(p => trailX(p)), 0.08), trailX(hTipPt)];
+        const smoothY = [...hEma(hHistPts.map(p => p.y ?? 0),  0.15), hTipPt.y ?? 0];
+        const smoothZ = [...hEma(hHistPts.map(p => p.z ?? 0),  0.15), hTipPt.z ?? 0];
 
         // Capture index synchronously — Plotly.addTraces updates gd.data immediately
         const gd      = document.getElementById("bubble-chart");
