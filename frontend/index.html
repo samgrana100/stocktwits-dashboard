@@ -3956,22 +3956,13 @@
       });
     }
 
-    // Transient hover trail — empty until plotly_hover fires; Plotly.restyle fills it
+    // Transient hover trail — empty until plotly_hover fires; Plotly.restyle fills it.
+    // Must use a scalar color (not an empty array) so Plotly doesn't throw on init.
     _hoverMain = main;
     traces.push({
       type: "scatter3d", mode: "lines",
       x: [], y: [], z: [],
-      line: {
-        color: [],
-        colorscale: [
-          [0,   "#050508"],
-          [0.3, "#14142a"],
-          [0.6, "#3c3c9a"],
-          [0.8, "#7878e8"],
-          [1,   "#c8c8ff"],
-        ],
-        width: 4,
-      },
+      line: { color: "#050508", width: 4 },
       hoverinfo: "skip",
       showlegend: false,
       name: "__hover_trail__",
@@ -4071,6 +4062,7 @@
         y: [gradPts.map(p => p.y)],
         z: [gradPts.map(p => p.z)],
         'line.color': [gradPts.map((_, i) => i / Math.max(nG - 1, 1))],
+        'line.colorscale': [[[0,"#050508"],[0.3,"#14142a"],[0.6,"#3c3c9a"],[0.8,"#7878e8"],[1,"#c8c8ff"]]],
       }, [_hoverTraceIdx]);
     });
 
