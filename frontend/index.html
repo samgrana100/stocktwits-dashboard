@@ -4027,8 +4027,8 @@
 
         const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
         const rawTail  = (hov.trail || []).filter(mktHours);
-        console.log("[hover-trail] ticker:", hov.ticker, "rawTail:", rawTail.length);
-        if (rawTail.length < 2) return;
+        console.log("[hover-trail] ticker:", hov.ticker, "trail pts:", rawTail.length);
+        if (!rawTail.length) return;
 
         // Replace previous trail (moving between bubbles swaps it, no flicker)
         _removeHoverTrail();
