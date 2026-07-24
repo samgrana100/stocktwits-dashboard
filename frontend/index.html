@@ -4069,6 +4069,12 @@
         const smoothY = hEma(gradPts.map(p => p.y),       0.15);
         const smoothZ = hEma(gradPts.map(p => p.z),       0.15);
 
+        const gd = document.getElementById("bubble-chart");
+        // Predict the new trace index synchronously — Plotly updates gd.data
+        // immediately on addTraces, before the Promise resolves. Capturing it
+        // here prevents a race where plotly_unhover fires before .then() runs.
+        const nextIdx = gd && gd.data ? gd.data.length : null;
+
         Plotly.addTraces("bubble-chart", {
           type: "scatter3d", mode: "lines",
           x: smoothX, y: smoothY, z: smoothZ,
@@ -4080,11 +4086,9 @@
           hoverinfo: "skip",
           showlegend: false,
           name: `${hov.ticker}_htail`,
-        }).then(() => {
-          const gd = document.getElementById("bubble-chart");
-          _hoverTraceIdx = gd && gd.data ? gd.data.length - 1 : null;
         });
-      } catch(e) {}
+        _hoverTraceIdx = nextIdx;
+      } catch(e) { console.error("[hover-trail]", e); }
     });
 
     chartEl.on("plotly_unhover", () => { try { _removeHoverTrail(); } catch(e) {} });
