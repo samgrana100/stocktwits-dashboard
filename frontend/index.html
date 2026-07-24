@@ -3765,6 +3765,12 @@
         sliderRow.style.display = "none";
       }
 
+      // If the highlighted ticker is no longer in the screener data, fall back to
+      // multi-bubble rather than silently leaving the old solo chart on screen.
+      if (_bubbleHighlight && !data.some(d => d.ticker === _bubbleHighlight)) {
+        _bubbleHighlight = null;
+        _bubbleSolo      = false;
+      }
       render3DChart(data, _bubbleHighlight, _bubbleSolo, null);
       const _countLabel = _bubbleSolo && _bubbleHighlight
         ? `Solo: ${_bubbleHighlight}`
@@ -3909,18 +3915,22 @@
         const tip = { x: h.x, density: h.density, y: h.y, z: soloZ };
         const gradPts = [...tailPts, tip];
         const nG = gradPts.length;
-        // Smooth X (sentiment) — heavy EMA (α=0.08) so per-snapshot oscillations
-        // don't create a spider-web fan; the trend still comes through over many points.
-        const rawX = gradPts.map(p => trailX(p));
-        const smoothX = rawX.reduce((acc, v, i) => {
-          acc.push(i === 0 ? v : 0.08 * v + 0.92 * acc[i - 1]);
+        // EMA on all three axes so per-snapshot noise doesn't create a 3D spider-web.
+        // X (sentiment): α=0.08 — very heavy (oscillates most aggressively)
+        // Y (price_chg): α=0.15 — moderate (drifts but stays range-bound)
+        // Z (rel_vol):   α=0.15 — moderate (can spike but trends matter)
+        const ema = (arr, a) => arr.reduce((acc, v, i) => {
+          acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
           return acc;
         }, []);
+        const smoothX = ema(gradPts.map(p => trailX(p)), 0.08);
+        const smoothY = ema(gradPts.map(p => p.y),       0.15);
+        const smoothZ = ema(gradPts.map(p => p.z),       0.15);
         traces.push({
           type: "scatter3d", mode: "lines",
           x: smoothX,
-          y: gradPts.map(p => p.y),
-          z: gradPts.map(p => p.z),
+          y: smoothY,
+          z: smoothZ,
           line: {
             color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
             colorscale: [
@@ -4050,17 +4060,19 @@
       const gradPts = [...cappedTail, tip];
       const nG = gradPts.length;
 
-      // EMA smoothing on X — same α as solo trail
-      const rawX = gradPts.map(p => trailX(p));
-      const smoothX = rawX.reduce((acc, v, i) => {
-        acc.push(i === 0 ? v : 0.08 * v + 0.92 * acc[i - 1]);
+      // EMA on all three axes — same smoothing as solo trail
+      const hEma = (arr, a) => arr.reduce((acc, v, i) => {
+        acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
         return acc;
       }, []);
+      const smoothX = hEma(gradPts.map(p => trailX(p)), 0.08);
+      const smoothY = hEma(gradPts.map(p => p.y),       0.15);
+      const smoothZ = hEma(gradPts.map(p => p.z),       0.15);
 
       Plotly.restyle("bubble-chart", {
         x: [smoothX],
-        y: [gradPts.map(p => p.y)],
-        z: [gradPts.map(p => p.z)],
+        y: [smoothY],
+        z: [smoothZ],
         'line.color': [gradPts.map((_, i) => i / Math.max(nG - 1, 1))],
         'line.colorscale': [[[0,"#050508"],[0.3,"#14142a"],[0.6,"#3c3c9a"],[0.8,"#7878e8"],[1,"#c8c8ff"]]],
       }, [_hoverTraceIdx]);
