@@ -3913,6 +3913,7 @@
     if (!solo) {
       main.forEach(d => {
         const tailPts = (d.trail || []).filter(mktHours);
+        console.log(`[trail] ${d.ticker}: trail.length=${(d.trail||[]).length} tailPts.length=${tailPts.length}`);
         if (!tailPts.length) return;
         const cappedTail = tailPts.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
         const { x: sx, y: sy, z: sz, color } = buildTrail(cappedTail, { x: d.x, density: d.density, y: d.y, z: d.z });
@@ -3925,6 +3926,7 @@
           hoverinfo: "skip", showlegend: false, name: `${d.ticker}_trail`,
         });
       });
+      console.log(`[trail] hoverTrailIdxMap keys:`, Object.keys(hoverTrailIdxMap));
     }
 
     // Zero planes (sentiment mode: x spans [-1,1]; density mode: skip x zero-line)
@@ -4010,6 +4012,7 @@
         if (!evt.points || !evt.points.length) return;
         const pt  = evt.points[0];
         const hov = main[pt.pointIndex];
+        console.log(`[hover] curveNumber=${pt.curveNumber} pointIndex=${pt.pointIndex} ticker=${hov?.ticker} inMap=${hoverTrailIdxMap[hov?.ticker]}`);
         if (pt.curveNumber !== 0 || !hov || hoverTrailIdxMap[hov.ticker] === undefined) return;
         if (_visibleTrailTicker === hov.ticker) return;
         _clearHoverTrail();
