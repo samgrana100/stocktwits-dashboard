@@ -3637,8 +3637,6 @@
   let _bubbleFilters     = null;
   let _bubbleRefreshInt  = null;
   let _bubbleLastData    = null;
-  let _hoverTraceIdx     = null;   // index of the transient hover-trail trace in current layout
-  let _hoverMain         = [];     // shallow ref to main[] from last render3DChart call
 
   function _hidePrimaryViews() {
     const filterBar     = document.querySelector(".filter-bar");
@@ -3859,58 +3857,39 @@
       name: "Tickers",
     });
 
-    // Highlighted ticker — larger, brighter
+    // Shared trail helpers
+    const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
+    const ema = (arr, a) => arr.reduce((acc, v, i) => {
+      acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
+      return acc;
+    }, []);
+    const TRAIL_CS = [[0,"#1a1400"],[0.25,"#3d2e00"],[0.55,"#906d00"],[0.8,"#c9a80e"],[1,"#facc15"]];
+    const buildTrail = (tailPts, tip) => {
+      const all  = [...tailPts, tip];
+      const hist = all.slice(0, -1);
+      const t    = all[all.length - 1];
+      return {
+        x:     [...ema(hist.map(p => trailX(p)), 0.08), trailX(t)],
+        y:     [...ema(hist.map(p => p.y ?? 0),  0.15), t.y ?? 0],
+        z:     [...ema(hist.map(p => p.z ?? 0),  0.15), t.z ?? 0],
+        color: all.map((_, i) => i / Math.max(all.length - 1, 1)),
+      };
+    };
+
+    // Highlighted / solo ticker
     if (hilite.length) {
-      const h = hilite[0];
-      // Comet tail — show pre-market and after-hours data (04:00–20:00 ET) — matches backend gate.
-      const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
-      // Solo mode: no Z cap — show actual rel_vol so the trail reflects the real trajectory.
-      // (Z_CAP only matters for multi-bubble view where one outlier can warp the shared axis.)
-      const tailPts = (h.trail || []).filter(mktHours);
-      const minTailPts = 2;
-      // Use raw (uncapped) Z for the solo bubble so it sits at the tip of the trail
+      const h     = hilite[0];
       const soloZ = h.raw_z ?? h.z;
-      if (tailPts.length >= minTailPts) {
-        const tip = { x: h.x, density: h.density, y: h.y, z: soloZ };
-        const gradPts = [...tailPts, tip];
-        const nG = gradPts.length;
-        // EMA on all three axes so per-snapshot noise doesn't create a 3D spider-web.
-        // X (sentiment): α=0.08 — very heavy (oscillates most aggressively)
-        // Y (price_chg): α=0.15 — moderate (drifts but stays range-bound)
-        // Z (rel_vol):   α=0.15 — moderate (can spike but trends matter)
-        const ema = (arr, a) => arr.reduce((acc, v, i) => {
-          acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
-          return acc;
-        }, []);
-        // Apply EMA to historical points only; append raw tip so the trail
-        // terminates exactly at the bubble's current position without EMA lag.
-        const histPts = gradPts.slice(0, -1);
-        const tipPt   = gradPts[gradPts.length - 1];
-        const smoothX = [...ema(histPts.map(p => trailX(p)), 0.08), trailX(tipPt)];
-        const smoothY = [...ema(histPts.map(p => p.y),       0.15), tipPt.y];
-        const smoothZ = [...ema(histPts.map(p => p.z),       0.15), tipPt.z];
+      const tailPts = (h.trail || []).filter(mktHours);
+      if (tailPts.length >= 1) {
+        const { x: sx, y: sy, z: sz, color } = buildTrail(tailPts, { x: h.x, density: h.density, y: h.y, z: soloZ });
         traces.push({
           type: "scatter3d", mode: "lines",
-          x: smoothX,
-          y: smoothY,
-          z: smoothZ,
-          line: {
-            color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
-            colorscale: [
-              [0,    "#1a1400"],
-              [0.25, "#3d2e00"],
-              [0.55, "#906d00"],
-              [0.8,  "#c9a80e"],
-              [1,    "#facc15"],
-            ],
-            width: 6,
-          },
-          hoverinfo: "skip",
-          showlegend: false,
-          name: `${h.ticker} trail`,
+          x: sx, y: sy, z: sz,
+          line: { color, colorscale: TRAIL_CS, width: 6 },
+          hoverinfo: "skip", showlegend: false, name: `${h.ticker} trail`,
         });
       }
-      // Solo bubble — plotted at actual rel_vol (no cap) so it sits at the tail tip
       traces.push({
         type: "scatter3d", mode: "markers+text",
         x: [h.x], y: [h.y], z: [soloZ],
@@ -3924,15 +3903,29 @@
           symbol: ["circle"],
         },
         hovertemplate: `<b>${h.ticker} ★</b><br>${isDens ? "Density" : "Sentiment"}: ${h.x.toFixed ? h.x.toFixed(isDens ? 0 : 4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${soloZ}x<br>Density: ${h.density} msgs<extra></extra>`,
-        name: h.ticker,
-        showlegend: false,
+        name: h.ticker, showlegend: false,
       });
     }
 
-    // Store main array for hover handler; reset any previously-added hover trail
-    // (Plotly.react replaces all traces, so any addTraces index is now stale)
-    _hoverMain     = main;
-    _hoverTraceIdx = null;
+    // Pre-compute a hidden trail trace for every main-bubble ticker with snapshot data.
+    // Hover just restyles visible:true — no addTraces/deleteTraces, no race conditions.
+    const hoverTrailIdxMap = {};
+    if (!solo) {
+      main.forEach(d => {
+        const tailPts = (d.trail || []).filter(mktHours);
+        if (!tailPts.length) return;
+        const cappedTail = tailPts.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
+        const { x: sx, y: sy, z: sz, color } = buildTrail(cappedTail, { x: d.x, density: d.density, y: d.y, z: d.z });
+        hoverTrailIdxMap[d.ticker] = traces.length;
+        traces.push({
+          type: "scatter3d", mode: "lines",
+          x: sx, y: sy, z: sz,
+          visible: false,
+          line: { color, colorscale: TRAIL_CS, width: 6 },
+          hoverinfo: "skip", showlegend: false, name: `${d.ticker}_trail`,
+        });
+      });
+    }
 
     // Zero planes (sentiment mode: x spans [-1,1]; density mode: skip x zero-line)
     if (!isDens) traces.push({
@@ -3993,85 +3986,35 @@
       if (tk && tk.length <= 6) openPopup(tk, "", "", "");
     });
 
-    // Hover trail — show trail on plotly_hover, clear on mouseleave.
-    // plotly_unhover fires too aggressively in 3D (any pixel of cursor movement
-    // triggers it), so we ignore it and rely on mouseleave instead. This means
-    // the trail stays visible while exploring the chart and only clears when
-    // the cursor exits the chart area entirely.
+    // Hover trail — restyle pre-computed hidden traces; clear on mouseleave.
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_hover");
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_unhover");
 
-    // Remove any stale mouseleave listener from a previous render
     if (chartEl._hoverTrailLeave) {
       chartEl.removeEventListener("mouseleave", chartEl._hoverTrailLeave);
     }
 
-    const _removeHoverTrail = () => {
-      if (_hoverTraceIdx === null) return;
-      try { Plotly.deleteTraces("bubble-chart", _hoverTraceIdx); } catch(e) {}
-      _hoverTraceIdx = null;
+    let _visibleTrailTicker = null;
+    const _clearHoverTrail = () => {
+      if (_visibleTrailTicker !== null && hoverTrailIdxMap[_visibleTrailTicker] !== undefined) {
+        try { Plotly.restyle("bubble-chart", { visible: false }, [hoverTrailIdxMap[_visibleTrailTicker]]); } catch(e) {}
+        _visibleTrailTicker = null;
+      }
     };
 
-    chartEl._hoverTrailLeave = () => { try { _removeHoverTrail(); } catch(e) {} };
-    chartEl.addEventListener("mouseleave", chartEl._hoverTrailLeave);
+    chartEl._hoverTrailLeave = _clearHoverTrail;
+    chartEl.addEventListener("mouseleave", _clearHoverTrail);
 
     chartEl.on("plotly_hover", evt => {
       try {
         if (!evt.points || !evt.points.length) return;
-        const pt = evt.points[0];
-        console.log("[hover-trail] curveNumber:", pt.curveNumber, "pointIndex:", pt.pointIndex, "hoverMainLen:", _hoverMain.length);
-        // Only the main-bubbles trace (curveNumber 0); skip solo/trail/zero-plane traces
-        if (pt.curveNumber !== 0 || !_hoverMain.length) return;
-        const hov = _hoverMain[pt.pointIndex];
-        if (!hov) return;
-
-        const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
-        const rawTail  = (hov.trail || []).filter(mktHours);
-        console.log("[hover-trail] ticker:", hov.ticker, "trail pts:", rawTail.length);
-        if (!rawTail.length) return;
-
-        // Replace previous trail (moving between bubbles swaps it, no flicker)
-        _removeHoverTrail();
-
-        const cappedTail = rawTail.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
-        const tip     = { x: hov.x, density: hov.density, y: hov.y, z: hov.z };
-        const gradPts = [...cappedTail, tip];
-        const nG      = gradPts.length;
-
-        const hEma = (arr, a) => arr.reduce((acc, v, i) => {
-          acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
-          return acc;
-        }, []);
-        // Apply EMA to historical points only; raw tip anchors trail to bubble.
-        const hHistPts = gradPts.slice(0, -1);
-        const hTipPt   = gradPts[gradPts.length - 1];
-        const smoothX = [...hEma(hHistPts.map(p => trailX(p)), 0.08), trailX(hTipPt)];
-        const smoothY = [...hEma(hHistPts.map(p => p.y ?? 0),  0.15), hTipPt.y ?? 0];
-        const smoothZ = [...hEma(hHistPts.map(p => p.z ?? 0),  0.15), hTipPt.z ?? 0];
-
-        // Capture index synchronously — Plotly.addTraces updates gd.data immediately
-        const gd      = document.getElementById("bubble-chart");
-        const nextIdx = gd && gd.data ? gd.data.length : null;
-
-        Plotly.addTraces("bubble-chart", {
-          type: "scatter3d", mode: "lines",
-          x: smoothX, y: smoothY, z: smoothZ,
-          line: {
-            color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
-            colorscale: [
-              [0,    "#1a1400"],
-              [0.25, "#3d2e00"],
-              [0.55, "#906d00"],
-              [0.8,  "#c9a80e"],
-              [1,    "#facc15"],
-            ],
-            width: 6,
-          },
-          hoverinfo: "skip",
-          showlegend: false,
-          name: `${hov.ticker}_htail`,
-        });
-        if (nextIdx !== null) _hoverTraceIdx = nextIdx;
+        const pt  = evt.points[0];
+        const hov = main[pt.pointIndex];
+        if (pt.curveNumber !== 0 || !hov || hoverTrailIdxMap[hov.ticker] === undefined) return;
+        if (_visibleTrailTicker === hov.ticker) return;
+        _clearHoverTrail();
+        Plotly.restyle("bubble-chart", { visible: true }, [hoverTrailIdxMap[hov.ticker]]);
+        _visibleTrailTicker = hov.ticker;
       } catch(e) { console.error("[hover-trail]", e); }
     });
   }
