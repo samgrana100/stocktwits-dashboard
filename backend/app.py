@@ -1511,6 +1511,21 @@ def get_bubble_screener():
             "trail":     trail,
         })
 
+    # Persist snapshots so every ticker visible in the bubble map accumulates
+    # trail history, not just those in the main Finviz screener.
+    # Runs only on real fetches (cache hits return early above).
+    now_utc = datetime.now(timezone.utc)
+    snaps = [
+        {"ticker": item["ticker"], "ts": now_utc,
+         "price_chg": item["y"], "rel_vol": max(0.0, item["z"]), "volume": item["size"]}
+        for item in result
+    ]
+    if snaps:
+        try:
+            screener_snapshots.insert_many(snaps, ordered=False)
+        except Exception:
+            pass
+
     with _bubble_screener_lock:
         _bubble_screener_cache[cache_key] = {"data": result, "ts": time.time()}
 
