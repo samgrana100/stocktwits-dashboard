@@ -4041,15 +4041,27 @@
       if (tk && tk.length <= 6) openPopup(tk, "", "", "");
     });
 
-    // Hover trail — dynamically added/removed so no placeholder contaminates Plotly.react
+    // Hover trail — show trail on plotly_hover, clear on mouseleave.
+    // plotly_unhover fires too aggressively in 3D (any pixel of cursor movement
+    // triggers it), so we ignore it and rely on mouseleave instead. This means
+    // the trail stays visible while exploring the chart and only clears when
+    // the cursor exits the chart area entirely.
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_hover");
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_unhover");
+
+    // Remove any stale mouseleave listener from a previous render
+    if (chartEl._hoverTrailLeave) {
+      chartEl.removeEventListener("mouseleave", chartEl._hoverTrailLeave);
+    }
 
     const _removeHoverTrail = () => {
       if (_hoverTraceIdx === null) return;
       try { Plotly.deleteTraces("bubble-chart", _hoverTraceIdx); } catch(e) {}
       _hoverTraceIdx = null;
     };
+
+    chartEl._hoverTrailLeave = () => { try { _removeHoverTrail(); } catch(e) {} };
+    chartEl.addEventListener("mouseleave", chartEl._hoverTrailLeave);
 
     chartEl.on("plotly_hover", evt => {
       try {
@@ -4064,26 +4076,24 @@
         const rawTail  = (hov.trail || []).filter(mktHours);
         if (rawTail.length < 2) return;
 
-        // Remove previous hover trail before adding new one
+        // Replace previous trail (moving between bubbles swaps it, no flicker)
         _removeHoverTrail();
 
         const cappedTail = rawTail.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
-        const tip      = { x: hov.x, density: hov.density, y: hov.y, z: hov.z };
-        const gradPts  = [...cappedTail, tip];
-        const nG       = gradPts.length;
+        const tip     = { x: hov.x, density: hov.density, y: hov.y, z: hov.z };
+        const gradPts = [...cappedTail, tip];
+        const nG      = gradPts.length;
 
         const hEma = (arr, a) => arr.reduce((acc, v, i) => {
           acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
           return acc;
         }, []);
         const smoothX = hEma(gradPts.map(p => trailX(p)), 0.08);
-        const smoothY = hEma(gradPts.map(p => p.y),       0.15);
-        const smoothZ = hEma(gradPts.map(p => p.z),       0.15);
+        const smoothY = hEma(gradPts.map(p => p.y ?? 0),  0.15);
+        const smoothZ = hEma(gradPts.map(p => p.z ?? 0),  0.15);
 
-        const gd = document.getElementById("bubble-chart");
-        // Predict the new trace index synchronously — Plotly updates gd.data
-        // immediately on addTraces, before the Promise resolves. Capturing it
-        // here prevents a race where plotly_unhover fires before .then() runs.
+        // Capture index synchronously — Plotly.addTraces updates gd.data immediately
+        const gd      = document.getElementById("bubble-chart");
         const nextIdx = gd && gd.data ? gd.data.length : null;
 
         Plotly.addTraces("bubble-chart", {
@@ -4101,8 +4111,6 @@
         _hoverTraceIdx = nextIdx;
       } catch(e) { console.error("[hover-trail]", e); }
     });
-
-    chartEl.on("plotly_unhover", () => { try { _removeHoverTrail(); } catch(e) {} });
   }
 
   async function clearAutoTrades() {
