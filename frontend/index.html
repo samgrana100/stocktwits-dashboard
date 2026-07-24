@@ -3880,15 +3880,26 @@
       z: main.map(d => d.z),
       text: main.map(d => d.ticker),
       textposition: "top center",
-      textfont: { size: 9, color: "rgba(200,200,220,0.8)" },
+      textfont: {
+        size:  9,
+        // No-sentiment tickers dimmed so they're visually distinct
+        color: main.map(d => d.no_sentiment ? "rgba(160,160,180,0.5)" : "rgba(200,200,220,0.8)"),
+      },
       marker: {
         size:  main.map(d => sizeScale(d.size)),
-        color: main.map(d => mkColor(d.x, 0.75)),
+        // No-sentiment tickers: neutral grey so they don't falsely read as bullish/bearish
+        color: main.map(d => d.no_sentiment ? "rgba(110,115,140,0.45)" : mkColor(d.x, 0.75)),
         line:  { width: 1, color: "rgba(255,255,255,0.15)" },
       },
-      hovertemplate: main.map(d =>
-        `<b>${d.ticker}</b><br>${isDens ? "Density" : "Sentiment"}: ${d.x.toFixed ? d.x.toFixed(isDens ? 0 : 4) : d.x}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.raw_z}x${d.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${d.density} msgs<br>Composite: ${d.composite}<extra></extra>`
-      ),
+      hovertemplate: main.map(d => {
+        const ns = d.no_sentiment;
+        const sentLabel = isDens ? "Density" : "Sentiment";
+        const sentVal   = ns ? "N/A" : (d.x.toFixed ? d.x.toFixed(isDens ? 0 : 4) : d.x);
+        const densVal   = ns ? "N/A" : `${d.density} msgs`;
+        const compVal   = ns ? "N/A" : d.composite;
+        const noSentNote = ns ? "<br><i style='color:#888'>No Stocktwits data</i>" : "";
+        return `<b>${d.ticker}</b><br>${sentLabel}: ${sentVal}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.raw_z}x${d.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${densVal}<br>Composite: ${compVal}${noSentNote}<extra></extra>`;
+      }),
       name: "Tickers",
     });
 

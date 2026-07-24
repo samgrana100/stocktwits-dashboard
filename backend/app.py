@@ -1565,26 +1565,33 @@ def get_3d_screener():
         sent_map[tk][bkt] = round(d["avg_sent"], 4)
         dens_map[tk][bkt] = d["count"]
 
+    # Union of snapshot tickers and sentiment tickers, both intersected with
+    # current Finviz data. This lets tickers with price/vol history but no
+    # Stocktwits messages still appear with their price trail.
+    scores_map  = {s["ticker"]: s for s in scores}
+    all_tickers = (set(trail_map.keys()) | set(scores_map.keys())) & set(finviz.keys())
+
     result = []
-    for s in scores:
-        ticker = s["ticker"]
-        if ticker not in finviz:
-            continue
+    for ticker in all_tickers:
         fv        = finviz[ticker]
-        sentiment = s.get("avg_sentiment_score")
         price_chg = _pf(fv.get("change"))
         rel_vol   = _pf(fv.get("rel_volume"))
         volume    = _pf(fv.get("volume"))
-        if any(v is None for v in [sentiment, price_chg, rel_vol, volume]):
+        if any(v is None for v in [price_chg, rel_vol, volume]):
             continue
 
-        # Build trail: merge screener snapshots with nearest sentiment bucket
+        s            = scores_map.get(ticker)
+        sentiment    = s.get("avg_sentiment_score") if s else None
+        no_sentiment = sentiment is None
+        sentiment    = sentiment or 0.0
+
+        # Build trail: for no-sentiment tickers x=0 throughout (no Stocktwits data)
         trail = []
         tk_sent = sent_map.get(ticker, {})
         tk_dens = dens_map.get(ticker, {})
         for snap in trail_map.get(ticker, []):
             snap_bucket = today_start.strftime("%Y-%m-%dT") + snap["ts"]
-            sent_val    = tk_sent.get(snap_bucket, sentiment)
+            sent_val    = 0.0 if no_sentiment else tk_sent.get(snap_bucket, sentiment)
             dens_val    = tk_dens.get(snap_bucket, 0)
             trail.append({
                 "x":       sent_val,
@@ -1595,17 +1602,18 @@ def get_3d_screener():
             })
 
         result.append({
-            "ticker":    ticker,
-            "x":         round(sentiment, 4),
-            "y":         price_chg,
-            "z":         max(0.0, rel_vol),
-            "size":      volume,
-            "density":   s.get("total_messages", 0),
-            "composite": round(s.get("avg_composite_score") or 0, 3),
-            "company":   fv.get("company", "--"),
-            "price":     fv.get("price", "--"),
-            "change":    price_chg if price_chg is not None else fv.get("change", "--"),
-            "trail":     trail,
+            "ticker":       ticker,
+            "x":            round(sentiment, 4),
+            "y":            price_chg,
+            "z":            max(0.0, rel_vol),
+            "size":         volume,
+            "density":      s.get("total_messages", 0) if s else 0,
+            "composite":    round(s.get("avg_composite_score") or 0, 3) if s else 0,
+            "company":      fv.get("company", "--"),
+            "price":        fv.get("price", "--"),
+            "change":       price_chg,
+            "no_sentiment": no_sentiment,
+            "trail":        trail,
         })
 
     return jsonify(result)
