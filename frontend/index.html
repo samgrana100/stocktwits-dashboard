@@ -3966,18 +3966,10 @@
       });
     }
 
-    // Transient hover trail — empty until plotly_hover fires; Plotly.restyle fills it.
-    // Must use a scalar color (not an empty array) so Plotly doesn't throw on init.
-    _hoverMain = main;
-    traces.push({
-      type: "scatter3d", mode: "lines",
-      x: [], y: [], z: [],
-      line: { color: "#050508", width: 4 },
-      hoverinfo: "skip",
-      showlegend: false,
-      name: "__hover_trail__",
-    });
-    _hoverTraceIdx = traces.length - 1;
+    // Store main array for hover handler; reset any previously-added hover trail
+    // (Plotly.react replaces all traces, so any addTraces index is now stale)
+    _hoverMain     = main;
+    _hoverTraceIdx = null;
 
     // Zero planes (sentiment mode: x spans [-1,1]; density mode: skip x zero-line)
     if (!isDens) traces.push({
@@ -4038,50 +4030,64 @@
       if (tk && tk.length <= 6) openPopup(tk, "", "", "");
     });
 
-    // Hover trail — show a ticker's path when mousing over a bubble in multi-bubble mode
+    // Hover trail — dynamically added/removed so no placeholder contaminates Plotly.react
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_hover");
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_unhover");
 
-    chartEl.on("plotly_hover", evt => {
-      if (!evt.points || !evt.points.length || _hoverTraceIdx === null) return;
-      const pt = evt.points[0];
-      // Only the main-bubbles trace (index 0) in multi mode; skip solo, trail, and zero-plane traces
-      if (pt.curveNumber !== 0 || !_hoverMain.length) return;
-      const hov = _hoverMain[pt.pointIndex];
-      if (!hov) return;
-
-      const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
-      const rawTail  = (hov.trail || []).filter(mktHours);
-      if (rawTail.length < 2) return;
-
-      // Cap Z for multi-bubble view so one outlier can't warp the shared axis
-      const cappedTail = rawTail.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
-      const tip = { x: hov.x, density: hov.density, y: hov.y, z: hov.z };
-      const gradPts = [...cappedTail, tip];
-      const nG = gradPts.length;
-
-      // EMA on all three axes — same smoothing as solo trail
-      const hEma = (arr, a) => arr.reduce((acc, v, i) => {
-        acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
-        return acc;
-      }, []);
-      const smoothX = hEma(gradPts.map(p => trailX(p)), 0.08);
-      const smoothY = hEma(gradPts.map(p => p.y),       0.15);
-      const smoothZ = hEma(gradPts.map(p => p.z),       0.15);
-
-      Plotly.restyle("bubble-chart", {
-        x: [smoothX],
-        y: [smoothY],
-        z: [smoothZ],
-        'line.color': [gradPts.map((_, i) => i / Math.max(nG - 1, 1))],
-        'line.colorscale': [[[0,"#050508"],[0.3,"#14142a"],[0.6,"#3c3c9a"],[0.8,"#7878e8"],[1,"#c8c8ff"]]],
-      }, [_hoverTraceIdx]);
-    });
-
-    chartEl.on("plotly_unhover", () => {
+    const _removeHoverTrail = () => {
       if (_hoverTraceIdx === null) return;
-      Plotly.restyle("bubble-chart", { x: [[]], y: [[]], z: [[]] }, [_hoverTraceIdx]);
+      try { Plotly.deleteTraces("bubble-chart", _hoverTraceIdx); } catch(e) {}
+      _hoverTraceIdx = null;
+    };
+
+    chartEl.on("plotly_hover", evt => {
+      try {
+        if (!evt.points || !evt.points.length) return;
+        const pt = evt.points[0];
+        // Only the main-bubbles trace (curveNumber 0); skip solo/trail/zero-plane traces
+        if (pt.curveNumber !== 0 || !_hoverMain.length) return;
+        const hov = _hoverMain[pt.pointIndex];
+        if (!hov) return;
+
+        const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
+        const rawTail  = (hov.trail || []).filter(mktHours);
+        if (rawTail.length < 2) return;
+
+        // Remove previous hover trail before adding new one
+        _removeHoverTrail();
+
+        const cappedTail = rawTail.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
+        const tip      = { x: hov.x, density: hov.density, y: hov.y, z: hov.z };
+        const gradPts  = [...cappedTail, tip];
+        const nG       = gradPts.length;
+
+        const hEma = (arr, a) => arr.reduce((acc, v, i) => {
+          acc.push(i === 0 ? v : a * v + (1 - a) * acc[i - 1]);
+          return acc;
+        }, []);
+        const smoothX = hEma(gradPts.map(p => trailX(p)), 0.08);
+        const smoothY = hEma(gradPts.map(p => p.y),       0.15);
+        const smoothZ = hEma(gradPts.map(p => p.z),       0.15);
+
+        Plotly.addTraces("bubble-chart", {
+          type: "scatter3d", mode: "lines",
+          x: smoothX, y: smoothY, z: smoothZ,
+          line: {
+            color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
+            colorscale: [[0,"#050508"],[0.3,"#14142a"],[0.6,"#3c3c9a"],[0.8,"#7878e8"],[1,"#c8c8ff"]],
+            width: 4,
+          },
+          hoverinfo: "skip",
+          showlegend: false,
+          name: `${hov.ticker}_htail`,
+        }).then(() => {
+          const gd = document.getElementById("bubble-chart");
+          _hoverTraceIdx = gd && gd.data ? gd.data.length - 1 : null;
+        });
+      } catch(e) {}
     });
+
+    chartEl.on("plotly_unhover", () => { try { _removeHoverTrail(); } catch(e) {} });
   }
 
   async function clearAutoTrades() {
