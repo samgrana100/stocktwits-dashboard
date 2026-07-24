@@ -4011,8 +4011,8 @@
       try {
         if (!evt.points || !evt.points.length) return;
         const pt  = evt.points[0];
-        const hov = main[pt.pointIndex];
-        console.log(`[hover] curveNumber=${pt.curveNumber} pointIndex=${pt.pointIndex} ticker=${hov?.ticker} inMap=${hoverTrailIdxMap[hov?.ticker]}`);
+        const hov = main[pt.pointNumber ?? pt.pointIndex];
+        console.log(`[hover] curveNumber=${pt.curveNumber} pointNumber=${pt.pointNumber} ticker=${hov?.ticker} inMap=${hoverTrailIdxMap[hov?.ticker]}`);
         if (pt.curveNumber !== 0 || !hov || hoverTrailIdxMap[hov.ticker] === undefined) return;
         if (_visibleTrailTicker === hov.ticker) return;
         _clearHoverTrail();
