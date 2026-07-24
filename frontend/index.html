@@ -4019,6 +4019,7 @@
       try {
         if (!evt.points || !evt.points.length) return;
         const pt = evt.points[0];
+        console.log("[hover-trail] curveNumber:", pt.curveNumber, "pointIndex:", pt.pointIndex, "hoverMainLen:", _hoverMain.length);
         // Only the main-bubbles trace (curveNumber 0); skip solo/trail/zero-plane traces
         if (pt.curveNumber !== 0 || !_hoverMain.length) return;
         const hov = _hoverMain[pt.pointIndex];
@@ -4026,6 +4027,7 @@
 
         const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
         const rawTail  = (hov.trail || []).filter(mktHours);
+        console.log("[hover-trail] ticker:", hov.ticker, "rawTail:", rawTail.length);
         if (rawTail.length < 2) return;
 
         // Replace previous trail (moving between bubbles swaps it, no flicker)
@@ -4056,14 +4058,20 @@
           x: smoothX, y: smoothY, z: smoothZ,
           line: {
             color: gradPts.map((_, i) => i / Math.max(nG - 1, 1)),
-            colorscale: [[0,"#050508"],[0.3,"#14142a"],[0.6,"#3c3c9a"],[0.8,"#7878e8"],[1,"#c8c8ff"]],
-            width: 4,
+            colorscale: [
+              [0,    "#1a1400"],
+              [0.25, "#3d2e00"],
+              [0.55, "#906d00"],
+              [0.8,  "#c9a80e"],
+              [1,    "#facc15"],
+            ],
+            width: 6,
           },
           hoverinfo: "skip",
           showlegend: false,
           name: `${hov.ticker}_htail`,
         });
-        _hoverTraceIdx = nextIdx;
+        if (nextIdx !== null) _hoverTraceIdx = nextIdx;
       } catch(e) { console.error("[hover-trail]", e); }
     });
   }
