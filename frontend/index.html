@@ -1291,14 +1291,6 @@
     </div>
   </div>
   <div id="bubble-chart" style="width:100%;height:calc(100vh - 185px);border-radius:8px;overflow:hidden"></div>
-  <div id="bubble-slider-row" style="display:none;align-items:center;gap:10px;margin-top:10px;padding:0 4px">
-    <span style="font-size:10px;color:var(--text-dimmed);white-space:nowrap" id="bubble-slider-start"></span>
-    <input id="bubble-time-slider" type="range" min="0" value="0"
-      style="flex:1;accent-color:var(--blue);cursor:pointer"
-      oninput="onBubbleSlider(this.value)">
-    <span style="font-size:10px;color:var(--text-dimmed);white-space:nowrap" id="bubble-slider-end">Live</span>
-    <span style="font-size:10px;font-weight:700;color:var(--blue);min-width:36px;text-align:right" id="bubble-slider-label"></span>
-  </div>
 </div>
 
 <div id="guide-view" class="guide-view">
@@ -3644,9 +3636,7 @@
   let _bubbleXMode       = "sentiment"; // "sentiment" | "density"
   let _bubbleFilters     = null;
   let _bubbleRefreshInt  = null;
-  let _bubbleLastData    = null;   // cached API response for slider scrubbing
-  let _bubbleTimes       = [];     // sorted unique time strings from all trails
-  let _bubbleTimeIdx     = null;   // null = live, number = index into _bubbleTimes
+  let _bubbleLastData    = null;
   let _hoverTraceIdx     = null;   // index of the transient hover-trail trace in current layout
   let _hoverMain         = [];     // shallow ref to main[] from last render3DChart call
 
@@ -3697,8 +3687,7 @@
       ? "X = Msg Density (1h) · Y = Price Change · Z = Rel Volume · Size = Volume"
       : "X = Sentiment · Y = Price Change · Z = Rel Volume · Size = Volume";
     if (_bubbleLastData) {
-      const atTime = _bubbleTimeIdx !== null ? _bubbleTimes[_bubbleTimeIdx] : null;
-      render3DChart(_bubbleLastData, _bubbleHighlight, _bubbleSolo, atTime);
+      render3DChart(_bubbleLastData, _bubbleHighlight, _bubbleSolo);
     }
   }
 
@@ -3747,31 +3736,13 @@
       }
       _bubbleLastData = data;
 
-      // Build sorted unique time index from all ticker trails
-      const timeSet = new Set();
-      data.forEach(d => (d.trail || []).forEach(p => timeSet.add(p.t)));
-      _bubbleTimes = Array.from(timeSet).sort();
-
-      const slider     = document.getElementById("bubble-time-slider");
-      const sliderRow  = document.getElementById("bubble-slider-row");
-      if (_bubbleTimes.length > 1) {
-        slider.max   = _bubbleTimes.length;   // last step = live
-        slider.value = _bubbleTimes.length;   // default: live
-        _bubbleTimeIdx = null;
-        document.getElementById("bubble-slider-start").textContent = _bubbleTimes[0];
-        document.getElementById("bubble-slider-label").textContent = "Live";
-        sliderRow.style.display = "flex";
-      } else {
-        sliderRow.style.display = "none";
-      }
-
       // If the highlighted ticker is no longer in the screener data, fall back to
       // multi-bubble rather than silently leaving the old solo chart on screen.
       if (_bubbleHighlight && !data.some(d => d.ticker === _bubbleHighlight)) {
         _bubbleHighlight = null;
         _bubbleSolo      = false;
       }
-      render3DChart(data, _bubbleHighlight, _bubbleSolo, null);
+      render3DChart(data, _bubbleHighlight, _bubbleSolo);
       const _countLabel = _bubbleSolo && _bubbleHighlight
         ? `Solo: ${_bubbleHighlight}`
         : `${data.length} tickers`;
@@ -3780,14 +3751,6 @@
       document.getElementById("bubble-status").textContent = "Error loading data";
       console.error("[bubble-map]", e);
     }
-  }
-
-  function onBubbleSlider(val) {
-    val = parseInt(val);
-    const isLive = val >= _bubbleTimes.length;
-    _bubbleTimeIdx = isLive ? null : val;
-    document.getElementById("bubble-slider-label").textContent = isLive ? "Live" : _bubbleTimes[val];
-    if (_bubbleLastData) render3DChart(_bubbleLastData, _bubbleHighlight, _bubbleSolo, isLive ? null : _bubbleTimes[val]);
   }
 
   function openBubbleFilterModal() {
@@ -3816,7 +3779,7 @@
     }
   }
 
-  function render3DChart(data, highlight, solo, atTime) {
+  function render3DChart(data, highlight, solo) {
     if (!data || !data.length) return;
 
     const isDens  = _bubbleXMode === "density";
@@ -3826,15 +3789,8 @@
     const getX   = d  => isDens ? (d.density || 0) : d.x;
     const trailX = p  => isDens ? (p.density || 0) : p.x;
 
-    // Resolve each ticker's position: historical if atTime is set, else current
     function resolvePos(d) {
-      if (!atTime) return { x: getX(d), y: d.y, z: Math.min(d.z, Z_CAP) };
-      const trail = d.trail || [];
-      // Latest trail point whose t <= atTime
-      let best = null;
-      for (const p of trail) { if (p.t <= atTime) best = p; }
-      if (!best) return null;   // ticker had no data yet at this time
-      return { x: trailX(best), y: best.y, z: Math.min(best.z, Z_CAP) };
+      return { x: getX(d), y: d.y, z: Math.min(d.z, Z_CAP) };
     }
 
     // In solo mode show only the highlighted ticker
@@ -3906,19 +3862,11 @@
     // Highlighted ticker — larger, brighter
     if (hilite.length) {
       const h = hilite[0];
-      // Comet tail:
-      // - In slider mode (atTime set): show only points up to current time so the
-      //   bubble appears to slide along its path as the user scrubs
-      // - In live mode: show full trail but require 4 distinct positions so sparse
-      //   backfill data doesn't render as random prongs
-      // Show pre-market and after-hours data (04:00–20:00 ET) — matches backend gate.
+      // Comet tail — show pre-market and after-hours data (04:00–20:00 ET) — matches backend gate.
       const mktHours = p => p.t >= "04:00" && p.t <= "20:00";
       // Solo mode: no Z cap — show actual rel_vol so the trail reflects the real trajectory.
       // (Z_CAP only matters for multi-bubble view where one outlier can warp the shared axis.)
-      const fullTrail = (h.trail || []).filter(mktHours);
-      const tailPts = atTime !== null && atTime !== undefined
-        ? fullTrail.filter(p => p.t <= atTime)
-        : fullTrail;
+      const tailPts = (h.trail || []).filter(mktHours);
       const minTailPts = 2;
       // Use raw (uncapped) Z for the solo bubble so it sits at the tip of the trail
       const soloZ = h.raw_z ?? h.z;
