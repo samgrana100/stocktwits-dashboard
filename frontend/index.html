@@ -3909,11 +3909,16 @@
 
     // Pre-compute a hidden trail trace for every main-bubble ticker with snapshot data.
     // Hover just restyles visible:true — no addTraces/deleteTraces, no race conditions.
+    const MAX_TRAIL_PTS = 50;
+    const downsample = (arr) => {
+      if (arr.length <= MAX_TRAIL_PTS) return arr;
+      const step = (arr.length - 1) / (MAX_TRAIL_PTS - 1);
+      return Array.from({length: MAX_TRAIL_PTS}, (_, i) => arr[Math.round(i * step)]);
+    };
     const hoverTrailIdxMap = {};
     if (!solo) {
       main.forEach(d => {
-        const tailPts = (d.trail || []).filter(mktHours);
-        console.log(`[trail] ${d.ticker}: trail.length=${(d.trail||[]).length} tailPts.length=${tailPts.length}`);
+        const tailPts = downsample((d.trail || []).filter(mktHours));
         if (!tailPts.length) return;
         const cappedTail = tailPts.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
         const { x: sx, y: sy, z: sz, color } = buildTrail(cappedTail, { x: d.x, density: d.density, y: d.y, z: d.z });
@@ -3926,7 +3931,6 @@
           hoverinfo: "skip", showlegend: false, name: `${d.ticker}_trail`,
         });
       });
-      console.log(`[trail] hoverTrailIdxMap keys:`, Object.keys(hoverTrailIdxMap));
     }
 
     // Zero planes (sentiment mode: x spans [-1,1]; density mode: skip x zero-line)
@@ -3995,6 +3999,10 @@
     if (chartEl._hoverTrailLeave) {
       chartEl.removeEventListener("mouseleave", chartEl._hoverTrailLeave);
     }
+    if (chartEl._hoverTrailClearTimer) {
+      clearTimeout(chartEl._hoverTrailClearTimer);
+      chartEl._hoverTrailClearTimer = null;
+    }
 
     let _visibleTrailTicker = null;
     const _clearHoverTrail = () => {
@@ -4003,20 +4011,32 @@
         _visibleTrailTicker = null;
       }
     };
+    const _debouncedClear = () => {
+      chartEl._hoverTrailClearTimer = setTimeout(_clearHoverTrail, 300);
+    };
 
-    chartEl._hoverTrailLeave = _clearHoverTrail;
-    chartEl.addEventListener("mouseleave", _clearHoverTrail);
+    chartEl._hoverTrailLeave = _debouncedClear;
+    chartEl.addEventListener("mouseleave", _debouncedClear);
 
     chartEl.on("plotly_hover", evt => {
+      if (chartEl._hoverTrailClearTimer) {
+        clearTimeout(chartEl._hoverTrailClearTimer);
+        chartEl._hoverTrailClearTimer = null;
+      }
       try {
         if (!evt.points || !evt.points.length) return;
         const pt  = evt.points[0];
         const hov = main[pt.pointNumber ?? pt.pointIndex];
-        console.log(`[hover] curveNumber=${pt.curveNumber} pointNumber=${pt.pointNumber} ticker=${hov?.ticker} inMap=${hoverTrailIdxMap[hov?.ticker]}`);
         if (pt.curveNumber !== 0 || !hov || hoverTrailIdxMap[hov.ticker] === undefined) return;
         if (_visibleTrailTicker === hov.ticker) return;
-        _clearHoverTrail();
-        Plotly.restyle("bubble-chart", { visible: true }, [hoverTrailIdxMap[hov.ticker]]);
+        const newIdx  = hoverTrailIdxMap[hov.ticker];
+        const prevIdx = _visibleTrailTicker !== null ? hoverTrailIdxMap[_visibleTrailTicker] : null;
+        // Batch hide+show into one restyle so Plotly only redraws once
+        if (prevIdx !== null && prevIdx !== undefined) {
+          Plotly.restyle("bubble-chart", { visible: [false, true] }, [prevIdx, newIdx]);
+        } else {
+          Plotly.restyle("bubble-chart", { visible: true }, [newIdx]);
+        }
         _visibleTrailTicker = hov.ticker;
       } catch(e) { console.error("[hover-trail]", e); }
     });
