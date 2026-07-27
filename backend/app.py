@@ -1846,6 +1846,18 @@ def clear_auto_trades():
     return jsonify({"cleared": True})
 
 
+@app.route("/api/auto-trades/clear-active", methods=["POST"])
+def clear_active_auto_trades():
+    auto_trades.delete_many({})
+    return jsonify({"cleared": True})
+
+
+@app.route("/api/auto-trades/clear-history", methods=["POST"])
+def clear_auto_trade_history():
+    completed_auto_trades.delete_many({})
+    return jsonify({"cleared": True})
+
+
 @app.route("/api/auto-trade/save", methods=["POST"])
 def toggle_auto_trade_saved():
     data      = request.get_json(force=True) or {}
