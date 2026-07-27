@@ -3780,6 +3780,26 @@
   function render3DChart(data, highlight, solo) {
     if (!data || !data.length) return;
 
+    // Tear down ALL event handlers before touching Plotly so stale closures
+    // can never fire against a new chart state and cause infinite loops.
+    const chartEl = document.getElementById("bubble-chart");
+    chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_hover");
+    chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_unhover");
+    chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_click");
+    if (chartEl._hoverTrailLeave) {
+      chartEl.removeEventListener("mouseleave", chartEl._hoverTrailLeave);
+      chartEl._hoverTrailLeave = null;
+    }
+    if (chartEl._hoverTrailClearTimer) {
+      clearTimeout(chartEl._hoverTrailClearTimer);
+      chartEl._hoverTrailClearTimer = null;
+    }
+    // react() will wipe any addTraces-injected trail — reset index so we don't
+    // try to restyle/delete a trace that no longer exists.
+    chartEl._trailIdx    = null;
+    chartEl._trailTicker = null;
+    chartEl._trailBusy   = false;
+
     const isDens  = _bubbleXMode === "density";
     const Z_CAP   = 20; // cap rel_vol for display so trail and bubble stay on the same scale
 
@@ -3974,7 +3994,6 @@
     Plotly.react("bubble-chart", traces, layout, config);
 
     // Click bubble → open popup
-    const chartEl = document.getElementById("bubble-chart");
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_click");
     chartEl.on("plotly_click", evt => {
       if (!evt.points || !evt.points.length) return;
@@ -3986,22 +4005,9 @@
       if (tk && tk.length <= 6) openPopup(tk, "", "", "");
     });
 
-    // Hover trail — single live trace added/updated/removed on demand.
-    // No hidden traces in the graph, so Plotly.react() on auto-refresh stays fast.
-    chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_hover");
-    chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_unhover");
-
-    if (chartEl._hoverTrailLeave) {
-      chartEl.removeEventListener("mouseleave", chartEl._hoverTrailLeave);
-    }
-    if (chartEl._hoverTrailClearTimer) {
-      clearTimeout(chartEl._hoverTrailClearTimer);
-      chartEl._hoverTrailClearTimer = null;
-    }
-
-    let _trailTicker = null;
-    let _trailIdx    = null;
-
+    // Hover trail — single live trace added/deleted on demand.
+    // State lives on chartEl so auto-refresh (which calls render3DChart again)
+    // resets it at the top before Plotly.react(), preventing stale-index loops.
     const _makeTrace = (td, ticker) => ({
       type: "scatter3d", mode: "lines",
       x: td.x, y: td.y, z: td.z,
@@ -4010,32 +4016,24 @@
     });
 
     const _hideTrail = () => {
-      if (_trailIdx !== null) {
-        try { Plotly.deleteTraces("bubble-chart", _trailIdx); } catch(e) {}
-        _trailIdx    = null;
-        _trailTicker = null;
+      if (chartEl._trailIdx !== null) {
+        try { Plotly.deleteTraces("bubble-chart", chartEl._trailIdx); } catch(e) {}
+        chartEl._trailIdx    = null;
+        chartEl._trailTicker = null;
       }
     };
 
     const _showTrail = (ticker) => {
-      const td = trailCache[ticker];
-      if (!td || _trailTicker === ticker) return;
-      if (_trailIdx !== null) {
-        // Reuse the existing trace slot — update data in place (one render pass)
-        try {
-          Plotly.restyle("bubble-chart",
-            { x: [td.x], y: [td.y], z: [td.z], 'line.color': [td.color], name: `${ticker}_trail` },
-            [_trailIdx]
-          );
-          _trailTicker = ticker;
-        } catch(e) { _hideTrail(); }
-      } else {
-        try {
-          Plotly.addTraces("bubble-chart", [_makeTrace(td, ticker)]);
-          _trailIdx    = document.getElementById("bubble-chart").data.length - 1;
-          _trailTicker = ticker;
-        } catch(e) {}
-      }
+      if (chartEl._trailBusy || !trailCache[ticker] || chartEl._trailTicker === ticker) return;
+      chartEl._trailBusy = true;
+      try {
+        const td = trailCache[ticker];
+        _hideTrail();
+        Plotly.addTraces("bubble-chart", [_makeTrace(td, ticker)]);
+        chartEl._trailIdx    = chartEl.data.length - 1;
+        chartEl._trailTicker = ticker;
+      } catch(e) { chartEl._trailIdx = null; chartEl._trailTicker = null; }
+      chartEl._trailBusy = false;
     };
 
     const _debouncedHide = () => {
