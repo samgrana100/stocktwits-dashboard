@@ -3855,9 +3855,8 @@
       text: main.map(d => d.ticker),
       textposition: "top center",
       textfont: {
-        size:  9,
-        // No-sentiment tickers dimmed so they're visually distinct
-        color: main.map(d => d.no_sentiment ? "rgba(160,160,180,0.5)" : "rgba(200,200,220,0.8)"),
+        size:  12,
+        color: main.map(d => d.no_sentiment ? "rgba(160,160,180,0.6)" : "rgba(255,255,255,1.0)"),
       },
       marker: {
         size:  main.map(d => sizeScale(d.size)),
