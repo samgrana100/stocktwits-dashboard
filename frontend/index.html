@@ -362,6 +362,8 @@
     .corr-ctrl-label { font-size: 11px; color: var(--text-dimmed); display: flex; align-items: center; gap: 5px; }
     .corr-ctrl-label input[type=number] { width: 46px; padding: 3px 6px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-primary); font-size: 11px; text-align: center; outline: none; }
     .corr-ctrl-label input:focus { border-color: var(--blue); }
+    .corr-ctrl-confirm { font-size: 10px; color: #4ade80; font-weight: 600; opacity: 0; transition: opacity .15s; white-space: nowrap; }
+    .corr-ctrl-confirm.show { opacity: 1; }
     .corr-section-hdr { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dimmed); margin: 0 0 10px; }
     .corr-section-entry { margin-bottom: 20px; }
     .corr-card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
@@ -1205,12 +1207,15 @@
         <div class="corr-controls">
           <label class="corr-ctrl-label">Entry Threshold
             <input type="number" id="corr-entry-threshold" value="30" min="1" max="99" oninput="onCorrThresholdChange()"> %
+            <span class="corr-ctrl-confirm" id="corr-entry-confirm">✓</span>
           </label>
           <label class="corr-ctrl-label">Exit from Peak
             <input type="number" id="corr-exit-pct" value="20" min="1" max="99" oninput="renderCorrExitPanel()"> %
+            <span class="corr-ctrl-confirm" id="corr-exit-confirm">✓</span>
           </label>
           <label class="corr-ctrl-label">Min Msgs
             <input type="number" id="corr-min-msgs" value="5" min="1" max="999" oninput="onCorrMinMsgsChange()">
+            <span class="corr-ctrl-confirm" id="corr-msgs-confirm">✓</span>
           </label>
         </div>
       </div>
@@ -4235,16 +4240,27 @@
     openPopup(ticker, "", "", "");
   }
 
+  const _confirmTimers = {};
+  function _flashConfirm(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add("show");
+    clearTimeout(_confirmTimers[id]);
+    _confirmTimers[id] = setTimeout(() => el.classList.remove("show"), 1500);
+  }
+
   function onCorrThresholdChange() {
     corrEntryThreshold = parseInt(document.getElementById("corr-entry-threshold").value) || 30;
     localStorage.setItem("corrEntryThreshold", corrEntryThreshold);
     buildCorrView();
+    _flashConfirm("corr-entry-confirm");
   }
 
   function onCorrMinMsgsChange() {
     corrMinMsgs = parseInt(document.getElementById("corr-min-msgs").value) || 1;
     localStorage.setItem("corrMinMsgs", corrMinMsgs);
     buildCorrView();
+    _flashConfirm("corr-msgs-confirm");
   }
 
   function _updateCorrPeaks() {
@@ -4386,6 +4402,7 @@
   function renderCorrExitPanel() {
     corrExitPct = parseInt(document.getElementById("corr-exit-pct")?.value) || corrExitPct;
     localStorage.setItem("corrExitPct", corrExitPct);
+    _flashConfirm("corr-exit-confirm");
 
     const feed     = document.getElementById("corr-exit-feed");
     const countEl  = document.getElementById("corr-exit-count");
