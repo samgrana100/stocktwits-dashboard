@@ -3941,9 +3941,11 @@
       main.forEach(d => {
         const tailPts = downsample((d.trail || []).filter(mktHours));
         if (!tailPts.length) return;
-        const cappedTail = tailPts.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
-        const { x: sx, y: sy, z: sz, color } = buildTrail(cappedTail, { x: d.x, density: d.density, y: d.y, z: d.z });
-        trailCache[d.ticker] = { x: sx, y: sy, z: sz, color };
+        const rawZ   = d.raw_z ?? d.z;
+        const rawTip = { x: d.x, density: d.density, y: d.y, z: rawZ };
+        const { x: sx, y: sy, z: sz, color } = buildTrail(tailPts, rawTip);
+        const maxZ = Math.max(...tailPts.map(p => p.z ?? 0), rawZ);
+        trailCache[d.ticker] = { x: sx, y: sy, z: sz, color, rawZ, maxZ };
       });
     }
 
@@ -4027,20 +4029,28 @@
       }
     };
 
+    const baseZ = main.map(d => d.z);
+
     const _restoreBubbles = () => {
       try {
         Plotly.restyle("bubble-chart", {
+          z:                [baseZ],
           'marker.color':   [baseMarkerColors],
           'textfont.color': [baseTextColors],
         }, [0]);
+        Plotly.relayout("bubble-chart", { 'scene.zaxis.autorange': true });
         chartEl._focusedTicker = null;
       } catch(e) {}
     };
 
     const _focusBubble = (ticker) => {
       if (chartEl._focusedTicker === ticker) return;
+      chartEl._focusedTicker = ticker;
       try {
+        const td  = trailCache[ticker];
+        const newZ = main.map(d => d.ticker === ticker ? (td ? td.rawZ : d.z) : d.z);
         Plotly.restyle("bubble-chart", {
+          z: [newZ],
           'marker.color': [main.map(d =>
             d.ticker === ticker
               ? (d.no_sentiment ? "rgba(110,115,140,0.95)" : mkColor(d.x, 1.0))
@@ -4048,8 +4058,12 @@
           'textfont.color': [main.map(d =>
             d.ticker === ticker ? "rgba(255,255,255,1.0)" : "rgba(0,0,0,0)")],
         }, [0]);
-        chartEl._focusedTicker = ticker;
-      } catch(e) {}
+        if (td) {
+          Plotly.relayout("bubble-chart", {
+            'scene.zaxis.range': [0, td.maxZ * 1.15],
+          });
+        }
+      } catch(e) { chartEl._focusedTicker = null; }
     };
 
     const _showTrail = (ticker) => {
