@@ -1283,8 +1283,7 @@
     </div>
     <div style="display:flex;align-items:center;gap:10px">
       <div style="display:flex;gap:3px">
-        <button id="bx-sent-btn" class="ind-btn active" style="--ind-color:#3b82f6" onclick="setBubbleXMode('sentiment',this)">Sentiment</button>
-        <button id="bx-dens-btn" class="ind-btn"        style="--ind-color:#a855f7" onclick="setBubbleXMode('density',this)">Density</button>
+        <button id="bx-sent-btn" class="ind-btn active" style="--ind-color:#3b82f6">Sentiment</button>
       </div>
       <span id="bubble-status" style="font-size:10px;color:var(--text-dimmed)"></span>
       <button onclick="fetch3DData()" style="font-size:10px;padding:4px 10px;background:none;border:1px solid var(--border);border-radius:4px;color:var(--text-muted);cursor:pointer">Refresh</button>
@@ -3633,7 +3632,6 @@
   let bubbleViewActive   = false;
   let _bubbleHighlight   = null;
   let _bubbleSolo        = false;
-  let _bubbleXMode       = "sentiment"; // "sentiment" | "density"
   let _bubbleFilters     = null;
   let _bubbleRefreshInt  = null;
   let _bubbleLastData    = null;
@@ -3676,19 +3674,6 @@
     }
   }
 
-  function setBubbleXMode(mode, btn) {
-    _bubbleXMode = mode;
-    document.getElementById("bx-sent-btn").classList.toggle("active", mode === "sentiment");
-    document.getElementById("bx-dens-btn").classList.toggle("active", mode === "density");
-    const lbl = document.getElementById("bubble-axis-label");
-    if (lbl) lbl.textContent = mode === "density"
-      ? "X = Msg Density (1h) · Y = Price Change · Z = Rel Volume · Size = Volume"
-      : "X = Sentiment · Y = Price Change · Z = Rel Volume · Size = Volume";
-    if (_bubbleLastData) {
-      render3DChart(_bubbleLastData, _bubbleHighlight, _bubbleSolo);
-    }
-  }
-
   function closeBubbleView() {
     bubbleViewActive = false;
     _bubbleHighlight = null;
@@ -3697,10 +3682,6 @@
     _bubbleLastData  = null;
     _bubbleTimes     = [];
     _bubbleTimeIdx   = null;
-    _bubbleXMode     = "sentiment";
-    document.getElementById("bx-sent-btn").classList.add("active");
-    document.getElementById("bx-dens-btn").classList.remove("active");
-    document.getElementById("bubble-axis-label").textContent = "X = Sentiment · Y = Price Change · Z = Rel Volume · Size = Volume";
     document.getElementById("bubble-view-btn").classList.remove("active");
     document.getElementById("bubble-view").style.display = "none";
     _showPrimaryViews();
@@ -3801,12 +3782,10 @@
     chartEl._trailBusy     = false;
     chartEl._focusedTicker = null;
 
-    const isDens  = _bubbleXMode === "density";
     const Z_CAP   = 20; // cap rel_vol for display so trail and bubble stay on the same scale
 
-    // Pick the X value for a data point or trail point
-    const getX   = d  => isDens ? (d.density || 0) : d.x;
-    const trailX = p  => isDens ? (p.density || 0) : p.x;
+    const getX   = d => d.x;
+    const trailX = p => p.x;
 
     function resolvePos(d) {
       return { x: getX(d), y: d.y, z: Math.min(d.z, Z_CAP) };
@@ -3832,13 +3811,7 @@
     const main   = solo ? [] : visible.filter(d => d.ticker !== highlight);
     const hilite = visible.filter(d => d.ticker === highlight);
 
-    // Color: sentiment mode = green/red by X; density mode = blue gradient by density
-    const maxDens = isDens ? Math.max(...visible.map(v => v.x), 1) : 1;
     const mkColor = (x, opacity) => {
-      if (isDens) {
-        const n = Math.min(x / maxDens, 1);
-        return `rgba(${Math.round(80 + n*100)},${Math.round(40 + n*80)},${Math.round(220)},${opacity})`;
-      }
       const r = x >= 0 ? Math.round(74 + x * 181) : 248;
       const g = x >= 0 ? Math.round(222) : Math.round(113 + x * 113);
       const b = x >= 0 ? Math.round(128) : Math.round(113);
@@ -3867,12 +3840,11 @@
       },
       hovertemplate: main.map(d => {
         const ns = d.no_sentiment;
-        const sentLabel = isDens ? "Density" : "Sentiment";
-        const sentVal   = ns ? "N/A" : (d.x.toFixed ? d.x.toFixed(isDens ? 0 : 4) : d.x);
-        const densVal   = ns ? "N/A" : `${d.density} msgs`;
-        const compVal   = ns ? "N/A" : d.composite;
+        const sentVal    = ns ? "N/A" : (d.x.toFixed ? d.x.toFixed(4) : d.x);
+        const densVal    = ns ? "N/A" : `${d.density} msgs`;
+        const compVal    = ns ? "N/A" : d.composite;
         const noSentNote = ns ? "<br><i style='color:#888'>No Stocktwits data</i>" : "";
-        return `<b>${d.ticker}</b><br>${sentLabel}: ${sentVal}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.raw_z}x${d.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${densVal}<br>Composite: ${compVal}${noSentNote}<extra></extra>`;
+        return `<b>${d.ticker}</b><br>Sentiment: ${sentVal}<br>Price Δ: ${d.y}%<br>Rel Vol: ${d.raw_z}x${d.raw_z > Z_CAP ? ` (shown at ${Z_CAP}x)` : ""}<br>Density: ${densVal}<br>Composite: ${compVal}${noSentNote}<extra></extra>`;
       }),
       name: "Tickers",
     });
@@ -3922,7 +3894,7 @@
           line: { width: 2, color: "#facc15" },
           symbol: ["circle"],
         },
-        hovertemplate: `<b>${h.ticker} ★</b><br>${isDens ? "Density" : "Sentiment"}: ${h.x.toFixed ? h.x.toFixed(isDens ? 0 : 4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${soloZ}x<br>Density: ${h.density} msgs<extra></extra>`,
+        hovertemplate: `<b>${h.ticker} ★</b><br>Sentiment: ${h.x.toFixed ? h.x.toFixed(4) : h.x}<br>Price Δ: ${h.y}%<br>Rel Vol: ${soloZ}x<br>Density: ${h.density} msgs<extra></extra>`,
         name: h.ticker, showlegend: false,
       });
     }
@@ -3949,8 +3921,8 @@
       });
     }
 
-    // Zero planes (sentiment mode: x spans [-1,1]; density mode: skip x zero-line)
-    if (!isDens) traces.push({
+    // Zero planes
+    traces.push({
       type: "scatter3d", mode: "lines",
       x: [-1, 1], y: [0, 0], z: [0, 0],
       line: { color: "rgba(255,255,255,0.1)", width: 1 },
@@ -3972,10 +3944,10 @@
       scene: {
         bgcolor: "#0d0d16",
         xaxis: {
-          title: { text: isDens ? "Msg Density (1h)" : "Sentiment", font: { size: 11 } },
+          title: { text: "Sentiment", font: { size: 11 } },
           gridcolor: "#1a1a2e", zerolinecolor: "#333350",
           tickfont: { size: 9 }, color: "#6060a0",
-          ...(isDens ? { rangemode: "tozero" } : { range: [-1, 1] }),
+          range: [-1, 1],
         },
         yaxis: {
           title: { text: "Price Change %", font: { size: 11 } },
