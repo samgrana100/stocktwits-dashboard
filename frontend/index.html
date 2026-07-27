@@ -3907,29 +3907,23 @@
       });
     }
 
-    // Pre-compute a hidden trail trace for every main-bubble ticker with snapshot data.
-    // Hover just restyles visible:true — no addTraces/deleteTraces, no race conditions.
+    // Build a JS-only trail data cache — nothing added to Plotly yet.
+    // A single live trail trace is added/updated/removed on hover via addTraces+restyle+deleteTraces.
+    // This keeps the Plotly graph lean (no hidden traces) so Plotly.react() stays fast.
     const MAX_TRAIL_PTS = 50;
     const downsample = (arr) => {
       if (arr.length <= MAX_TRAIL_PTS) return arr;
       const step = (arr.length - 1) / (MAX_TRAIL_PTS - 1);
       return Array.from({length: MAX_TRAIL_PTS}, (_, i) => arr[Math.round(i * step)]);
     };
-    const hoverTrailIdxMap = {};
+    const trailCache = {};
     if (!solo) {
       main.forEach(d => {
         const tailPts = downsample((d.trail || []).filter(mktHours));
         if (!tailPts.length) return;
         const cappedTail = tailPts.map(p => ({ ...p, z: Math.min(p.z, Z_CAP) }));
         const { x: sx, y: sy, z: sz, color } = buildTrail(cappedTail, { x: d.x, density: d.density, y: d.y, z: d.z });
-        hoverTrailIdxMap[d.ticker] = traces.length;
-        traces.push({
-          type: "scatter3d", mode: "lines",
-          x: sx, y: sy, z: sz,
-          visible: false,
-          line: { color, colorscale: TRAIL_CS, width: 6 },
-          hoverinfo: "skip", showlegend: false, name: `${d.ticker}_trail`,
-        });
+        trailCache[d.ticker] = { x: sx, y: sy, z: sz, color };
       });
     }
 
@@ -3984,15 +3978,16 @@
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_click");
     chartEl.on("plotly_click", evt => {
       if (!evt.points || !evt.points.length) return;
-      const idx    = evt.points[0].pointIndex;
-      const trace  = evt.points[0].curveNumber;
-      const source = traces[trace];
+      const pt     = evt.points[0];
+      const idx    = pt.pointNumber ?? pt.pointIndex;
+      const source = traces[pt.curveNumber];
       if (!source || !source.text) return;
       const tk = Array.isArray(source.text) ? source.text[idx] : source.text;
       if (tk && tk.length <= 6) openPopup(tk, "", "", "");
     });
 
-    // Hover trail — restyle pre-computed hidden traces; clear on mouseleave.
+    // Hover trail — single live trace added/updated/removed on demand.
+    // No hidden traces in the graph, so Plotly.react() on auto-refresh stays fast.
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_hover");
     chartEl.removeAllListeners && chartEl.removeAllListeners("plotly_unhover");
 
@@ -4004,19 +3999,51 @@
       chartEl._hoverTrailClearTimer = null;
     }
 
-    let _visibleTrailTicker = null;
-    const _clearHoverTrail = () => {
-      if (_visibleTrailTicker !== null && hoverTrailIdxMap[_visibleTrailTicker] !== undefined) {
-        try { Plotly.restyle("bubble-chart", { visible: false }, [hoverTrailIdxMap[_visibleTrailTicker]]); } catch(e) {}
-        _visibleTrailTicker = null;
+    let _trailTicker = null;
+    let _trailIdx    = null;
+
+    const _makeTrace = (td, ticker) => ({
+      type: "scatter3d", mode: "lines",
+      x: td.x, y: td.y, z: td.z,
+      line: { color: td.color, colorscale: TRAIL_CS, width: 6 },
+      hoverinfo: "skip", showlegend: false, name: `${ticker}_trail`,
+    });
+
+    const _hideTrail = () => {
+      if (_trailIdx !== null) {
+        try { Plotly.deleteTraces("bubble-chart", _trailIdx); } catch(e) {}
+        _trailIdx    = null;
+        _trailTicker = null;
       }
     };
-    const _debouncedClear = () => {
-      chartEl._hoverTrailClearTimer = setTimeout(_clearHoverTrail, 300);
+
+    const _showTrail = (ticker) => {
+      const td = trailCache[ticker];
+      if (!td || _trailTicker === ticker) return;
+      if (_trailIdx !== null) {
+        // Reuse the existing trace slot — update data in place (one render pass)
+        try {
+          Plotly.restyle("bubble-chart",
+            { x: [td.x], y: [td.y], z: [td.z], 'line.color': [td.color], name: `${ticker}_trail` },
+            [_trailIdx]
+          );
+          _trailTicker = ticker;
+        } catch(e) { _hideTrail(); }
+      } else {
+        try {
+          Plotly.addTraces("bubble-chart", [_makeTrace(td, ticker)]);
+          _trailIdx    = document.getElementById("bubble-chart").data.length - 1;
+          _trailTicker = ticker;
+        } catch(e) {}
+      }
     };
 
-    chartEl._hoverTrailLeave = _debouncedClear;
-    chartEl.addEventListener("mouseleave", _debouncedClear);
+    const _debouncedHide = () => {
+      chartEl._hoverTrailClearTimer = setTimeout(_hideTrail, 300);
+    };
+
+    chartEl._hoverTrailLeave = _debouncedHide;
+    chartEl.addEventListener("mouseleave", _debouncedHide);
 
     chartEl.on("plotly_hover", evt => {
       if (chartEl._hoverTrailClearTimer) {
@@ -4027,17 +4054,8 @@
         if (!evt.points || !evt.points.length) return;
         const pt  = evt.points[0];
         const hov = main[pt.pointNumber ?? pt.pointIndex];
-        if (pt.curveNumber !== 0 || !hov || hoverTrailIdxMap[hov.ticker] === undefined) return;
-        if (_visibleTrailTicker === hov.ticker) return;
-        const newIdx  = hoverTrailIdxMap[hov.ticker];
-        const prevIdx = _visibleTrailTicker !== null ? hoverTrailIdxMap[_visibleTrailTicker] : null;
-        // Batch hide+show into one restyle so Plotly only redraws once
-        if (prevIdx !== null && prevIdx !== undefined) {
-          Plotly.restyle("bubble-chart", { visible: [false, true] }, [prevIdx, newIdx]);
-        } else {
-          Plotly.restyle("bubble-chart", { visible: true }, [newIdx]);
-        }
-        _visibleTrailTicker = hov.ticker;
+        if (pt.curveNumber !== 0 || !hov || !trailCache[hov.ticker]) return;
+        _showTrail(hov.ticker);
       } catch(e) { console.error("[hover-trail]", e); }
     });
   }
