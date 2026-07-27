@@ -3796,9 +3796,10 @@
     }
     // react() will wipe any addTraces-injected trail — reset index so we don't
     // try to restyle/delete a trace that no longer exists.
-    chartEl._trailIdx    = null;
-    chartEl._trailTicker = null;
-    chartEl._trailBusy   = false;
+    chartEl._trailIdx      = null;
+    chartEl._trailTicker   = null;
+    chartEl._trailBusy     = false;
+    chartEl._focusedTicker = null;
 
     const isDens  = _bubbleXMode === "density";
     const Z_CAP   = 20; // cap rel_vol for display so trail and bubble stay on the same scale
@@ -4014,12 +4015,41 @@
       hoverinfo: "skip", showlegend: false, name: `${ticker}_trail`,
     });
 
+    // Base colors used to restore after hover
+    const baseMarkerColors = main.map(d => d.no_sentiment ? "rgba(110,115,140,0.45)" : mkColor(d.x, 0.75));
+    const baseTextColors   = main.map(d => d.no_sentiment ? "rgba(160,160,180,0.6)"  : "rgba(255,255,255,1.0)");
+
     const _hideTrail = () => {
       if (chartEl._trailIdx !== null) {
         try { Plotly.deleteTraces("bubble-chart", chartEl._trailIdx); } catch(e) {}
         chartEl._trailIdx    = null;
         chartEl._trailTicker = null;
       }
+    };
+
+    const _restoreBubbles = () => {
+      try {
+        Plotly.restyle("bubble-chart", {
+          'marker.color':   [baseMarkerColors],
+          'textfont.color': [baseTextColors],
+        }, [0]);
+        chartEl._focusedTicker = null;
+      } catch(e) {}
+    };
+
+    const _focusBubble = (ticker) => {
+      if (chartEl._focusedTicker === ticker) return;
+      try {
+        Plotly.restyle("bubble-chart", {
+          'marker.color': [main.map(d =>
+            d.ticker === ticker
+              ? (d.no_sentiment ? "rgba(110,115,140,0.95)" : mkColor(d.x, 1.0))
+              : "rgba(80,80,110,0.08)")],
+          'textfont.color': [main.map(d =>
+            d.ticker === ticker ? "rgba(255,255,255,1.0)" : "rgba(0,0,0,0)")],
+        }, [0]);
+        chartEl._focusedTicker = ticker;
+      } catch(e) {}
     };
 
     const _showTrail = (ticker) => {
@@ -4036,7 +4066,10 @@
     };
 
     const _debouncedHide = () => {
-      chartEl._hoverTrailClearTimer = setTimeout(_hideTrail, 300);
+      chartEl._hoverTrailClearTimer = setTimeout(() => {
+        _hideTrail();
+        _restoreBubbles();
+      }, 300);
     };
 
     chartEl._hoverTrailLeave = _debouncedHide;
@@ -4051,7 +4084,8 @@
         if (!evt.points || !evt.points.length) return;
         const pt  = evt.points[0];
         const hov = main[pt.pointNumber ?? pt.pointIndex];
-        if (pt.curveNumber !== 0 || !hov || !trailCache[hov.ticker]) return;
+        if (pt.curveNumber !== 0 || !hov) return;
+        _focusBubble(hov.ticker);
         _showTrail(hov.ticker);
       } catch(e) { console.error("[hover-trail]", e); }
     });
