@@ -4056,9 +4056,7 @@
       if (chartEl._trailBusy || !trailCache[ticker] || chartEl._trailTicker === ticker) return;
       chartEl._trailBusy = true;
       try {
-        const td = trailCache[ticker];
-        _hideTrail();
-        Plotly.addTraces("bubble-chart", [_makeTrace(td, ticker)]);
+        Plotly.addTraces("bubble-chart", [_makeTrace(trailCache[ticker], ticker)]);
         chartEl._trailIdx    = chartEl.data.length - 1;
         chartEl._trailTicker = ticker;
       } catch(e) { chartEl._trailIdx = null; chartEl._trailTicker = null; }
@@ -4086,6 +4084,7 @@
         const hov = main[pt.pointNumber ?? pt.pointIndex];
         if (pt.curveNumber !== 0 || !hov) return;
         _focusBubble(hov.ticker);
+        if (chartEl._trailTicker !== hov.ticker) _hideTrail();
         _showTrail(hov.ticker);
       } catch(e) { console.error("[hover-trail]", e); }
     });
