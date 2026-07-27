@@ -1631,6 +1631,7 @@
             <button class="popup-nav-btn" id="popup-nav-prev" onclick="navigateCorrPopup(-1)">&#8592;</button>
             <span class="popup-nav-pos" id="popup-nav-pos"></span>
             <button class="popup-nav-btn" id="popup-nav-next" onclick="navigateCorrPopup(1)">&#8594;</button>
+            <button class="popup-nav-btn" onclick="openBubbleFromPopup()" title="View on Bubble Map" style="margin-left:4px;font-size:11px;padding:4px 9px">⊙ Map</button>
           </div>
         </div>
       </div>
@@ -2658,6 +2659,12 @@
     const t = _corrNavTickers[newIdx];
     _corrNavIdx = newIdx;
     openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, newIdx);
+  }
+
+  function openBubbleFromPopup() {
+    const ticker = currentPopupTicker;
+    closePopupDirect();
+    openBubbleMap(ticker, false);
   }
 
   async function openPopup(ticker, company, sector, industry, _navList, _navIdx) {
