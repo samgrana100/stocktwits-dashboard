@@ -122,7 +122,7 @@ def score_unscored_messages(batch_size: int = 50):
 
 
 DENSITY_WINDOW_MIN = 60   # rolling window used to compute density at each point
-CORR_LOOKBACK_MIN  = 15   # how many minutes back to look for price snapshots
+CORR_LOOKBACK_MIN  = 30   # how many minutes back to look for price snapshots
 CORR_FETCH_MIN     = CORR_LOOKBACK_MIN + DENSITY_WINDOW_MIN  # total message history needed
 CORR_MIN_POINTS    = 5    # minimum price points required to compute correlation
 
