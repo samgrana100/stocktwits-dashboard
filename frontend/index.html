@@ -1205,13 +1205,12 @@
         <div class="corr-controls">
           <label class="corr-ctrl-label">Entry Threshold
             <input type="number" id="corr-entry-threshold" value="30" min="1" max="99" oninput="onCorrThresholdChange()"> %
-            <button onclick="applyAutoEntryCorr()" style="font-size:9px;padding:2px 7px;border:1px solid var(--border-subtle);border-radius:4px;background:none;color:var(--text-muted);cursor:pointer">Update</button>
-            <span id="auto-entry-corr-status" style="font-size:9px;color:var(--text-dimmed)"></span>
           </label>
           <label class="corr-ctrl-label">Exit from Peak
             <input type="number" id="corr-exit-pct" value="20" min="1" max="99" oninput="renderCorrExitPanel()"> %
-            <button onclick="applyAutoExitPeak()" style="font-size:9px;padding:2px 7px;border:1px solid var(--border-subtle);border-radius:4px;background:none;color:var(--text-muted);cursor:pointer">Update</button>
-            <span id="auto-exit-peak-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+          </label>
+          <label class="corr-ctrl-label">Min Msgs
+            <input type="number" id="corr-min-msgs" value="5" min="1" max="999" oninput="onCorrMinMsgsChange()">
           </label>
         </div>
       </div>
@@ -3603,6 +3602,7 @@
   let corrViewActive      = false;
   let corrEntryThreshold  = parseInt(localStorage.getItem("corrEntryThreshold") || "30");
   let corrExitPct         = parseInt(localStorage.getItem("corrExitPct")        || "30");
+  let corrMinMsgs         = parseInt(localStorage.getItem("corrMinMsgs")        || "5");
   let corrEntered         = JSON.parse(localStorage.getItem("corrEntered") || "{}");
 
   function _saveCorrEntered() { localStorage.setItem("corrEntered", JSON.stringify(corrEntered)); }
@@ -3623,6 +3623,7 @@
     if (corrViewActive) {
       document.getElementById("corr-entry-threshold").value = corrEntryThreshold;
       document.getElementById("corr-exit-pct").value        = corrExitPct;
+      document.getElementById("corr-min-msgs").value        = corrMinMsgs;
       buildCorrView();
       fetchAutoTrades();
     }
@@ -4088,12 +4089,8 @@
       if (!res.ok) return;
       const data = await res.json();
       if (data.config) {
-        const corrEl = document.getElementById("corr-entry-threshold");
-        const peakEl = document.getElementById("corr-exit-pct");
         const dropEl = document.getElementById("auto-exit-min-drop");
         const densEl = document.getElementById("auto-entry-min-dens");
-        if (corrEl && corrEl !== document.activeElement) corrEl.value = Math.round(data.config.entry_corr * 100);
-        if (peakEl && peakEl !== document.activeElement) peakEl.value = Math.round(data.config.exit_peak * 100);
         if (dropEl && dropEl !== document.activeElement) dropEl.value = data.config.exit_min_drop;
         if (densEl && densEl !== document.activeElement) densEl.value = data.config.entry_min_dens;
       }
@@ -4229,6 +4226,12 @@
     buildCorrView();
   }
 
+  function onCorrMinMsgsChange() {
+    corrMinMsgs = parseInt(document.getElementById("corr-min-msgs").value) || 1;
+    localStorage.setItem("corrMinMsgs", corrMinMsgs);
+    buildCorrView();
+  }
+
   function _updateCorrPeaks() {
     let changed = false;
     for (const ticker of Object.keys(corrEntered)) {
@@ -4245,7 +4248,7 @@
     await _fetchPositionDensities();
     _updateCorrPeaks();
     const tickers = (lastFilteredTickers.length ? lastFilteredTickers : allTickers)
-      .filter(t => t.correlation != null)
+      .filter(t => t.correlation != null && (t.total_messages || 0) >= corrMinMsgs)
       .sort((a, b) => (b.correlation || 0) - (a.correlation || 0));
 
     document.getElementById("corr-count").textContent = tickers.length + " tickers";
