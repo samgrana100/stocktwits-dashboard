@@ -504,6 +504,12 @@
       position: relative; z-index: 1; flex-shrink: 0;
     }
     .popup-close:hover { background: var(--border-subtle); color: var(--text-primary); }
+    .popup-nav-btn { cursor: pointer; background: var(--bg-overlay); border: 1px solid var(--border-mid); border-radius: var(--r-sm); color: var(--text-muted); padding: 4px 10px; font-size: 15px; line-height: 1; transition: background var(--t-fast), color var(--t-fast); flex-shrink: 0; }
+    .popup-nav-btn:hover { background: var(--border-subtle); color: var(--text-primary); }
+    .popup-nav-btn:disabled { opacity: 0.25; cursor: default; }
+    .popup-nav-wrap { display: none; align-items: center; gap: 6px; margin-top: 6px; }
+    .popup-nav-wrap.active { display: flex; }
+    .popup-nav-pos { font-size: 10px; color: var(--text-dimmed); min-width: 36px; text-align: center; }
 
     .popup-scores {
       display: grid; grid-template-columns: repeat(4, 1fr);
@@ -1621,6 +1627,11 @@
           <div class="popup-ticker-name" id="popup-ticker">--</div>
           <div class="popup-company" id="popup-meta">--</div>
           <div class="popup-updated-line" id="popup-updated"></div>
+          <div class="popup-nav-wrap" id="popup-nav-wrap">
+            <button class="popup-nav-btn" id="popup-nav-prev" onclick="navigateCorrPopup(-1)">&#8592;</button>
+            <span class="popup-nav-pos" id="popup-nav-pos"></span>
+            <button class="popup-nav-btn" id="popup-nav-next" onclick="navigateCorrPopup(1)">&#8594;</button>
+          </div>
         </div>
       </div>
       <button class="popup-close" onclick="closePopupDirect()">&#x2715;</button>
@@ -2621,12 +2632,46 @@
     }).join("");
   }
 
-  async function openPopup(ticker, company, sector, industry) {
+  let _corrNavTickers = [];
+  let _corrNavIdx     = -1;
+
+  function _setCorrNav(tickers, idx) {
+    _corrNavTickers = tickers;
+    _corrNavIdx     = idx;
+    const wrap = document.getElementById("popup-nav-wrap");
+    const pos  = document.getElementById("popup-nav-pos");
+    const prev = document.getElementById("popup-nav-prev");
+    const next = document.getElementById("popup-nav-next");
+    if (tickers.length > 1) {
+      wrap.classList.add("active");
+      pos.textContent        = (idx + 1) + " / " + tickers.length;
+      prev.disabled          = idx <= 0;
+      next.disabled          = idx >= tickers.length - 1;
+    } else {
+      wrap.classList.remove("active");
+    }
+  }
+
+  function navigateCorrPopup(dir) {
+    const newIdx = _corrNavIdx + dir;
+    if (newIdx < 0 || newIdx >= _corrNavTickers.length) return;
+    const t = _corrNavTickers[newIdx];
+    _corrNavIdx = newIdx;
+    openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, newIdx);
+  }
+
+  async function openPopup(ticker, company, sector, industry, _navList, _navIdx) {
     currentPopupTicker  = ticker;
     currentPopupWindow  = currentWindow;
     document.getElementById("popup-overlay").classList.add("active");
     // Show back-to-map button only when launched from the bubble map
     document.getElementById("popup-back-btn").style.display = bubbleViewActive ? "" : "none";
+    // Corr nav arrows
+    if (_navList) {
+      _setCorrNav(_navList, _navIdx ?? 0);
+    } else if (!bubbleViewActive) {
+      _setCorrNav([], -1);
+    }
     document.getElementById("popup-ticker").textContent = ticker;
     document.getElementById("popup-meta").textContent =
       company + "  \u00b7  " + sector + "  \u00b7  " + industry;
@@ -4292,22 +4337,30 @@
     const watchList = document.getElementById("corr-watch-list");
     const watchHdr  = document.getElementById("corr-watch-hdr");
 
+    _corrNavTickers = [...entry, ...watch];
+
     if (entry.length) {
       entrySec.style.display  = "";
-      entryList.innerHTML = entry.map(t => _corrCardHTML(t, true)).join("");
+      entryList.innerHTML = entry.map((t, i) => _corrCardHTML(t, true, i)).join("");
     } else {
       entrySec.style.display = "none";
     }
 
     watchList.innerHTML = watch.length
-      ? watch.map(t => _corrCardHTML(t, false)).join("")
+      ? watch.map((t, i) => _corrCardHTML(t, false, entry.length + i)).join("")
       : '<div class="corr-empty">No tickers with positive correlation yet.</div>';
     watchHdr.style.display = "";
 
     renderCorrExitPanel();
   }
 
-  function _corrCardHTML(t, isEntry) {
+  function openCorrPopupAt(idx) {
+    const t = _corrNavTickers[idx];
+    if (!t) return;
+    openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, idx);
+  }
+
+  function _corrCardHTML(t, isEntry, navIdx) {
     const r        = t.correlation;
     const pct      = Math.round(r * 100);
     const rClass   = r > 0 ? "corr-r-pos" : r < 0 ? "corr-r-neg" : "corr-r-neu";
@@ -4322,7 +4375,7 @@
     const chgDisp  = t.change != null ? (t.change > 0 ? "+" : "") + t.change + "%" : "";
     const density  = t.total_messages != null ? t.total_messages + " msgs" : "";
     const inMonitor = corrEntered[t.ticker] ? " (monitoring)" : "";
-    return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openPopup('${safeTk}','${safeComp}','${safeSec}','${safeInd}')">
+    return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openCorrPopupAt(${navIdx})">
       <div class="corr-card-hdr">
         <span class="corr-ticker">${t.ticker}</span>
         <span class="corr-price">${t.price ? "$"+t.price : ""}</span>
