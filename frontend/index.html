@@ -3664,6 +3664,7 @@
   let corrExitPct         = parseInt(localStorage.getItem("corrExitPct")        || "30");
   let corrMinMsgs         = parseInt(localStorage.getItem("corrMinMsgs")        || "5");
   let corrEntered         = JSON.parse(localStorage.getItem("corrEntered") || "{}");
+  let corrEntryTimes      = JSON.parse(localStorage.getItem("corrEntryTimes")   || "{}");
 
   function _saveCorrEntered() { localStorage.setItem("corrEntered", JSON.stringify(corrEntered)); }
 
@@ -4344,6 +4345,13 @@
     const watchList = document.getElementById("corr-watch-list");
     const watchHdr  = document.getElementById("corr-watch-hdr");
 
+    // Track when tickers first appear in entry zone
+    const now = Date.now();
+    const entrySet = new Set(entry.map(t => t.ticker));
+    entry.forEach(t => { if (!corrEntryTimes[t.ticker]) corrEntryTimes[t.ticker] = now; });
+    Object.keys(corrEntryTimes).forEach(tk => { if (!entrySet.has(tk)) delete corrEntryTimes[tk]; });
+    localStorage.setItem("corrEntryTimes", JSON.stringify(corrEntryTimes));
+
     _corrNavTickers = [...entry, ...watch];
 
     if (entry.length) {
@@ -4380,10 +4388,28 @@
     const safeInd  = (t.industry|| "--").replace(/'/g, "\\'");
     const chgColor = (t.change || 0) > 0 ? "corr-change-up" : "corr-change-down";
     const chgDisp  = t.change != null ? (t.change > 0 ? "+" : "") + t.change + "%" : "";
-    const msgCount  = t.total_messages ?? 0;
-    const densColor = msgCount >= 19 ? "#4ade80" : msgCount >= 6 ? "#facc15" : "#f87171";
-    const density   = t.total_messages != null ? `<span style="color:${densColor}">${t.total_messages} msgs</span>` : "";
-    const inMonitor = corrEntered[t.ticker] ? " (monitoring)" : "";
+    const msgCount   = t.total_messages ?? 0;
+    const densColor  = msgCount >= 19 ? "#4ade80" : msgCount >= 6 ? "#facc15" : "#f87171";
+    const density    = t.total_messages != null ? `<span style="color:${densColor}">${t.total_messages} msgs</span>` : "";
+    const inMonitor  = corrEntered[t.ticker] ? " · monitoring" : "";
+
+    const sent       = t.avg_sentiment_score ?? null;
+    const sentColor  = sent == null ? "var(--text-dimmed)" : sent >= 0.15 ? "#4ade80" : sent >= 0.05 ? "#facc15" : "#f87171";
+    const sentDisp   = sent != null ? `<span style="color:${sentColor};font-size:10px">Sent ${sent.toFixed(3)}</span>` : "";
+
+    const surge      = t.surge_ratio || 0;
+    const surgeDisp  = surge >= 1.5 ? `<span style="font-size:10px;color:${surge >= 3 ? "#f87171" : "#fb923c"}">${surge}× surge</span>` : "";
+
+    const bullPct    = t.bull_pct ?? null;
+    const bullColor  = bullPct == null ? "var(--text-dimmed)" : bullPct >= 65 ? "#4ade80" : bullPct >= 45 ? "#facc15" : "#f87171";
+    const bullDisp   = bullPct != null && t.scored_messages > 0 ? `<span style="color:${bullColor};font-size:10px">${bullPct}% bull</span>` : "";
+
+    const enteredAt  = corrEntryTimes[t.ticker];
+    const ageMs      = enteredAt ? Date.now() - enteredAt : 0;
+    const ageMin     = Math.floor(ageMs / 60000);
+    const ageColor   = ageMin >= 15 ? "#f87171" : ageMin >= 5 ? "#facc15" : "#4ade80";
+    const ageDisp    = isEntry && enteredAt ? `<span style="color:${ageColor};font-size:10px">${ageMin}m in zone</span>` : "";
+
     return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openCorrPopupAt(${navIdx})">
       <div class="corr-card-hdr">
         <span class="corr-ticker">${t.ticker}</span>
@@ -4401,7 +4427,13 @@
           <div class="corr-threshold-line" style="left:${threshLeft}%"></div>
         </div>
       </div>
-      <div class="corr-density-info">${density}${inMonitor}</div>
+      <div class="corr-density-info" style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        ${density}${inMonitor ? `<span style="font-size:10px;color:var(--text-dimmed)">${inMonitor}</span>` : ""}
+        ${bullDisp}
+        ${sentDisp}
+        ${surgeDisp}
+        ${ageDisp}
+      </div>
       <div style="display:flex;gap:6px;margin-top:6px">
         ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},'${t.price||''}')">Enter Trade</button>` : ""}
         <button onclick="event.stopPropagation();openBubbleMap('${safeTk}',true)" style="font-size:10px;padding:3px 8px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-dimmed);cursor:pointer">⊙ Map</button>
