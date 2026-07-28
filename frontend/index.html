@@ -2661,7 +2661,12 @@
     openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, newIdx);
   }
 
+  let _bubbleReturnState = null;
+
   function openBubbleFromPopup() {
+    _bubbleReturnState = corrViewActive
+      ? { view: "corr", navIdx: _corrNavIdx }
+      : null;
     const ticker = currentPopupTicker;
     closePopupDirect();
     openBubbleMap(ticker, true);
@@ -3746,8 +3751,19 @@
     _bubbleTimeIdx   = null;
     document.getElementById("bubble-view-btn").classList.remove("active");
     document.getElementById("bubble-view").style.display = "none";
-    _showPrimaryViews();
     if (_bubbleRefreshInt) { clearInterval(_bubbleRefreshInt); _bubbleRefreshInt = null; }
+
+    const ret = _bubbleReturnState;
+    _bubbleReturnState = null;
+
+    if (ret?.view === "corr") {
+      if (!corrViewActive) toggleCorrView();
+      if (ret.navIdx >= 0 && _corrNavTickers.length > ret.navIdx) {
+        openCorrPopupAt(ret.navIdx);
+      }
+    } else {
+      _showPrimaryViews();
+    }
   }
 
   function openBubbleMap(ticker, solo) {
