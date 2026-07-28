@@ -4411,6 +4411,12 @@
     openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, idx);
   }
 
+  // Opens bubble map from a correlation card, saving nav position so closing the map returns here
+  function openBubbleFromCorr(ticker, navIdx) {
+    _bubbleReturnState = { view: "corr", navIdx };
+    openBubbleMap(ticker, true);
+  }
+
   function _corrCardHTML(t, isEntry, navIdx, trend) {
     const r        = t.correlation;
     const pct      = Math.round(r * 100);
@@ -4483,7 +4489,7 @@
       </div>
       <div style="display:flex;gap:6px;margin-top:6px">
         ${isEntry && !corrEntered[t.ticker] ? `<button class="corr-enter-btn" onclick="event.stopPropagation();enterTrade('${safeTk}',${pct},'${t.price||''}')">Enter Trade</button>` : ""}
-        <button onclick="event.stopPropagation();openBubbleMap('${safeTk}',true)" style="font-size:10px;padding:3px 8px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-dimmed);cursor:pointer">⊙ Map</button>
+        <button onclick="event.stopPropagation();openBubbleFromCorr('${safeTk}',${navIdx})" style="font-size:10px;padding:3px 8px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-dimmed);cursor:pointer">⊙ Map</button>
       </div>
     </div>`;
   }
