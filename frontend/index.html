@@ -374,6 +374,15 @@
     .corr-card.dragging { opacity: .4; }
     .corr-sort-badge { font-size: 9px; color: var(--text-dimmed); border: 1px solid var(--border-subtle); border-radius: 3px; padding: 1px 5px; cursor: pointer; margin-left: auto; }
     .corr-sort-badge:hover { color: #f87171; border-color: rgba(248,113,113,.6); }
+    .corr-search-wrap { position: relative; }
+    .corr-search-input { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 4px; color: var(--text-primary); font-size: 11px; padding: 4px 8px; width: 120px; outline: none; }
+    .corr-search-input:focus { border-color: var(--blue); }
+    .corr-search-dropdown { position: absolute; top: calc(100% + 4px); left: 0; min-width: 160px; background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 6px; box-shadow: 0 6px 20px rgba(0,0,0,.4); z-index: 200; display: none; overflow: hidden; }
+    .corr-search-dropdown.open { display: block; }
+    .corr-search-result { padding: 7px 12px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+    .corr-search-result:hover { background: var(--bg-hover); }
+    .corr-search-result-ticker { font-weight: 700; color: var(--text-primary); }
+    .corr-search-result-meta { font-size: 10px; color: var(--text-dimmed); }
     .corr-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast); }
     .corr-card:hover { background: var(--bg-hover); }
     .corr-card.entry-zone { border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.04); }
@@ -1230,6 +1239,11 @@
             <input type="number" id="corr-min-msgs" value="5" min="1" max="999" oninput="onCorrMinMsgsChange()">
             <span class="corr-ctrl-confirm" id="corr-msgs-confirm">✓</span>
           </label>
+          <div class="corr-search-wrap" id="corr-search-wrap">
+            <input type="text" id="corr-search-input" class="corr-search-input" placeholder="Add ticker…"
+              oninput="onCorrSearchInput(this.value)" onblur="setTimeout(hideCorrSearch,150)" autocomplete="off">
+            <div class="corr-search-dropdown" id="corr-search-dropdown"></div>
+          </div>
         </div>
       </div>
       <div id="corr-entry-section" class="corr-section-entry" style="display:none">
@@ -4393,8 +4407,14 @@
   async function buildCorrView() {
     await _fetchPositionDensities();
     _updateCorrPeaks();
-    const tickers = (lastFilteredTickers.length ? lastFilteredTickers : allTickers)
-      .filter(t => t.correlation != null && (t.total_messages || 0) >= corrMinMsgs)
+    const basePool = lastFilteredTickers.length ? lastFilteredTickers : allTickers;
+    const autoTickers = basePool.filter(t => t.correlation != null && (t.total_messages || 0) >= corrMinMsgs);
+    // Always include user-pinned tickers even if they don't pass the auto-filter
+    const pinnedKeys = Object.keys(_corrUserSort);
+    const pinnedExtra = pinnedKeys
+      .map(tk => allTickers.find(t => t.ticker === tk))
+      .filter(t => t && !autoTickers.find(a => a.ticker === t.ticker));
+    const tickers = [...autoTickers, ...pinnedExtra]
       .sort((a, b) => (b.correlation || 0) - (a.correlation || 0));
 
     document.getElementById("corr-count").textContent = tickers.length + " tickers";
@@ -4513,6 +4533,38 @@
   function resetCorrSort(ticker) {
     delete _corrUserSort[ticker];
     localStorage.setItem("corrUserSort", JSON.stringify(_corrUserSort));
+    buildCorrView();
+  }
+
+  function onCorrSearchInput(val) {
+    const dd = document.getElementById("corr-search-dropdown");
+    const q  = val.trim().toUpperCase();
+    if (!q) { dd.classList.remove("open"); dd.innerHTML = ""; return; }
+    const matches = allTickers
+      .filter(t => t.ticker.startsWith(q) && !_corrUserSort[t.ticker])
+      .slice(0, 8);
+    if (!matches.length) { dd.classList.remove("open"); dd.innerHTML = ""; return; }
+    dd.innerHTML = matches.map(t => {
+      const meta = t.total_messages != null ? `${t.total_messages} msgs` : "";
+      return `<div class="corr-search-result" onmousedown="addCorrTicker('${t.ticker.replace(/'/g,"\\'")}')">
+        <span class="corr-search-result-ticker">${t.ticker}</span>
+        <span class="corr-search-result-meta">${meta}</span>
+      </div>`;
+    }).join("");
+    dd.classList.add("open");
+  }
+
+  function hideCorrSearch() {
+    const dd = document.getElementById("corr-search-dropdown");
+    dd.classList.remove("open");
+    dd.innerHTML = "";
+    document.getElementById("corr-search-input").value = "";
+  }
+
+  function addCorrTicker(ticker) {
+    _corrUserSort[ticker] = "monitor";
+    localStorage.setItem("corrUserSort", JSON.stringify(_corrUserSort));
+    hideCorrSearch();
     buildCorrView();
   }
 
