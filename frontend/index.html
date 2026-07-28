@@ -2390,6 +2390,7 @@
   async function fetchScores() {
     try {
       const res  = await fetch("/api/scores?window=" + currentWindow);
+      if (!res.ok) throw new Error("scores " + res.status);
       const data = await res.json();
       document.getElementById("ticker-count").textContent =
         "#1 / " + data.ticker_count + " Total | Refresh: " + MAIN_REFRESH_S + "s";
@@ -2713,6 +2714,7 @@
       const densityRollingW   = tickerDensityWindows[ticker]  || "5m";
       const sentimentRollingW = tickerSentimentWindows[ticker] || "5m";
       const res  = await fetch("/api/ticker/" + ticker + "?window=" + currentPopupWindow + "&rolling=" + sentimentRollingW + "&density_window=" + densityRollingW);
+      if (!res.ok) throw new Error("ticker " + res.status);
       const data = await res.json();
 
       // Compute rolling stats frontend-side so density and sentiment use their own windows
@@ -3239,6 +3241,7 @@
 
   async function checkPipelineStatus() {
     const res = await fetch("/api/pipeline/status");
+    if (!res.ok) return;
     const d   = await res.json();
     pipelineRunning = d.running;
     const btn = document.getElementById("pipeline-btn");
@@ -3668,8 +3671,8 @@
   let corrEntryThreshold  = parseInt(localStorage.getItem("corrEntryThreshold") || "30");
   let corrExitPct         = parseInt(localStorage.getItem("corrExitPct")        || "30");
   let corrMinMsgs         = parseInt(localStorage.getItem("corrMinMsgs")        || "5");
-  let corrEntered         = JSON.parse(localStorage.getItem("corrEntered") || "{}");
-  let corrEntryTimes      = JSON.parse(localStorage.getItem("corrEntryTimes")   || "{}");
+  let corrEntered    = (() => { try { return JSON.parse(localStorage.getItem("corrEntered")    || "{}"); } catch { return {}; } })();
+  let corrEntryTimes = (() => { try { return JSON.parse(localStorage.getItem("corrEntryTimes") || "{}"); } catch { return {}; } })();
 
   function _saveCorrEntered() { localStorage.setItem("corrEntered", JSON.stringify(corrEntered)); }
 
@@ -3883,7 +3886,7 @@
 
     const logVol = v => v > 0 ? Math.log10(v) : 0;
     const maxVol = Math.max(...visible.map(d => logVol(d.size)));
-    const sizeScale = v => Math.max(8, (logVol(v) / maxVol) * 50);
+    const sizeScale = v => maxVol > 0 ? Math.max(8, (logVol(v) / maxVol) * 50) : 8;
 
     // Separate highlighted ticker
     const main   = solo ? [] : visible.filter(d => d.ticker !== highlight);

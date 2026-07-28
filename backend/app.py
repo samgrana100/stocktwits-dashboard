@@ -1819,22 +1819,25 @@ def get_auto_trades_endpoint():
 def set_auto_trade_config():
     global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP
     data = request.get_json(force=True) or {}
-    if "entry_corr" in data:
-        val = float(data["entry_corr"])
-        if 0.0 < val <= 1.0:
-            AUTO_ENTRY_CORR = round(val, 2)
-    if "entry_min_dens" in data:
-        val = int(data["entry_min_dens"])
-        if val >= 0:
-            AUTO_ENTRY_MIN_DENS = val
-    if "exit_peak" in data:
-        val = float(data["exit_peak"])
-        if 0.0 < val <= 1.0:
-            AUTO_EXIT_PEAK = round(val, 2)
-    if "exit_min_drop" in data:
-        val = int(data["exit_min_drop"])
-        if val >= 0:
-            AUTO_EXIT_MIN_DROP = val
+    try:
+        if "entry_corr" in data:
+            val = float(data["entry_corr"])
+            if 0.0 < val <= 1.0:
+                AUTO_ENTRY_CORR = round(val, 2)
+        if "entry_min_dens" in data:
+            val = int(data["entry_min_dens"])
+            if val >= 0:
+                AUTO_ENTRY_MIN_DENS = val
+        if "exit_peak" in data:
+            val = float(data["exit_peak"])
+            if 0.0 < val <= 1.0:
+                AUTO_EXIT_PEAK = round(val, 2)
+        if "exit_min_drop" in data:
+            val = int(data["exit_min_drop"])
+            if val >= 0:
+                AUTO_EXIT_MIN_DROP = val
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": f"Invalid config value: {e}"}), 400
     print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP}")
     return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP})
 
@@ -2468,8 +2471,10 @@ def _start_background_services():
     def _pipeline_watchdog():
         while True:
             time.sleep(30)
-            if pipeline_thread is None or not pipeline_thread.is_alive():
-                print("[APP] Pipeline watchdog: thread dead, restarting.")
+            # Only restart if the thread died unexpectedly — not if stop was requested
+            stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
+            if not stopped_intentionally and (pipeline_thread is None or not pipeline_thread.is_alive()):
+                print("[APP] Pipeline watchdog: thread died unexpectedly, restarting.")
                 _start_pipeline()
 
     threading.Thread(target=_pipeline_watchdog, daemon=True).start()
