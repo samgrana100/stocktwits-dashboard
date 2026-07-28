@@ -364,9 +364,16 @@
     .corr-ctrl-label input:focus { border-color: var(--blue); }
     .corr-ctrl-confirm { font-size: 10px; color: #4ade80; font-weight: 600; opacity: 0; transition: opacity .15s; white-space: nowrap; }
     .corr-ctrl-confirm.show { opacity: 1; }
-    .corr-section-hdr { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dimmed); margin: 0 0 10px; }
-    .corr-section-entry { margin-bottom: 20px; }
-    .corr-card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+    .corr-section-hdr { font-size: 10px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--text-dimmed); margin: 0 0 10px; display:flex; align-items:center; gap:8px; }
+    .corr-section-entry, .corr-section-monitor, .corr-section-ignore { margin-bottom: 20px; }
+    .corr-card-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; min-height: 48px; border-radius: 6px; transition: background .15s, outline .15s; }
+    .corr-card-list.drag-over { background: rgba(99,102,241,.08); outline: 2px dashed rgba(99,102,241,.45); }
+    .corr-section-ignore .corr-card-list.drag-over { background: rgba(248,113,113,.08); outline: 2px dashed rgba(248,113,113,.45); }
+    .corr-card[draggable=true] { cursor: grab; }
+    .corr-card[draggable=true]:active { cursor: grabbing; }
+    .corr-card.dragging { opacity: .4; }
+    .corr-sort-badge { font-size: 9px; color: var(--text-dimmed); border: 1px solid var(--border-subtle); border-radius: 3px; padding: 1px 5px; cursor: pointer; margin-left: auto; }
+    .corr-sort-badge:hover { color: #f87171; border-color: rgba(248,113,113,.6); }
     .corr-card { background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px 14px; cursor: pointer; transition: background var(--t-fast), border-color var(--t-fast); }
     .corr-card:hover { background: var(--bg-hover); }
     .corr-card.entry-zone { border-color: rgba(74,222,128,.4); background: rgba(74,222,128,.04); }
@@ -1227,11 +1234,31 @@
       </div>
       <div id="corr-entry-section" class="corr-section-entry" style="display:none">
         <div class="corr-section-hdr">Entry Zone</div>
-        <div id="corr-entry-list" class="corr-card-list"></div>
+        <div id="corr-entry-list" class="corr-card-list"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="dropCorrCard(event,'entry')"></div>
       </div>
       <div id="corr-watch-section">
         <div class="corr-section-hdr" id="corr-watch-hdr">Watching</div>
-        <div id="corr-watch-list" class="corr-card-list"></div>
+        <div id="corr-watch-list" class="corr-card-list"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="dropCorrCard(event,'watch')"></div>
+      </div>
+      <div id="corr-monitor-section" class="corr-section-monitor" style="display:none">
+        <div class="corr-section-hdr">My Watch <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here)</span></div>
+        <div id="corr-monitor-list" class="corr-card-list"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="dropCorrCard(event,'monitor')"></div>
+      </div>
+      <div id="corr-ignore-section" class="corr-section-ignore" style="display:none">
+        <div class="corr-section-hdr">Ignored <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here to hide)</span></div>
+        <div id="corr-ignore-list" class="corr-card-list"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="dropCorrCard(event,'ignore')"></div>
       </div>
     </div>
     <div class="corr-exit-panel">
@@ -3674,6 +3701,7 @@
   let corrEntered    = (() => { try { return JSON.parse(localStorage.getItem("corrEntered")    || "{}"); } catch { return {}; } })();
   let corrEntryTimes = (() => { try { return JSON.parse(localStorage.getItem("corrEntryTimes") || "{}"); } catch { return {}; } })();
   let _corrHistory   = {}; // ticker → last known correlation value, used to compute trend each refresh
+  let _corrUserSort  = (() => { try { return JSON.parse(localStorage.getItem("corrUserSort") || "{}"); } catch { return {}; } })(); // ticker → "entry"|"watch"|"monitor"|"ignore"
 
   function _saveCorrEntered() { localStorage.setItem("corrEntered", JSON.stringify(corrEntered)); }
 
@@ -4357,13 +4385,30 @@
 
     document.getElementById("corr-count").textContent = tickers.length + " tickers";
 
-    const entry = tickers.filter(t => Math.round(t.correlation * 100) >= corrEntryThreshold && t.price_rising && t.density_rising);
-    const watch = tickers.filter(t => Math.round(t.correlation * 100) <  corrEntryThreshold && t.correlation > 0 && t.price_rising && t.density_rising);
+    // Distribute tickers to sections — user drag overrides take priority over auto-assignment
+    const entry = tickers.filter(t => {
+      const ov = _corrUserSort[t.ticker];
+      if (ov === "entry") return true;
+      if (ov) return false;
+      return Math.round(t.correlation * 100) >= corrEntryThreshold && t.price_rising && t.density_rising;
+    });
+    const watch = tickers.filter(t => {
+      const ov = _corrUserSort[t.ticker];
+      if (ov === "watch") return true;
+      if (ov) return false;
+      return Math.round(t.correlation * 100) < corrEntryThreshold && t.correlation > 0 && t.price_rising && t.density_rising;
+    });
+    const monitor = tickers.filter(t => _corrUserSort[t.ticker] === "monitor");
+    const ignored = tickers.filter(t => _corrUserSort[t.ticker] === "ignore");
 
-    const entrySec  = document.getElementById("corr-entry-section");
-    const entryList = document.getElementById("corr-entry-list");
-    const watchList = document.getElementById("corr-watch-list");
-    const watchHdr  = document.getElementById("corr-watch-hdr");
+    const entrySec   = document.getElementById("corr-entry-section");
+    const entryList  = document.getElementById("corr-entry-list");
+    const watchList  = document.getElementById("corr-watch-list");
+    const watchHdr   = document.getElementById("corr-watch-hdr");
+    const monitorSec = document.getElementById("corr-monitor-section");
+    const monitorList= document.getElementById("corr-monitor-list");
+    const ignoreSec  = document.getElementById("corr-ignore-section");
+    const ignoreList = document.getElementById("corr-ignore-list");
 
     // Track when tickers first appear in entry zone
     const now = Date.now();
@@ -4388,19 +4433,34 @@
     // Prune tickers that dropped off the view
     Object.keys(_corrHistory).forEach(tk => { if (!tickers.find(t => t.ticker === tk)) delete _corrHistory[tk]; });
 
-    _corrNavTickers = [...entry, ...watch];
+    _corrNavTickers = [...entry, ...watch, ...monitor, ...ignored];
+    const eLen = entry.length, wLen = watch.length, mLen = monitor.length;
 
     if (entry.length) {
-      entrySec.style.display  = "";
+      entrySec.style.display = "";
       entryList.innerHTML = entry.map((t, i) => _corrCardHTML(t, true, i, _corrTrend[t.ticker])).join("");
     } else {
       entrySec.style.display = "none";
     }
 
     watchList.innerHTML = watch.length
-      ? watch.map((t, i) => _corrCardHTML(t, false, entry.length + i, _corrTrend[t.ticker])).join("")
+      ? watch.map((t, i) => _corrCardHTML(t, false, eLen + i, _corrTrend[t.ticker])).join("")
       : '<div class="corr-empty">No tickers with positive correlation yet.</div>';
     watchHdr.style.display = "";
+
+    if (monitor.length) {
+      monitorSec.style.display = "";
+      monitorList.innerHTML = monitor.map((t, i) => _corrCardHTML(t, false, eLen + wLen + i, _corrTrend[t.ticker])).join("");
+    } else {
+      monitorSec.style.display = "none";
+    }
+
+    if (ignored.length) {
+      ignoreSec.style.display = "";
+      ignoreList.innerHTML = ignored.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + i, _corrTrend[t.ticker])).join("");
+    } else {
+      ignoreSec.style.display = "none";
+    }
 
     renderCorrExitPanel();
   }
@@ -4415,6 +4475,22 @@
   function openBubbleFromCorr(ticker, navIdx) {
     _bubbleReturnState = { view: "corr", navIdx };
     openBubbleMap(ticker, true);
+  }
+
+  function dropCorrCard(event, targetSection) {
+    event.preventDefault();
+    event.currentTarget.classList.remove("drag-over");
+    const ticker = event.dataTransfer.getData("text/plain");
+    if (!ticker) return;
+    _corrUserSort[ticker] = targetSection;
+    localStorage.setItem("corrUserSort", JSON.stringify(_corrUserSort));
+    buildCorrView();
+  }
+
+  function resetCorrSort(ticker) {
+    delete _corrUserSort[ticker];
+    localStorage.setItem("corrUserSort", JSON.stringify(_corrUserSort));
+    buildCorrView();
   }
 
   function _corrCardHTML(t, isEntry, navIdx, trend) {
@@ -4462,12 +4538,19 @@
                      : "";
     const trendDisp  = trendText ? `<span style="color:${trendColor};font-size:11px;font-weight:700;letter-spacing:.02em">${trendText}</span>` : "";
 
-    return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openCorrPopupAt(${navIdx})">
+    const userSorted  = !!_corrUserSort[t.ticker];
+    const resetBadge  = userSorted ? `<span class="corr-sort-badge" onclick="event.stopPropagation();resetCorrSort('${safeTk}')" title="Reset to auto">✕ pinned</span>` : "";
+
+    return `<div class="corr-card${isEntry ? " entry-zone" : ""}" draggable="true"
+      ondragstart="event.dataTransfer.setData('text/plain','${safeTk}');this.classList.add('dragging')"
+      ondragend="this.classList.remove('dragging')"
+      onclick="openCorrPopupAt(${navIdx})">
       <div class="corr-card-hdr">
         <span class="corr-ticker">${t.ticker}</span>
         <span class="corr-price">${t.price ? "$"+t.price : ""}</span>
         <span class="${chgColor}">${chgDisp}</span>
         ${isEntry ? `<span class="corr-entry-badge">↑ Entry</span>` : ""}
+        ${resetBadge}
       </div>
       <div class="corr-r-row">
         <span class="corr-r-val ${rClass}">${pct}%</span>
