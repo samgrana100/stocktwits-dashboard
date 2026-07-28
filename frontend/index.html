@@ -1253,6 +1253,20 @@
           ondragleave="this.classList.remove('drag-over')"
           ondrop="dropCorrCard(event,'monitor')"></div>
       </div>
+      <div id="corr-priority-section" class="corr-section-monitor" style="display:none">
+        <div class="corr-section-hdr">High Priority <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here)</span></div>
+        <div id="corr-priority-list" class="corr-card-list"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="dropCorrCard(event,'priority')"></div>
+      </div>
+      <div id="corr-research-section" class="corr-section-monitor" style="display:none">
+        <div class="corr-section-hdr">Researching <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here)</span></div>
+        <div id="corr-research-list" class="corr-card-list"
+          ondragover="event.preventDefault();this.classList.add('drag-over')"
+          ondragleave="this.classList.remove('drag-over')"
+          ondrop="dropCorrCard(event,'research')"></div>
+      </div>
       <div id="corr-ignore-section" class="corr-section-ignore" style="display:none">
         <div class="corr-section-hdr">Ignored <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here to hide)</span></div>
         <div id="corr-ignore-list" class="corr-card-list"
@@ -4398,17 +4412,23 @@
       if (ov) return false;
       return Math.round(t.correlation * 100) < corrEntryThreshold && t.correlation > 0 && t.price_rising && t.density_rising;
     });
-    const monitor = tickers.filter(t => _corrUserSort[t.ticker] === "monitor");
-    const ignored = tickers.filter(t => _corrUserSort[t.ticker] === "ignore");
+    const monitor  = tickers.filter(t => _corrUserSort[t.ticker] === "monitor");
+    const priority = tickers.filter(t => _corrUserSort[t.ticker] === "priority");
+    const research = tickers.filter(t => _corrUserSort[t.ticker] === "research");
+    const ignored  = tickers.filter(t => _corrUserSort[t.ticker] === "ignore");
 
-    const entrySec   = document.getElementById("corr-entry-section");
-    const entryList  = document.getElementById("corr-entry-list");
-    const watchList  = document.getElementById("corr-watch-list");
-    const watchHdr   = document.getElementById("corr-watch-hdr");
-    const monitorSec = document.getElementById("corr-monitor-section");
-    const monitorList= document.getElementById("corr-monitor-list");
-    const ignoreSec  = document.getElementById("corr-ignore-section");
-    const ignoreList = document.getElementById("corr-ignore-list");
+    const entrySec    = document.getElementById("corr-entry-section");
+    const entryList   = document.getElementById("corr-entry-list");
+    const watchList   = document.getElementById("corr-watch-list");
+    const watchHdr    = document.getElementById("corr-watch-hdr");
+    const monitorSec  = document.getElementById("corr-monitor-section");
+    const monitorList = document.getElementById("corr-monitor-list");
+    const prioritySec = document.getElementById("corr-priority-section");
+    const priorityList= document.getElementById("corr-priority-list");
+    const researchSec = document.getElementById("corr-research-section");
+    const researchList= document.getElementById("corr-research-list");
+    const ignoreSec   = document.getElementById("corr-ignore-section");
+    const ignoreList  = document.getElementById("corr-ignore-list");
 
     // Track when tickers first appear in entry zone
     const now = Date.now();
@@ -4433,8 +4453,8 @@
     // Prune tickers that dropped off the view
     Object.keys(_corrHistory).forEach(tk => { if (!tickers.find(t => t.ticker === tk)) delete _corrHistory[tk]; });
 
-    _corrNavTickers = [...entry, ...watch, ...monitor, ...ignored];
-    const eLen = entry.length, wLen = watch.length, mLen = monitor.length;
+    _corrNavTickers = [...entry, ...watch, ...monitor, ...priority, ...research, ...ignored];
+    const eLen = entry.length, wLen = watch.length, mLen = monitor.length, pLen = priority.length, rLen = research.length;
 
     if (entry.length) {
       entrySec.style.display = "";
@@ -4455,9 +4475,23 @@
       monitorSec.style.display = "none";
     }
 
+    if (priority.length) {
+      prioritySec.style.display = "";
+      priorityList.innerHTML = priority.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + i, _corrTrend[t.ticker])).join("");
+    } else {
+      prioritySec.style.display = "none";
+    }
+
+    if (research.length) {
+      researchSec.style.display = "";
+      researchList.innerHTML = research.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + pLen + i, _corrTrend[t.ticker])).join("");
+    } else {
+      researchSec.style.display = "none";
+    }
+
     if (ignored.length) {
       ignoreSec.style.display = "";
-      ignoreList.innerHTML = ignored.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + i, _corrTrend[t.ticker])).join("");
+      ignoreList.innerHTML = ignored.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + pLen + rLen + i, _corrTrend[t.ticker])).join("");
     } else {
       ignoreSec.style.display = "none";
     }
