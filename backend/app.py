@@ -24,7 +24,7 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications, price_history, screener_snapshots
+from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications, price_history, screener_snapshots
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
@@ -152,10 +152,6 @@ def refresh_finviz_token() -> bool:
 # Pipeline control
 pipeline_thread    = None
 pipeline_stop_flag = [False]
-
-# Scorer control
-scorer_thread    = None
-scorer_stop_flag = [False]
 
 # Finviz screener data cache
 finviz_cache      = {}
@@ -1271,7 +1267,7 @@ def get_finviz_news_endpoint(ticker):
 
 @app.route("/api/ticker-news/<ticker>")
 def get_ticker_news_endpoint(ticker):
-    """Returns Yahoo Finance news + SEC 8-K filings for one ticker (cached 30 min)."""
+    """Returns aggregated news for one ticker from PRN, Business Wire, GlobeNewswire, Benzinga, and SEC EDGAR (cached 30 min)."""
     ticker   = ticker.upper()
     articles = get_ticker_news(ticker)
     return jsonify({"articles": articles})
@@ -1634,42 +1630,6 @@ def get_3d_screener():
     return jsonify(result)
 
 
-@app.route("/api/debug/trail/<ticker>")
-def debug_trail(ticker):
-    """Return raw screener_snapshots for a ticker today so trail Y values can be validated."""
-    ticker = ticker.upper()
-    today_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    snaps = list(screener_snapshots.find(
-        {"ts": {"$gte": today_start}, "ticker": ticker},
-        {"_id": 0, "ticker": 1, "ts": 1, "price_chg": 1, "rel_vol": 1, "volume": 1}
-    ).sort("ts", 1))
-
-    # Also grab the first price_history record today to show the baseline price
-    first_ph = price_history.find_one(
-        {"ticker": ticker, "timestamp": {"$gte": today_start.isoformat()}},
-        sort=[("timestamp", 1)]
-    )
-
-    return jsonify({
-        "ticker":       ticker,
-        "snap_count":   len(snaps),
-        "first_price_history": {
-            "timestamp": first_ph.get("timestamp") if first_ph else None,
-            "price":     first_ph.get("price")     if first_ph else None,
-        },
-        "snapshots": [
-            {
-                "ts_utc":    s["ts"].strftime("%Y-%m-%dT%H:%M"),
-                "ts_et":     _utc_dt_to_et_hhmm(s["ts"]),
-                "price_chg": s.get("price_chg"),
-                "rel_vol":   s.get("rel_vol"),
-                "volume":    s.get("volume"),
-            }
-            for s in snaps
-        ]
-    })
-
-
 @app.route("/api/quickscore/<ticker>")
 def get_quickscore(ticker):
     """Lightweight score summary for one ticker at a given window. No price fetch, no chart build."""
@@ -1878,28 +1838,6 @@ def toggle_auto_trade_saved():
         {"$set": {"saved": saved}}
     )
     return jsonify({"ticker": ticker, "saved": saved})
-
-
-@app.route("/api/trade-chart/<ticker>")
-def trade_chart_endpoint(ticker):
-    entered_at_str = request.args.get("entered_at", "")
-    exited_at_str  = request.args.get("exited_at",  "")
-    try:
-        entered_dt = datetime.strptime(entered_at_str, "%Y-%m-%dT%H:%M:%SZ")
-        exited_dt  = datetime.strptime(exited_at_str,  "%Y-%m-%dT%H:%M:%SZ")
-    except Exception:
-        return jsonify({"error": "invalid timestamps"}), 400
-
-    start_dt = entered_dt - timedelta(minutes=60)
-    end_dt   = exited_dt  + timedelta(minutes=30)
-
-    docs = list(price_history.find(
-        {"ticker": ticker, "ts": {"$gte": start_dt, "$lte": end_dt}},
-        {"_id": 0, "ts": 1, "price": 1}
-    ).sort("ts", 1))
-
-    prices = [{"ts": d["ts"].strftime("%Y-%m-%dT%H:%M:%SZ"), "price": d["price"]} for d in docs]
-    return jsonify({"prices": prices})
 
 
 @app.route("/api/ticker-messages/<ticker>")
@@ -2145,13 +2083,6 @@ def _et_now_str() -> str:
     et       = now_utc + timedelta(hours=offset)
     tz_label = "EDT" if offset == -4 else "EST"
     return et.strftime(f"%I:%M %p {tz_label}")
-
-
-@app.route("/api/test-sms")
-def test_sms_endpoint():
-    _send_sms("Test from Stocktwits Dashboard — Twilio is working!", {"type": "test", "ticker": "TEST"})
-    status = "sent" if _twilio_ready else "disabled (check env vars)"
-    return jsonify({"status": status, "to": _NOTIFY_PHONE if _twilio_ready else None})
 
 
 def _send_sms(body: str, meta: dict):

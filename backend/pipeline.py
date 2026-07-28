@@ -18,7 +18,6 @@ PIPELINE_WORKERS    = int(os.getenv("PIPELINE_WORKERS",    "2"))
 INTER_TICKER_DELAY  = float(os.getenv("INTER_TICKER_DELAY", "0.0"))
 BACKFILL_HOURS      = int(os.getenv("BACKFILL_HOURS",      "24"))
 BACKFILL_PAGE_DELAY = float(os.getenv("BACKFILL_PAGE_DELAY", "0.6"))
-CSV_PATH = "data/screener.csv"
 
 _seen_lock = threading.Lock()
 

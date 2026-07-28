@@ -56,19 +56,6 @@ def get_window_start_iso(rolling_window_minutes: int) -> str:
     return window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def filter_by_window(messages: list, rolling_window_minutes: int) -> list:
-    """
-    Filters a list of message documents to only include messages
-    within the rolling window.
-    """
-    window_start = get_window_start_iso(rolling_window_minutes)
-    filtered = [
-        msg for msg in messages
-        if msg.get("created_at_utc", "") >= window_start
-    ]
-    return filtered
-
-
 def load_tickers_from_finviz() -> list:
     """
     Fetches a fresh ticker list directly from Finviz Elite API.
@@ -135,40 +122,6 @@ def load_tickers_from_finviz() -> list:
 
     except Exception as e:
         print("[TICKERS] Finviz fetch failed: " + str(e) + ". Falling back to local CSV.")
-        return []
-
-
-def load_tickers_from_csv(csv_path: str) -> list:
-    """
-    Loads and validates a local Finviz CSV screener export.
-    Used as fallback if Finviz API fetch fails.
-    """
-
-    if not os.path.exists(csv_path):
-        print("[TICKERS] File not found: " + csv_path)
-        return []
-
-    try:
-        df = pd.read_csv(csv_path)
-
-        if "Ticker" not in df.columns:
-            print("[TICKERS] No Ticker column found in CSV.")
-            return []
-
-        tickers = (
-            df["Ticker"]
-            .dropna()
-            .str.strip()
-            .str.upper()
-            .unique()
-            .tolist()
-        )
-
-        print("[TICKERS] Loaded " + str(len(tickers)) + " tickers from local CSV.")
-        return tickers
-
-    except Exception as e:
-        print("[TICKERS] Failed to load CSV: " + str(e))
         return []
 
 
