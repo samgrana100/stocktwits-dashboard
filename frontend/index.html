@@ -4438,7 +4438,10 @@
     tickers.forEach(t => {
       const prev = _corrHistory[t.ticker];
       const curr = t.correlation;
-      if (prev == null) {
+      if (curr < 0) {
+        // Negative correlation always signals a broken/falling signal regardless of history
+        _corrTrend[t.ticker] = "falling";
+      } else if (prev == null) {
         _corrTrend[t.ticker] = "new";
       } else {
         const delta = curr - prev;
