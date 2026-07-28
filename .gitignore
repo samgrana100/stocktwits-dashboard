@@ -4,3 +4,4 @@ __pycache__/
 *.pyc
 backend/_*.py
 backend/screener_config.json
+*.log
