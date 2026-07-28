@@ -3673,6 +3673,7 @@
   let corrMinMsgs         = parseInt(localStorage.getItem("corrMinMsgs")        || "5");
   let corrEntered    = (() => { try { return JSON.parse(localStorage.getItem("corrEntered")    || "{}"); } catch { return {}; } })();
   let corrEntryTimes = (() => { try { return JSON.parse(localStorage.getItem("corrEntryTimes") || "{}"); } catch { return {}; } })();
+  let _corrHistory   = {}; // ticker → last known correlation value, used to compute trend each refresh
 
   function _saveCorrEntered() { localStorage.setItem("corrEntered", JSON.stringify(corrEntered)); }
 
@@ -4371,17 +4372,33 @@
     Object.keys(corrEntryTimes).forEach(tk => { if (!entrySet.has(tk)) delete corrEntryTimes[tk]; });
     localStorage.setItem("corrEntryTimes", JSON.stringify(corrEntryTimes));
 
+    // Compute per-ticker correlation trend by comparing to the previous refresh value
+    const _corrTrend = {};
+    tickers.forEach(t => {
+      const prev = _corrHistory[t.ticker];
+      const curr = t.correlation;
+      if (prev == null) {
+        _corrTrend[t.ticker] = "new";
+      } else {
+        const delta = curr - prev;
+        _corrTrend[t.ticker] = delta > 0.03 ? "rising" : delta < -0.03 ? "falling" : "stable";
+      }
+      _corrHistory[t.ticker] = curr;
+    });
+    // Prune tickers that dropped off the view
+    Object.keys(_corrHistory).forEach(tk => { if (!tickers.find(t => t.ticker === tk)) delete _corrHistory[tk]; });
+
     _corrNavTickers = [...entry, ...watch];
 
     if (entry.length) {
       entrySec.style.display  = "";
-      entryList.innerHTML = entry.map((t, i) => _corrCardHTML(t, true, i)).join("");
+      entryList.innerHTML = entry.map((t, i) => _corrCardHTML(t, true, i, _corrTrend[t.ticker])).join("");
     } else {
       entrySec.style.display = "none";
     }
 
     watchList.innerHTML = watch.length
-      ? watch.map((t, i) => _corrCardHTML(t, false, entry.length + i)).join("")
+      ? watch.map((t, i) => _corrCardHTML(t, false, entry.length + i, _corrTrend[t.ticker])).join("")
       : '<div class="corr-empty">No tickers with positive correlation yet.</div>';
     watchHdr.style.display = "";
 
@@ -4394,7 +4411,7 @@
     openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, idx);
   }
 
-  function _corrCardHTML(t, isEntry, navIdx) {
+  function _corrCardHTML(t, isEntry, navIdx, trend) {
     const r        = t.correlation;
     const pct      = Math.round(r * 100);
     const rClass   = r > 0 ? "corr-r-pos" : r < 0 ? "corr-r-neg" : "corr-r-neu";
@@ -4429,6 +4446,16 @@
     const ageColor   = ageMin >= 15 ? "#f87171" : ageMin >= 5 ? "#facc15" : "#4ade80";
     const ageDisp    = isEntry && enteredAt ? `<span style="color:${ageColor};font-size:10px">${ageMin}m in zone</span>` : "";
 
+    const trendColor = trend === "rising"  ? "#4ade80"
+                     : trend === "falling" ? "#f87171"
+                     : trend === "stable"  ? "#facc15"
+                     : "var(--text-dimmed)";
+    const trendText  = trend === "rising"  ? "↑ Rising"
+                     : trend === "falling" ? "↓ Falling"
+                     : trend === "stable"  ? "→ Stable"
+                     : "";
+    const trendDisp  = trendText ? `<span style="color:${trendColor};font-size:11px;font-weight:700;letter-spacing:.02em">${trendText}</span>` : "";
+
     return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openCorrPopupAt(${navIdx})">
       <div class="corr-card-hdr">
         <span class="corr-ticker">${t.ticker}</span>
@@ -4439,6 +4466,7 @@
       <div class="corr-r-row">
         <span class="corr-r-val ${rClass}">${pct}%</span>
         <span style="font-size:10px;color:var(--text-dimmed)">correlation</span>
+        ${trendDisp}
       </div>
       <div class="corr-bar-wrap">
         <div class="corr-bar">
