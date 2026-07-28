@@ -1246,29 +1246,29 @@
           ondragleave="this.classList.remove('drag-over')"
           ondrop="dropCorrCard(event,'watch')"></div>
       </div>
-      <div id="corr-monitor-section" class="corr-section-monitor" style="display:none">
-        <div class="corr-section-hdr">My Watch <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here)</span></div>
+      <div id="corr-monitor-section" class="corr-section-monitor">
+        <div class="corr-section-hdr">My Watch</div>
         <div id="corr-monitor-list" class="corr-card-list"
           ondragover="event.preventDefault();this.classList.add('drag-over')"
           ondragleave="this.classList.remove('drag-over')"
           ondrop="dropCorrCard(event,'monitor')"></div>
       </div>
-      <div id="corr-priority-section" class="corr-section-monitor" style="display:none">
-        <div class="corr-section-hdr">High Priority <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here)</span></div>
+      <div id="corr-priority-section" class="corr-section-monitor">
+        <div class="corr-section-hdr">High Priority</div>
         <div id="corr-priority-list" class="corr-card-list"
           ondragover="event.preventDefault();this.classList.add('drag-over')"
           ondragleave="this.classList.remove('drag-over')"
           ondrop="dropCorrCard(event,'priority')"></div>
       </div>
-      <div id="corr-research-section" class="corr-section-monitor" style="display:none">
-        <div class="corr-section-hdr">Researching <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here)</span></div>
+      <div id="corr-research-section" class="corr-section-monitor">
+        <div class="corr-section-hdr">Researching</div>
         <div id="corr-research-list" class="corr-card-list"
           ondragover="event.preventDefault();this.classList.add('drag-over')"
           ondragleave="this.classList.remove('drag-over')"
           ondrop="dropCorrCard(event,'research')"></div>
       </div>
-      <div id="corr-ignore-section" class="corr-section-ignore" style="display:none">
-        <div class="corr-section-hdr">Ignored <span style="font-weight:400;font-size:9px;opacity:.6">(drag cards here to hide)</span></div>
+      <div id="corr-ignore-section" class="corr-section-ignore">
+        <div class="corr-section-hdr">Ignored</div>
         <div id="corr-ignore-list" class="corr-card-list"
           ondragover="event.preventDefault();this.classList.add('drag-over')"
           ondragleave="this.classList.remove('drag-over')"
@@ -4421,13 +4421,9 @@
     const entryList   = document.getElementById("corr-entry-list");
     const watchList   = document.getElementById("corr-watch-list");
     const watchHdr    = document.getElementById("corr-watch-hdr");
-    const monitorSec  = document.getElementById("corr-monitor-section");
     const monitorList = document.getElementById("corr-monitor-list");
-    const prioritySec = document.getElementById("corr-priority-section");
     const priorityList= document.getElementById("corr-priority-list");
-    const researchSec = document.getElementById("corr-research-section");
     const researchList= document.getElementById("corr-research-list");
-    const ignoreSec   = document.getElementById("corr-ignore-section");
     const ignoreList  = document.getElementById("corr-ignore-list");
 
     // Track when tickers first appear in entry zone
@@ -4468,33 +4464,23 @@
       : '<div class="corr-empty">No tickers with positive correlation yet.</div>';
     watchHdr.style.display = "";
 
-    if (monitor.length) {
-      monitorSec.style.display = "";
-      monitorList.innerHTML = monitor.map((t, i) => _corrCardHTML(t, false, eLen + wLen + i, _corrTrend[t.ticker])).join("");
-    } else {
-      monitorSec.style.display = "none";
-    }
+    const _emptyDrop = '<div class="corr-empty" style="font-size:10px;opacity:.4;pointer-events:none">Drop cards here</div>';
 
-    if (priority.length) {
-      prioritySec.style.display = "";
-      priorityList.innerHTML = priority.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + i, _corrTrend[t.ticker])).join("");
-    } else {
-      prioritySec.style.display = "none";
-    }
+    monitorList.innerHTML = monitor.length
+      ? monitor.map((t, i) => _corrCardHTML(t, false, eLen + wLen + i, _corrTrend[t.ticker])).join("")
+      : _emptyDrop;
 
-    if (research.length) {
-      researchSec.style.display = "";
-      researchList.innerHTML = research.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + pLen + i, _corrTrend[t.ticker])).join("");
-    } else {
-      researchSec.style.display = "none";
-    }
+    priorityList.innerHTML = priority.length
+      ? priority.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + i, _corrTrend[t.ticker])).join("")
+      : _emptyDrop;
 
-    if (ignored.length) {
-      ignoreSec.style.display = "";
-      ignoreList.innerHTML = ignored.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + pLen + rLen + i, _corrTrend[t.ticker])).join("");
-    } else {
-      ignoreSec.style.display = "none";
-    }
+    researchList.innerHTML = research.length
+      ? research.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + pLen + i, _corrTrend[t.ticker])).join("")
+      : _emptyDrop;
+
+    ignoreList.innerHTML = ignored.length
+      ? ignored.map((t, i) => _corrCardHTML(t, false, eLen + wLen + mLen + pLen + rLen + i, _corrTrend[t.ticker])).join("")
+      : _emptyDrop;
 
     renderCorrExitPanel();
   }
