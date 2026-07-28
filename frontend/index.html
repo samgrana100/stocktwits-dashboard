@@ -4673,12 +4673,16 @@
       const isExit  = pctOff >= corrExitPct;
       const safeTk  = ticker.replace(/'/g, "\\'");
       const entryTime = new Date(entry.enteredAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+      const tkData    = allTickers.find(t => t.ticker === ticker);
+      const bullPct   = tkData?.bull_pct ?? null;
+      const bullColor = bullPct === null ? "var(--text-dimmed)" : bullPct >= 65 ? "#4ade80" : bullPct >= 45 ? "#facc15" : "#f87171";
+      const bullDisp  = bullPct !== null ? ` · <span style="color:${bullColor};font-weight:600">${bullPct}% bull</span>` : "";
       return `<div class="corr-exit-card">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span class="corr-exit-ticker">${ticker}</span>
           ${isExit ? '<span class="corr-exit-signal">↓ EXIT SIGNAL</span>' : ""}
         </div>
-        <div class="corr-exit-meta">Entered ${entryTime} · r=${entry.entryCorrPct}%</div>
+        <div class="corr-exit-meta">Entered ${entryTime} · r=${entry.entryCorrPct}%${bullDisp}</div>
         <div class="corr-exit-bar-wrap"><div class="corr-exit-bar-fill" style="width:${fillW}%"></div></div>
         <div class="corr-exit-pct-lbl">${pctOff}% off peak density (exit at ${corrExitPct}%)</div>
         <div class="corr-exit-actions">
