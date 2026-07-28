@@ -4380,7 +4380,9 @@
     const safeInd  = (t.industry|| "--").replace(/'/g, "\\'");
     const chgColor = (t.change || 0) > 0 ? "corr-change-up" : "corr-change-down";
     const chgDisp  = t.change != null ? (t.change > 0 ? "+" : "") + t.change + "%" : "";
-    const density  = t.total_messages != null ? t.total_messages + " msgs" : "";
+    const msgCount  = t.total_messages ?? 0;
+    const densColor = msgCount >= 19 ? "#4ade80" : msgCount >= 6 ? "#facc15" : "#f87171";
+    const density   = t.total_messages != null ? `<span style="color:${densColor}">${t.total_messages} msgs</span>` : "";
     const inMonitor = corrEntered[t.ticker] ? " (monitoring)" : "";
     return `<div class="corr-card${isEntry ? " entry-zone" : ""}" onclick="openCorrPopupAt(${navIdx})">
       <div class="corr-card-hdr">
