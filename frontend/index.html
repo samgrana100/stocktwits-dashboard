@@ -1110,17 +1110,6 @@
     <button class="filter-reset" style="margin-left:4px" onclick="setAllSentimentWindows(document.getElementById('global-sentiment-sel').value)">Set All</button>
   </div>
   <div class="filter-sep"></div>
-  <div class="filter-item">
-    <span>Signal</span>
-    <div style="display:flex;gap:4px;flex-wrap:wrap">
-      <button class="sig-filter-btn active" onclick="setSignalFilter('all',this)">All</button>
-      <button class="sig-filter-btn" onclick="setSignalFilter('bullish_corr',this)">↑ Bullish Corr</button>
-      <button class="sig-filter-btn" onclick="setSignalFilter('bearish_corr',this)">↓ Bearish Corr</button>
-      <button class="sig-filter-btn" onclick="setSignalFilter('early_long',this)">↑ Density Rising</button>
-      <button class="sig-filter-btn" onclick="setSignalFilter('early_short',this)">↓ Density Falling</button>
-    </div>
-  </div>
-  <div class="filter-sep"></div>
   <button class="filter-reset" onclick="resetFilters()">Reset Filters</button>
 </div>
 
@@ -2138,14 +2127,6 @@
     return '<span class="dir-flat">→</span>';
   }
 
-  let activeSignalFilter = "all";
-  function setSignalFilter(sig, btn) {
-    activeSignalFilter = sig;
-    document.querySelectorAll(".filter-bar .sig-filter-btn").forEach(b => b.classList.remove("active"));
-    if (btn) btn.classList.add("active");
-    applyFiltersAndRender();
-  }
-
   function surgeCell(ratio) {
     if (!ratio || ratio < 1.5) return "";
     const cls = ratio >= 3 ? "surge-hot" : "surge-rising";
@@ -2315,8 +2296,6 @@
         if (!haystack.includes(fKeyword)) return false;
       }
 
-      if (activeSignalFilter !== "all" && (t.signal || null) !== activeSignalFilter) return false;
-
       return true;
     });
 
@@ -2350,8 +2329,6 @@
     sortKeys = [{ key: "avg_composite_score", asc: false }];
     updateSortHeaders();
     clearKeyword();
-    activeSignalFilter = "all";
-    document.querySelectorAll(".filter-bar .sig-filter-btn").forEach((b, i) => b.classList.toggle("active", i === 0));
     applyFiltersAndRender();
   }
   let refreshTimer       = 90;
@@ -2731,6 +2708,11 @@
   async function openPopup(ticker, company, sector, industry, _navList, _navIdx) {
     currentPopupTicker  = ticker;
     currentPopupWindow  = currentWindow;
+    // Inject entry triangle if this ticker has an active monitored position and no explicit trade markers set
+    if (!_tradeMarkers && corrEntered[ticker]?.entryPrice) {
+      const e = corrEntered[ticker];
+      _tradeMarkers = { enteredAt: e.enteredAt, exitedAt: null, entryPrice: e.entryPrice, exitPrice: null };
+    }
     document.getElementById("popup-overlay").classList.add("active");
     // Show back-to-map button only when launched from the bubble map
     document.getElementById("popup-back-btn").style.display = bubbleViewActive ? "" : "none";
@@ -3104,8 +3086,8 @@
         return sh + ":" + sm;
       };
 
-      const entryKey = toAxisKey(_tradeMarkers.enteredAt);
-      const exitKey  = toAxisKey(_tradeMarkers.exitedAt);
+      const entryKey = _tradeMarkers.enteredAt ? toAxisKey(_tradeMarkers.enteredAt) : null;
+      const exitKey  = _tradeMarkers.exitedAt  ? toAxisKey(_tradeMarkers.exitedAt)  : null;
 
       // If exit price wasn't stored (429 at exit time), recover it from chart bar data
       let exitPrice = _tradeMarkers.exitPrice;
@@ -3114,11 +3096,11 @@
         if (exitIdx !== -1 && rawPFilled[exitIdx] != null) exitPrice = rawPFilled[exitIdx];
       }
 
-      const tmY     = axisKeys.map(k => k===entryKey ? normTrade(_tradeMarkers.entryPrice) : k===exitKey ? normTrade(exitPrice) : null);
-      const tmRaw   = axisKeys.map(k => k===entryKey ? "▲ ENTRY $"+_tradeMarkers.entryPrice : k===exitKey ? "▼ EXIT $"+exitPrice : null);
-      const tmColor = axisKeys.map(k => k===entryKey ? "#4ade80" : k===exitKey ? "#f87171" : "transparent");
+      const tmY     = axisKeys.map(k => k===entryKey ? normTrade(_tradeMarkers.entryPrice) : (exitKey && k===exitKey) ? normTrade(exitPrice) : null);
+      const tmRaw   = axisKeys.map(k => k===entryKey ? "▲ ENTRY $"+_tradeMarkers.entryPrice : (exitKey && k===exitKey) ? "▼ EXIT $"+exitPrice : null);
+      const tmColor = axisKeys.map(k => k===entryKey ? "#4ade80" : (exitKey && k===exitKey) ? "#f87171" : "transparent");
       const tmRot   = axisKeys.map(k => k===entryKey ? 0 : 180);
-      const tmRad   = axisKeys.map(k => (k===entryKey||k===exitKey) ? 11 : 0);
+      const tmRad   = axisKeys.map(k => (k===entryKey || (exitKey && k===exitKey)) ? 11 : 0);
 
       tradeDataset = {
         label: "Trade", data: tmY, rawData: tmRaw,
