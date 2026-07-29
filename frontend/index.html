@@ -1325,156 +1325,234 @@
 
     <div class="guide-hero">
       <div class="guide-hero-title">Stocktwits Sentiment Dashboard</div>
-      <div class="guide-hero-sub">Built by Samuel Grana &nbsp;·&nbsp; Supervised by Dr. Kaamran Raahemifar</div>
+      <div class="guide-hero-sub">Built by Samuel Grana &nbsp;·&nbsp; Supervised by Dr. Kaamran Raahemifar &nbsp;·&nbsp; Pennsylvania State University</div>
     </div>
 
+    <!-- WHAT THIS IS -->
     <div class="guide-section">
       <div class="guide-section-title">What This Is</div>
-      <p class="guide-p">This dashboard monitors real-time social sentiment from Stocktwits to detect momentum shifts in small-cap and OTC stocks. It combines crowd psychology from social media with AI financial NLP and official regulatory disclosures to give a complete picture of market activity around any screened ticker.</p>
+      <p class="guide-p">This dashboard monitors real-time social sentiment from Stocktwits to detect early momentum shifts in small-cap and OTC stocks. It combines crowd psychology from social media with AI financial NLP (FinBERT), official regulatory filings, and price data to give a complete, multi-source picture of market activity around any screened ticker — updated every 45 seconds.</p>
+      <p class="guide-p">The core insight is that Stocktwits message density and price often move together before a breakout. When the crowd starts talking about a stock at the same time the price is rising, that correlation is an early signal worth watching — even before news breaks on the wire.</p>
     </div>
 
+    <!-- DATA FLOW -->
     <div class="guide-section">
       <div class="guide-section-title">How Data Flows</div>
       <div class="guide-flow-row">
-        <div class="guide-flow-step"><div class="guide-flow-icon">1</div><div class="guide-flow-label">Finviz Elite Screener</div><div class="guide-flow-desc">Provides the live ticker list. The screener filters for high relative volume and momentum — only stocks with unusual activity appear.</div></div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">1</div><div class="guide-flow-label">Finviz Elite</div><div class="guide-flow-desc">Provides the live ticker universe. Filters for high relative volume and price movement — only stocks with unusual activity enter the pipeline.</div></div>
         <div class="guide-flow-arrow">&#x2192;</div>
-        <div class="guide-flow-step"><div class="guide-flow-icon">2</div><div class="guide-flow-label">Pipeline</div><div class="guide-flow-desc">Fetches the 30 most recent Stocktwits messages per ticker every 90 seconds. Click "Start Pipeline" to run it.</div></div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">2</div><div class="guide-flow-label">Pipeline</div><div class="guide-flow-desc">Fetches the latest Stocktwits messages for every ticker concurrently every 90 seconds. New tickers are backfilled with 24 hours of history on first encounter.</div></div>
         <div class="guide-flow-arrow">&#x2192;</div>
-        <div class="guide-flow-step"><div class="guide-flow-icon">3</div><div class="guide-flow-label">FinBERT AI Scoring</div><div class="guide-flow-desc">Each message is passed through FinBERT, a financial NLP model trained on analyst reports and earnings calls, which scores sentiment as bullish or bearish.</div></div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">3</div><div class="guide-flow-label">FinBERT AI</div><div class="guide-flow-desc">Each message is scored by FinBERT, a financial NLP model. Output: sentiment (−1 to +1), trust (poster credibility), and impact (event keywords + engagement).</div></div>
         <div class="guide-flow-arrow">&#x2192;</div>
-        <div class="guide-flow-step"><div class="guide-flow-icon">4</div><div class="guide-flow-label">MongoDB</div><div class="guide-flow-desc">Stores all scored messages. The dashboard queries this in real time.</div></div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">4</div><div class="guide-flow-label">MongoDB</div><div class="guide-flow-desc">All scored messages and price snapshots are stored. The score calculator runs across the rolling window and computes Pearson correlation on each refresh.</div></div>
         <div class="guide-flow-arrow">&#x2192;</div>
-        <div class="guide-flow-step"><div class="guide-flow-icon">5</div><div class="guide-flow-label">Dashboard</div><div class="guide-flow-desc">Tickers are ranked by composite score, with charts, news, and event tags updating live.</div></div>
+        <div class="guide-flow-step"><div class="guide-flow-icon">5</div><div class="guide-flow-label">Dashboard</div><div class="guide-flow-desc">Tickers are ranked and rendered live — screener table, correlation cards, news cards, bubble map, and exit monitor all pull from the same scored dataset.</div></div>
       </div>
     </div>
 
+    <!-- MAIN DASHBOARD -->
+    <div class="guide-section">
+      <div class="guide-section-title">Main Dashboard</div>
+      <p class="guide-p">The main table is the starting point. Every ticker returned by your Finviz screener appears here, ranked by <strong>composite sentiment score</strong> descending. The top three headline numbers — Top Bullish, Top Bearish, Most Active — update every refresh cycle and give you an instant summary of where the crowd's attention is concentrated.</p>
+      <p class="guide-p"><strong>Columns</strong> — Price and % Change come from Stocktwits message data. Rolling Score shows the composite AI score for the selected window. Bull % and Bear % show what fraction of scored messages are positive vs. negative. Msg Density shows how many messages per hour are being posted. CORR is the Pearson correlation between message density and price over the last 30 minutes — a positive high value means crowd activity and price are moving together.</p>
+      <p class="guide-p"><strong>Sorting</strong> — Click any column header to re-sort. Click again to reverse. Sort by correlation, price change, density, or composite score depending on what you are hunting for.</p>
+      <p class="guide-p"><strong>Filter Bar</strong> — Narrow the table instantly by Change direction (Up only / Down only), Relative Volume minimum, Average Volume minimum, Market Cap, minimum Score, minimum Price, or a text search by ticker or company name. All filters apply without a reload. Use <em>Reset Filters</em> to clear everything.</p>
+      <p class="guide-p"><strong>Time Window</strong> — The window buttons (15m · 30m · 1h · 4h · 1d · 1w) control how far back all score calculations look. Shorter windows react faster to breaking moves; longer windows filter noise. The window applies globally to the table, popup charts, and news cards.</p>
+      <p class="guide-p"><strong>Per-row density and sentiment windows</strong> — Each row has its own rolling window selector for Msg Density and Msg Sentiment. These let you compare, for example, sentiment over the last hour while density is measured over the last 5 minutes — useful for spotting a spike in posting activity even when the overall hourly score is flat.</p>
+    </div>
+
+    <!-- TICKER POPUP -->
+    <div class="guide-section">
+      <div class="guide-section-title">Ticker Popup</div>
+      <p class="guide-p">Click any row to open the detail popup for that ticker. The popup overlays a combined chart, live score cards, scored messages, and recent news — all for the currently selected window.</p>
+      <p class="guide-p"><strong>Combined Chart</strong> — Price (red line), Rolling Sentiment Score (blue dashed), and Message Density (green fill) are all normalized to a 0–1 axis so they can be compared on the same chart regardless of their different units. Hover any point to see the raw values in the tooltip. Switch the chart window using the row of buttons at the top of the popup — this does not change the global window.</p>
+      <p class="guide-p"><strong>Event Markers</strong> — Colored triangle markers appear on the chart at the exact time a keyword event was detected in Stocktwits messages. Each color maps to an event type (FDA, earnings, squeeze, merger, clinical trial). Hover the triangle to read the event text extracted from the original message.</p>
+      <p class="guide-p"><strong>Entry Triangle</strong> — If you have an active monitored position for this ticker (marked via the Correlation view), a green ▲ triangle appears on the price chart at your entry time and price. When viewing completed trades from the trade history, both a green ▲ entry and a red ▼ exit marker are plotted.</p>
+      <p class="guide-p"><strong>Technical Indicators</strong> — Toggle SMA overlays (SMA 5, 10, 20) and MACD using the indicator buttons above the chart. These are computed from the price series currently loaded in the chart window.</p>
+      <p class="guide-p"><strong>Score Cards</strong> — Below the chart, four live score values update every refresh: Composite, Sentiment, Trust, and Impact. The scored message count tells you how many messages were processed vs. how many total messages exist in the window.</p>
+      <p class="guide-p"><strong>Navigation</strong> — When opened from the Correlation view, left and right arrow buttons let you flip through all tickers in that view without closing the popup. Use the ⊙ Map button to jump directly to the Bubble Map for this ticker; closing the bubble map returns you to the popup.</p>
+    </div>
+
+    <!-- SCORE SYSTEM -->
     <div class="guide-section">
       <div class="guide-section-title">Score System</div>
-      <p class="guide-p">Every Stocktwits message produces three scores that are combined into one ranking signal.</p>
+      <p class="guide-p">Every Stocktwits message produces three sub-scores that combine into a single composite ranking signal.</p>
       <div class="guide-score-grid">
         <div class="guide-score-card">
           <div class="guide-score-name">Sentiment</div>
-          <div class="guide-score-desc">Raw FinBERT output — how bullish or bearish the message language is. Range: &minus;1 to +1. Positive means bullish.</div>
+          <div class="guide-score-desc">Raw FinBERT output — how bullish or bearish the message language is. Range: −1 to +1. Positive means bullish. A message like "FDA approval is going to send this to the moon" scores strongly positive.</div>
         </div>
         <div class="guide-score-card">
           <div class="guide-score-name">Trust</div>
-          <div class="guide-score-desc">Weighted by the poster's follower count, number of ideas published, and account classification. Higher-credibility posters are weighted more.</div>
+          <div class="guide-score-desc">Weighted by the poster's follower count, ideas published, and account classification. An Official or verified account with 10,000 followers is weighted far more than an anonymous account with 3 followers.</div>
         </div>
         <div class="guide-score-card">
           <div class="guide-score-name">Impact</div>
-          <div class="guide-score-desc">Weighted by whether the message contains an event keyword (FDA, earnings, merger, etc.) and engagement signals like likes and replies.</div>
+          <div class="guide-score-desc">Boosted when the message contains a catalyst keyword (FDA, earnings, merger, squeeze, etc.) or when the stock symbol appears in an unusual number of posts simultaneously, indicating a coordinated crowd reaction.</div>
         </div>
         <div class="guide-score-card guide-score-composite">
           <div class="guide-score-name">Composite</div>
-          <div class="guide-score-desc">Combined weighted average of Sentiment &times; Trust &times; Impact across all messages in the selected time window. This is the primary ranking column in the main table.</div>
+          <div class="guide-score-desc">The weighted average of Sentiment × Trust × Impact across all scored messages in the selected window. This is the primary ranking signal — the number that determines where a ticker sits in the main table.</div>
         </div>
       </div>
     </div>
 
+    <!-- EVENT TAGS -->
     <div class="guide-section">
       <div class="guide-section-title">Event Tags — Extracted From Stocktwits Messages</div>
-      <p class="guide-p">Event tags are automatically detected from the text of Stocktwits messages. When a user writes "$BCRX FDA approval imminent", the system finds keywords and classifies the message with an event tag. These tags appear as colored markers on the score chart inside the detail popup, so you can see exactly what the crowd was reacting to and when.</p>
+      <p class="guide-p">Event tags are automatically detected from the text of Stocktwits messages. When a user writes "$BCRX FDA approval imminent", the system extracts the keyword and classifies the message. Tags appear as colored badges on ticker rows in the main table, and as triangle markers on the popup chart at the exact minute the event language appeared.</p>
       <div class="guide-tag-row">
         <span class="guide-etag guide-etag-fda">FDA Approval / Rejection / PDUFA</span>
-        <span class="guide-etag guide-etag-earnings">Earnings Beat / Miss</span>
-        <span class="guide-etag guide-etag-merger">Merger / Acquisition</span>
+        <span class="guide-etag guide-etag-earnings">Earnings Beat / Miss / EPS</span>
+        <span class="guide-etag guide-etag-merger">Merger / Acquisition / M&amp;A</span>
         <span class="guide-etag guide-etag-clinical">Clinical Trial Results</span>
         <span class="guide-etag guide-etag-squeeze">Short Squeeze</span>
       </div>
     </div>
 
+    <!-- CORRELATION VIEW -->
     <div class="guide-section">
-      <div class="guide-section-title">News View — Confirming the Sentiment</div>
-      <p class="guide-p">Switch to <strong>News View</strong> to see all screener tickers as cards, each with a mini price chart, current composite score, recent Stocktwits messages, and recent news articles. The news articles are <em>not</em> the source of the sentiment score — they exist to <strong>confirm</strong> what Stocktwits users are already talking about. If the crowd is bullish and a legitimate press release just went out, that agreement between social sentiment and official news gives you a more complete picture of what is driving activity around a ticker.</p>
-      <p class="guide-p">All news sources listed below have an editorial or regulatory standard they are required to follow, which is why they were chosen over general financial media.</p>
+      <div class="guide-section-title">Correlation View</div>
+      <p class="guide-p">The Correlation view is the primary signal tool. It measures the <strong>Pearson correlation</strong> between message density and price over a 30-minute rolling lookback for every screener ticker. A high positive correlation — say 80% — means that as more people posted about this stock, the price was moving up at the same rate. That alignment between crowd activity and price is the earliest detectable signal of a momentum trade setting up.</p>
+      <p class="guide-p"><strong>Reading a correlation card</strong> — The large percentage is the correlation score. The trend arrow (↑ Rising / → Stable / ↓ Falling) shows whether that correlation has been strengthening or weakening since the last refresh. Below the score you see message density, bull percentage, time in the current section, and the current price. Negative correlation always displays as ↓ Falling regardless of history, since it means density and price are moving in opposite directions.</p>
+      <p class="guide-p"><strong>Sections</strong> — Tickers are distributed across six sections automatically based on their correlation score and price/density direction:</p>
+      <div class="guide-sources" style="margin-bottom:12px">
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-earnings" style="min-width:110px;text-align:center">Entry Zone</span>
+          <div class="guide-source-desc">Correlation at or above your threshold AND both price and density are rising. These are the highest-conviction setups — the crowd and the price agree.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-clinical" style="min-width:110px;text-align:center">Watching</span>
+          <div class="guide-source-desc">Positive correlation below the entry threshold, or price and density not yet both rising. Worth monitoring — may move to Entry Zone on the next refresh.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-squeeze" style="min-width:110px;text-align:center">My Watch</span>
+          <div class="guide-source-desc">User-pinned section. Drag any card here to keep it visible regardless of its auto-assigned section or message count filter.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-merger" style="min-width:110px;text-align:center">High Priority</span>
+          <div class="guide-source-desc">User-pinned section for tickers you are actively tracking as trade candidates.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag guide-etag-fda" style="min-width:110px;text-align:center">Researching</span>
+          <div class="guide-source-desc">User-pinned section for tickers under longer-term research before a decision.</div>
+        </div>
+        <div class="guide-source-row">
+          <span class="guide-etag" style="min-width:110px;text-align:center;color:var(--text-muted);border-color:rgba(255,255,255,0.15);background:transparent">Ignored</span>
+          <div class="guide-source-desc">User-pinned section to suppress tickers you have evaluated and decided to pass on.</div>
+        </div>
+      </div>
+      <p class="guide-p"><strong>Drag and drop</strong> — Drag any card between sections to override its auto-assignment. A pinned badge appears on the card. Click ✕ pinned to release it back to automatic sorting. Positions are saved in localStorage and persist across page refreshes.</p>
+      <p class="guide-p"><strong>Ticker search</strong> — Type any ticker symbol in the search box at the top of the Correlation view. Matching tickers appear in a dropdown. Click to add a ticker directly to My Watch — useful for tracking a specific stock that did not make it through the auto-filter.</p>
+      <p class="guide-p"><strong>Entry threshold</strong> — The slider at the bottom of the Correlation view sets the minimum correlation % required to appear in Entry Zone. Lower it to widen the signal pool; raise it to show only the strongest setups.</p>
+    </div>
+
+    <!-- NEWS VIEW -->
+    <div class="guide-section">
+      <div class="guide-section-title">News View</div>
+      <p class="guide-p">Switch to <strong>News View</strong> to see all screener tickers as cards, each with a mini price chart, composite score, recent Stocktwits messages, and recent news articles. News View shows only tickers above the message density threshold — the ones with genuine crowd activity right now.</p>
+      <p class="guide-p">The news articles are <em>not</em> the source of the sentiment score — they exist to <strong>confirm</strong> what Stocktwits users are already talking about. If the crowd is bullish and a legitimate press release just went out, that agreement between social sentiment and official news gives you a more complete picture of what is driving activity. If the crowd is buzzing but no news exists, that is often the early signal — the crowd is reacting to something before it hits the wire.</p>
+      <p class="guide-p">All news sources carry an editorial or regulatory standard that was a condition of inclusion:</p>
       <div class="guide-sources">
         <div class="guide-source-row">
+          <span class="news-source-tag news-source-tag-sec">SEC 8-K</span>
+          <div class="guide-source-desc">The most authoritative source. Legally required SEC filings for any material event — companies must file within four business days of a significant announcement. Fetched directly from EDGAR. No date cutoff.</div>
+        </div>
+        <div class="guide-source-row">
           <span class="news-source-tag news-source-tag-pr_newswire">PR Newswire</span>
-          <div class="guide-source-desc">A regulated paid wire distribution service. Companies must verify their identity and take legal responsibility for the accuracy of press releases they distribute here. Fetched via a Google News search scoped to prnewswire.com.</div>
+          <div class="guide-source-desc">Regulated paid wire service. Companies verify identity and take legal responsibility for accuracy. Fetched via Google News scoped to prnewswire.com.</div>
         </div>
         <div class="guide-source-row">
           <span class="news-source-tag news-source-tag-businesswire">Business Wire</span>
-          <div class="guide-source-desc">Same category as PR Newswire — a Berkshire Hathaway-owned paid press release distribution service used by publicly traded companies for official announcements. Also fetched via Google News.</div>
+          <div class="guide-source-desc">Berkshire Hathaway-owned paid press release service used by public companies for official announcements. Fetched via Google News.</div>
         </div>
         <div class="guide-source-row">
           <span class="news-source-tag news-source-tag-globenewswire">GlobeNewswire</span>
-          <div class="guide-source-desc">Nasdaq's official wire service for press releases. Companies listed on Nasdaq often use GlobeNewswire as their primary distribution channel. Fetched via direct RSS by ticker keyword.</div>
+          <div class="guide-source-desc">Nasdaq's official wire service. Companies listed on Nasdaq use GlobeNewswire as their primary distribution channel. Fetched via direct RSS by ticker keyword.</div>
         </div>
         <div class="guide-source-row">
           <span class="news-source-tag news-source-tag-benzinga">Benzinga</span>
-          <div class="guide-source-desc">Professional financial news outlet covering analyst ratings upgrades/downgrades, earnings previews, and market-moving stories. Fetched via the Finnhub API — only Benzinga articles are shown, not tabloid sources.</div>
+          <div class="guide-source-desc">Professional financial news covering analyst ratings, earnings previews, and market-moving stories. Fetched via Finnhub API — only Benzinga articles, no tabloid sources.</div>
         </div>
         <div class="guide-source-row">
           <span class="news-source-tag news-source-tag-fda">FDA</span>
-          <div class="guide-source-desc">FDA-related news items detected from Finviz Stocks News. Shows upcoming PDUFA decision dates and approval or rejection events for biotech and pharma tickers.</div>
-        </div>
-        <div class="guide-source-row">
-          <span class="news-source-tag news-source-tag-sec">SEC 8-K</span>
-          <div class="guide-source-desc">Legally required SEC filings for material events. When a public company issues any significant press release, they are required by law to file an 8-K within four business days. This is the most authoritative confirmation source because it carries SEC oversight. Fetched directly from EDGAR with no date cutoff.</div>
+          <div class="guide-source-desc">FDA-related news detected from Finviz Stocks News. Shows upcoming PDUFA decision dates and approval or rejection events for biotech and pharma tickers.</div>
         </div>
       </div>
     </div>
 
+    <!-- SIGNALS PANEL -->
     <div class="guide-section">
-      <div class="guide-section-title">Main Table</div>
-      <p class="guide-p">Every ticker returned by your Finviz screener appears here, ranked by composite sentiment score descending. Tickers that have received no Stocktwits messages in the current time window collapse into a "No Recent Messages" section at the bottom. Click any ticker row to open the detail popup, which shows a full price chart with event markers, the score history chart, message density over time, and all raw messages from the window.</p>
-      <p class="guide-p"><strong>Sorting</strong> — Click any column header to re-sort the table by that column. Click again to reverse the sort direction. You can sort by composite score, price change, message count, market cap, or any other visible column.</p>
-      <p class="guide-p"><strong>Thresholds (Filter Bar)</strong> — The filter bar below the metrics row lets you narrow the table by minimum average volume, price change direction (up only / down only), and minimum message count. Adjust these to focus on only the tickers meeting your criteria. Filters apply instantly without reloading data.</p>
-      <p class="guide-p"><strong>Rolling Window</strong> — The time window buttons in the top bar (1m · 3m · 5m · 15m · 30m · 1h · 4h · 1d · 1w · 1mo) control how far back messages are included in all score calculations. A 1h window scores only messages from the last hour; a 1d window covers the full trading day. Shorter windows react faster to breaking news; longer windows smooth out noise. The price chart range on every ticker card in News View also matches the selected window.</p>
+      <div class="guide-section-title">Signals Panel — Live Message Stream</div>
+      <p class="guide-p">Click <strong>Signals</strong> in the top bar to open the side panel. It streams the most recently scored Stocktwits messages across all active screener tickers in real time — the individual posts that received the highest composite scores in the current window. Use it to read exactly what the crowd is saying without opening each ticker popup individually.</p>
+      <p class="guide-p">Messages are sorted by composite score descending. Each entry shows the ticker, the raw message text, the FinBERT sentiment label (bullish / bearish / neutral), and the time posted. A spike in high-scoring messages for a single ticker in this panel is often the first visible sign of a developing setup before the correlation or score columns update.</p>
+      <p class="guide-p">You can filter the panel by ticker using the search box. Click any message row to open the full ticker popup for that ticker.</p>
     </div>
 
+    <!-- EXIT MONITOR -->
     <div class="guide-section">
-      <div class="guide-section-title">Live Stocktwits Messages</div>
-      <p class="guide-p">Click the <strong>Signals</strong> button in the top bar to open the side panel. It streams the most recent Stocktwits messages in real time across all screener tickers — individual posts that received the highest composite scores. Use it to quickly read what users are saying about any ticker without opening each detail popup.</p>
+      <div class="guide-section-title">Exit Monitor — Position Tracking</div>
+      <p class="guide-p">The Exit Monitor tracks active positions you have marked from the Correlation view. When you see a ticker in the Entry Zone that you decide to act on, click <strong>Enter Trade</strong> on its correlation card and enter your entry price. The system records your entry time, entry correlation %, and entry price, and begins tracking that ticker's message density peak from that moment forward.</p>
+      <p class="guide-p"><strong>Density falloff signal</strong> — After entry, message density almost always rises as crowd interest peaks. The Exit Monitor tracks the highest density that ticker reached after your entry (the peak). As density falls from that peak, a progress bar fills. When density has fallen a significant percentage from its peak, the bar turns red — signaling that the crowd is leaving and momentum may be exhausting. This is the exit cue.</p>
+      <p class="guide-p"><strong>Bull % on exit</strong> — The monitor also shows the current bull percentage next to each position. A falling bull % alongside falling density is a stronger exit signal than density alone.</p>
+      <p class="guide-p"><strong>Entry marker on chart</strong> — When you open the popup for a ticker you are actively monitoring, a green ▲ triangle appears on the price chart at your exact entry time and price. When you view a completed trade from the trade history, both the green ▲ entry and the red ▼ exit are plotted on the chart so you can review the full trade in context.</p>
+      <p class="guide-p"><strong>Exiting a position</strong> — Click <em>Exit</em> on the monitor card to close the position. The trade is saved to history with your entry and exit times and the price at exit. Click <em>View Chart</em> on any completed trade to reopen the popup with entry and exit markers plotted.</p>
     </div>
 
+    <!-- BUBBLE MAP -->
+    <div class="guide-section">
+      <div class="guide-section-title">Bubble Map</div>
+      <p class="guide-p">The Bubble Map gives you a visual overview of the entire screener universe at once. Each bubble represents one ticker — the horizontal position encodes sentiment score, the vertical position encodes price change, and the bubble size encodes message volume. Color shifts from red (bearish) through yellow (neutral) to green (bullish) based on the composite score.</p>
+      <p class="guide-p"><strong>Time slider</strong> — Scrub the slider at the bottom to replay how the sentiment landscape shifted across the trading day. This lets you visually trace when a ticker's crowd activity and sentiment aligned — and how long that alignment lasted.</p>
+      <p class="guide-p"><strong>Solo mode</strong> — Click any bubble to isolate that ticker. The view zooms to show just that stock's bubble moving through the space over time. Click the ⊙ button on a Correlation popup to jump directly to that ticker's solo view in the Bubble Map and return to the popup when done.</p>
+      <p class="guide-p"><strong>Filters</strong> — The Bubble Map filter modal lets you show only tickers above a minimum correlation, minimum density, or within a score range. Use this to cut the visual noise and focus on only the strongest setups.</p>
+    </div>
+
+    <!-- PDUFA & CATALYSTS -->
     <div class="guide-section">
       <div class="guide-section-title">PDUFA &amp; Earnings Catalysts</div>
-      <p class="guide-p">The dashboard tracks upcoming FDA decision deadlines (PDUFA dates) from the BioPharma Catalyst database and upcoming earnings dates from Finviz. These appear as countdown labels on ticker cards in the News View. Catalysts often explain sudden spikes in Stocktwits activity days or weeks before the official announcement hits the news wire.</p>
+      <p class="guide-p">The dashboard tracks upcoming FDA decision deadlines (PDUFA dates) from the BioPharma Catalyst database and upcoming earnings dates from Finviz. These appear as countdown badges on ticker rows and on News View cards. Catalysts often explain sudden spikes in Stocktwits activity days or weeks before the official announcement — the crowd finds out early, and the sentiment data reflects it.</p>
     </div>
 
-    <div class="guide-section">
-      <div class="guide-section-title">Time Window</div>
-      <p class="guide-p">The window buttons in the top bar (1m · 3m · 5m · 15m · 30m · 1h · 4h · 1d · 1w · 1mo) control both the price chart range on ticker cards and the sentiment scoring window. Shorter windows surface fast-moving momentum; longer windows show sustained sentiment trends. The composite score, message count, and all chart data update instantly when you change the window.</p>
-    </div>
-
+    <!-- SCREENER PERFORMANCE -->
     <div class="guide-section">
       <div class="guide-section-title">Screener Performance &amp; Recommended Filters</div>
-      <p class="guide-p">The number of tickers your Finviz screener returns directly controls how fast the pipeline runs. The pipeline fetches Stocktwits messages for every ticker in parallel (5 workers), then loops. With too many tickers, the loop takes several minutes and sentiment data becomes stale before the next cycle completes.</p>
+      <p class="guide-p">The number of tickers your Finviz screener returns directly controls how fast the pipeline loops. The pipeline fetches messages concurrently but is still rate-limited. With too many tickers, the loop takes several minutes and data grows stale between cycles.</p>
       <div class="guide-score-grid" style="margin-bottom:12px">
         <div class="guide-score-card">
-          <div class="guide-score-name" style="color:var(--green)">50–150 tickers</div>
-          <div class="guide-score-desc">Loop time ~15–45 seconds. Near real-time sentiment updates. Best range for active monitoring.</div>
+          <div class="guide-score-name" style="color:#4ade80">50–150 tickers</div>
+          <div class="guide-score-desc">Loop time ~15–45 seconds. Near real-time updates. Best range for active monitoring during market hours.</div>
         </div>
         <div class="guide-score-card">
-          <div class="guide-score-name" style="color:var(--yellow,#eab308)">200–500 tickers</div>
-          <div class="guide-score-desc">Loop time 1–3 minutes. Sentiment updates are slightly delayed but still useful for research.</div>
+          <div class="guide-score-name" style="color:#facc15">200–500 tickers</div>
+          <div class="guide-score-desc">Loop time 1–3 minutes. Sentiment updates lag slightly but are still useful for research and swing setups.</div>
         </div>
         <div class="guide-score-card">
-          <div class="guide-score-name" style="color:var(--red)">500+ tickers</div>
-          <div class="guide-score-desc">Loop time 3–10+ minutes. Data grows stale between cycles. Consider tightening screener filters.</div>
+          <div class="guide-score-name" style="color:#f87171">500+ tickers</div>
+          <div class="guide-score-desc">Loop time 3–10+ minutes. Data grows stale between cycles. Tighten screener filters to reduce the universe.</div>
         </div>
       </div>
-      <p class="guide-p"><strong>Our recommended starting filters</strong> — set these in the Update Filters modal for a focused, fast screener that catches high-momentum names:</p>
+      <p class="guide-p"><strong>Recommended starting filters</strong> — these four together typically return 30–100 tickers and keep loop time under 30 seconds:</p>
       <div class="guide-sources" style="margin-bottom:10px">
         <div class="guide-source-row">
           <span class="guide-etag guide-etag-earnings" style="min-width:130px;text-align:center">Change: Up only</span>
-          <div class="guide-source-desc">Limits the universe to stocks moving upward on the day. Focuses the dashboard on tickers where positive sentiment is most relevant to observe.</div>
+          <div class="guide-source-desc">Limits the universe to stocks moving upward. Focuses the dashboard on tickers where positive sentiment is most actionable.</div>
         </div>
         <div class="guide-source-row">
-          <span class="guide-etag guide-etag-fda" style="min-width:130px;text-align:center">Rel Vol ≥ 3</span>
-          <div class="guide-source-desc">Relative volume of 3x means a stock is trading at triple its normal rate — a strong indicator that unusual activity is occurring. Values below 2x let in too many tickers with routine activity. 5x or higher narrows to only the most active names.</div>
+          <span class="guide-etag guide-etag-fda" style="min-width:130px;text-align:center">Rel Vol ≥ 3×</span>
+          <div class="guide-source-desc">3× relative volume means a stock is trading at triple its normal rate — a strong indicator of unusual activity. Below 2× lets in too many routine names.</div>
         </div>
         <div class="guide-source-row">
           <span class="guide-etag guide-etag-clinical" style="min-width:130px;text-align:center">Cur Vol ≥ 500k</span>
-          <div class="guide-source-desc">Ensures there is enough real market participation. Tickers below 500k daily volume often have thin Stocktwits activity and less reliable sentiment data.</div>
+          <div class="guide-source-desc">Ensures enough real market participation. Tickers below this threshold often have thin Stocktwits activity and less reliable sentiment data.</div>
         </div>
         <div class="guide-source-row">
           <span class="guide-etag guide-etag-merger" style="min-width:130px;text-align:center">Price ≥ $1.00</span>
           <div class="guide-source-desc">Filters out sub-penny stocks, which tend to have artificially inflated Stocktwits activity that does not reflect genuine market sentiment.</div>
         </div>
       </div>
-      <p class="guide-p">These four filters together typically return <strong>30–100 tickers</strong>, which keeps loop time under 30 seconds and produces a focused dashboard. Adjust rel vol up or down to widen or narrow the universe as needed.</p>
+      <p class="guide-p">Adjust Rel Vol up or down to widen or narrow the universe. Raise it to 5× or higher during slow market sessions to cut noise; lower it to 2× during high-activity sessions to catch more names.</p>
     </div>
 
   </div>
