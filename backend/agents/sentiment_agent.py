@@ -6,9 +6,10 @@
 from transformers import pipeline
 import re
 
-# Load the FinBERT model once when the file is imported
-# This downloads the model on first run (about 400MB)
-# Subsequent runs load it from local cache instantly
+# ── MODEL LOADING ──
+# Loaded once at import time and shared across all requests in the process.
+# First run downloads the ~400 MB weights to HuggingFace's local cache;
+# subsequent imports are instantaneous.
 print("[SENTIMENT] Loading FinBERT model...")
 sentiment_pipeline = pipeline(
     "text-classification",
@@ -93,6 +94,8 @@ def calculate_sentiment_score(message_body: str) -> float:
         return 0.0
 
 
+# ── BATCH SCORING ──
+
 def calculate_sentiment_scores_batch(message_bodies: list) -> list:
     """
     Scores a list of message bodies in a single FinBERT forward pass.
@@ -108,9 +111,11 @@ def calculate_sentiment_scores_batch(message_bodies: list) -> list:
     safe = [c if c else "neutral" for c in cleaned]
 
     try:
+        # batch_size=32 keeps GPU memory usage bounded during large backfill runs
         results = sentiment_pipeline(safe, truncation=True, batch_size=32)
         scores = []
         for i, result in enumerate(results):
+            # Messages that were empty after cleaning always score 0 regardless of FinBERT output
             if not cleaned[i]:
                 scores.append(0.0)
                 continue
@@ -124,6 +129,7 @@ def calculate_sentiment_scores_batch(message_bodies: list) -> list:
                 scores.append(0.0)
         return scores
     except Exception as e:
+        # If the batch call fails (e.g. OOM), fall back to one message at a time
         print("[SENTIMENT] Batch scoring failed, falling back to individual: " + str(e))
         return [calculate_sentiment_score(b) for b in message_bodies]
 

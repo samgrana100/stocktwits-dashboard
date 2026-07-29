@@ -1,7 +1,14 @@
+# event_detector.py
+# Keyword-based event detection for Stocktwits messages and Finviz news headlines
+# Returns a category label (e.g. "FDA Approval", "Earnings Beat") when a pattern matches
+# Samuel Grana - Stocktwits News Sentiment Dashboard
+
 import re
 
-# Each key is the display label. Patterns are case-insensitive.
-# Order matters — more specific patterns first within each category.
+# ── EVENT PATTERN REGISTRY ──
+# Each key is the display label returned by detect_event.
+# Within each category, more-specific sub-types must come first — matching stops
+# at the first hit, so a generic catch-all like "FDA Approval" must trail its sub-types.
 EVENT_PATTERNS = {
     # ── FDA sub-types (most specific first; generic "FDA Approval" is the catch-all) ──
     "FDA Final Approval": [
@@ -110,7 +117,8 @@ EVENT_PATTERNS = {
     ],
 }
 
-# Maps event label → (hex color, short code for table pill)
+# ── EVENT DISPLAY METADATA ──
+# Maps each event label to a hex accent color and a short pill string for the frontend table.
 EVENT_META = {
     "FDA Final Approval":  ("#22c55e", "FDA ✓✓"),
     "FDA Breakthrough":    ("#a855f7", "FDA BT"),
@@ -135,6 +143,8 @@ def detect_event(body: str) -> str | None:
     """Returns the first matching event category label, or None."""
     if not body:
         return None
+    # Iterates EVENT_PATTERNS in insertion order; returns as soon as a pattern hits.
+    # Caller treats None as "no newsworthy event detected in this message."
     for event_type, patterns in EVENT_PATTERNS.items():
         for pattern in patterns:
             if re.search(pattern, body, re.IGNORECASE):

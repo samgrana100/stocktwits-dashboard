@@ -18,6 +18,8 @@ from utils import get_timestamp, get_window_start_iso
 from event_detector import detect_event
 
 
+# ── DENSITY LOOKUP ──
+
 def get_density_count(ticker: str) -> int:
     """Gets the most recent message count for a ticker from the density collection."""
     try:
@@ -31,6 +33,8 @@ def get_density_count(ticker: str) -> int:
     except Exception:
         return 0
 
+
+# ── SCORING LOOP ──
 
 def score_unscored_messages(batch_size: int = 50):
     """
@@ -87,6 +91,9 @@ def score_unscored_messages(batch_size: int = 50):
             sentiment_score = sentiment_scores[j]
             density_count   = get_density_count(ticker)
             impact_score    = calculate_impact_score(msg, density_count)
+            # Composite formula: sentiment direction × a quality multiplier.
+            # quality floors at 0.40 so even low-trust messages contribute partially;
+            # trust and impact push it up to a max of 1.0 before the multiply.
             quality         = 0.40 + (trust_score * 0.35) + (impact_score * 0.25)
             composite_score = round(sentiment_score * quality, 4)
 
@@ -121,11 +128,17 @@ def score_unscored_messages(batch_size: int = 50):
     print("[SCORER] Done. Scored: " + str(scored_count) + " | Errors: " + str(error_count))
 
 
+# ── PEARSON CORRELATION CONFIG ──
+# DENSITY_WINDOW_MIN: how far back to sum messages to get a density value at each price point.
+# CORR_LOOKBACK_MIN: how many price snapshots (minutes) to include in each correlation vector.
+# CORR_FETCH_MIN: total message history needed = lookback + density window (to prime the rolling sum).
 DENSITY_WINDOW_MIN = 60   # rolling window used to compute density at each point
 CORR_LOOKBACK_MIN  = 30   # how many minutes back to look for price snapshots
 CORR_FETCH_MIN     = CORR_LOOKBACK_MIN + DENSITY_WINDOW_MIN  # total message history needed
 CORR_MIN_POINTS    = 5    # minimum price points required to compute correlation
 
+# Standard Pearson r formula: covariance / (std_x × std_y).
+# Returns None when there are too few points or one vector is constant (zero denominator).
 def _pearson_r(x, y):
     n = len(x)
     if n < CORR_MIN_POINTS:
@@ -189,7 +202,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     ]))
     catalyst_map = {r["_id"]: r["events"] for r in catalyst_results}
 
-    # ── Surge: last 5m vs last 1h
+    # ── Surge detection: compare last 5 min to the expected rate derived from the last 1h.
+    # surge_ratio > 1 means this ticker is getting more messages than its hourly average predicts.
     surge_5m_map = {
         r["_id"]: r["count"]
         for r in scored_messages.aggregate([
@@ -243,6 +257,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
         d_vec, p_vec = [], []
         for m in price_minutes:
             m_dt    = datetime.strptime(m, "%Y-%m-%dT%H:%M")
+            # Rolling density: sum all message-per-minute counts in the DENSITY_WINDOW_MIN
+            # look-back behind this price point, giving msgs/hour at that moment.
             rolling = sum(
                 d_map.get((m_dt - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M"), 0)
                 for i in range(DENSITY_WINDOW_MIN)
@@ -349,7 +365,8 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
             "density_rising":        density_rising,
         })
 
-    # Scored tickers first, ranked by weighted composite score; unscored at bottom
+    # Scored tickers first (non-zero scored_messages), ranked by composite score descending.
+    # Tickers with no scored messages yet appear at the bottom of the table.
     ticker_scores.sort(key=lambda x: (x["scored_messages"] == 0, -x["avg_composite_score"]))
 
     return ticker_scores

@@ -22,21 +22,28 @@ BACKFILL_PAGE_DELAY = float(os.getenv("BACKFILL_PAGE_DELAY", "0.6"))
 _seen_lock = threading.Lock()
 
 
+# ── PER-TICKER PROCESSING ──
+
+# Handles one ticker per call: backfills history on first sight, then fetches
+# the latest page and stores new messages, density, and price snapshot.
 def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_flag: list):
     if stop_flag[0]:
         return
 
+    # seen_tickers is shared across threads — use the lock to avoid double-backfilling
     with _seen_lock:
         is_new = ticker not in seen_tickers
         if is_new:
             seen_tickers.add(ticker)
 
+    # Backfill: paginate through up to BACKFILL_HOURS of history on first encounter
     if is_new:
         print("[PIPELINE] New ticker " + ticker + " — backfilling " + str(BACKFILL_HOURS) + "h history...")
         historical = fetch_messages_paginated(ticker, hours_back=BACKFILL_HOURS, page_delay=BACKFILL_PAGE_DELAY)
         if historical:
             store_messages(ticker, historical, rolling_window)
 
+    # Live fetch: grab the latest Stocktwits page for this ticker every loop
     messages = fetch_messages(ticker)
     if messages:
         store_messages(ticker, messages, rolling_window)
@@ -72,6 +79,9 @@ def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
         print("[PIPELINE] Loop started at " + get_timestamp())
         print("[PIPELINE] Tickers: " + str(len(tickers)) + " | Workers: " + str(PIPELINE_WORKERS) + "\n")
 
+        # PIPELINE_WORKERS tickers are fetched concurrently to saturate network I/O
+        # without hitting Stocktwits rate limits. Errors per ticker are caught and
+        # logged so a single failed fetch doesn't abort the rest of the loop.
         with ThreadPoolExecutor(max_workers=PIPELINE_WORKERS) as executor:
             futures = {
                 executor.submit(_process_ticker, t, seen_tickers, rolling_window, stop_flag): t
@@ -95,6 +105,8 @@ def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
             print("[PIPELINE] Waiting " + str(round(wait_time, 1)) + "s before next loop.\n")
             time.sleep(wait_time)
 
+
+# ── STORAGE HELPERS ──
 
 def store_messages(ticker: str, messages: list, rolling_window: int):
     """

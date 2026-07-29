@@ -3,6 +3,8 @@
 # Based on message density and symbol activity signals
 # Samuel Grana - Stocktwits News Sentiment Dashboard
 
+# ── IMPACT SCORING ──
+
 def calculate_impact_score(message: dict, density_count: int) -> float:
     """
     Takes a raw Stocktwits message and the current message density

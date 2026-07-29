@@ -11,11 +11,14 @@ from curl_cffi import requests as cffi_requests
 
 load_dotenv()
 
-# Read at import time as defaults; fetch_tickers_from_finviz re-reads on each
-# call so a token written to .env by app.py is picked up without a restart.
+# ── CREDENTIALS ──
+# Read at import time as defaults; load_tickers_from_finviz re-reads from os.environ on each
+# call so a token hot-swapped by app.py is picked up without restarting the process.
 FINVIZ_API_TOKEN  = os.getenv("FINVIZ_API_TOKEN",  "")
 FINVIZ_EXPORT_URL = os.getenv("FINVIZ_EXPORT_URL", "")
 
+
+# ── TIMESTAMP HELPERS ──
 
 def get_timestamp() -> str:
     """
@@ -55,6 +58,8 @@ def get_window_start_iso(rolling_window_minutes: int) -> str:
     window_start = now - timedelta(minutes=rolling_window_minutes)
     return window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
+
+# ── TICKER LOADER ──
 
 def load_tickers_from_finviz() -> list:
     """
@@ -125,6 +130,8 @@ def load_tickers_from_finviz() -> list:
         return []
 
 
+# Stale-cache guard: if Finviz is temporarily unreachable, the pipeline
+# re-uses the most recent good list instead of stopping cold.
 _last_good_tickers: list = []
 
 def load_tickers() -> list:

@@ -7,6 +7,8 @@ import math
 from datetime import datetime, timezone
 
 
+# ── TRUST SCORING ──
+
 def calculate_trust_score(user: dict) -> float:
     """
     Takes a user object from a Stocktwits message and returns

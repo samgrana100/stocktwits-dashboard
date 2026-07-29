@@ -35,16 +35,21 @@ load_dotenv()
 
 app = Flask(__name__, template_folder="../frontend")
 
+# ── CREDENTIALS & API GLOBALS ──
+# All secrets are read from .env at startup; refresh_finviz_token hot-swaps
+# FINVIZ_API_TOKEN in memory when the session cookie expires.
 FINVIZ_API_TOKEN  = os.getenv("FINVIZ_API_TOKEN", "")
 FINVIZ_EXPORT_URL = os.getenv("FINVIZ_EXPORT_URL", "")
 _FINVIZ_EMAIL    = os.getenv("FINVIZ_EMAIL", "")
 _FINVIZ_PASSWORD = os.getenv("FINVIZ_PASSWORD", "")
 FINNHUB_API_KEY  = os.getenv("FINNHUB_API_KEY", "")
 
+# Double-checked locking guard so concurrent requests never trigger two simultaneous logins
 _token_refresh_lock  = threading.Lock()
 _last_token_refresh  = 0.0
 _TOKEN_REFRESH_COOLDOWN = 300  # seconds between re-login attempts
 
+# Bubble screener data is expensive to build (two Finviz CSV fetches + MongoDB aggregation)
 _bubble_screener_cache = {}
 _bubble_screener_lock  = threading.Lock()
 BUBBLE_SCREENER_TTL    = 120  # 2-minute cache to avoid rate limiting
@@ -61,7 +66,9 @@ except ImportError:
     _twilio_ready = False
     print("[SMS] twilio package not installed — SMS notifications disabled")
 
-# ── Auto trade config ──
+# ── AUTO TRADE THRESHOLDS ──
+# Entry fires when density-price Pearson r ≥ AUTO_ENTRY_CORR and msgs/hr ≥ AUTO_ENTRY_MIN_DENS.
+# Exit fires when density falls AUTO_EXIT_PEAK % below its intra-trade peak.
 AUTO_ENTRY_CORR      = 0.30  # minimum correlation to enter
 AUTO_ENTRY_MIN_DENS  = 4    # minimum msgs/hr (1h rolling) to enter
 AUTO_EXIT_PEAK       = 0.20  # density % off peak to exit
@@ -149,11 +156,14 @@ def refresh_finviz_token() -> bool:
             print(f"[TOKEN] Refresh failed: {e}")
             return False
 
-# Pipeline control
+# ── PIPELINE STATE ──
+# stop_flag is a one-element list so threads can observe the signal without
+# needing to share a threading.Event across module reloads.
 pipeline_thread    = None
 pipeline_stop_flag = [False]
 
-# Finviz screener data cache
+# ── RUNTIME CACHES ──
+# Finviz screener data cache — shared across all /api/scores and /api/bubble-screener calls
 finviz_cache      = {}
 finviz_cache_time = 0
 _finviz_lock      = threading.Lock()
@@ -180,6 +190,9 @@ _ticker_news_cache     = {}   # {ticker: {"articles": [...], "ts": float}}
 _TICKER_NEWS_TTL       = 1800  # 30 minutes
 
 
+# ── WINDOW CONFIG ──
+# Maps frontend window keys to their minute durations and Finviz chart parameters.
+# finviz_param drives the quote_export endpoint used for price bar fetching.
 WINDOW_CONFIG = {
     "1m":  {"minutes": 1,     "finviz_param": "i1"},
     "3m":  {"minutes": 3,     "finviz_param": "i1"},
@@ -577,6 +590,8 @@ def _parse_news_date(date_str: str):
     return None
 
 
+# ── NEWS FETCH HELPERS ──
+
 # Strips law-firm / investor-alert noise from wire service results
 _WIRE_NOISE_RE = re.compile(
     r'DEADLINE ALERT|SHAREHOLDER ALERT|CLASS ACTION|Law Offices|'
@@ -811,11 +826,17 @@ def get_ticker_news(ticker: str) -> list:
 
 # ─── ROUTES ───
 
+# ── ROUTES ──
+
 @app.route("/")
 def index():
     return render_template("index.html")
 
 
+# ── /api/scores — main dashboard endpoint ──
+# Merges FinBERT composite scores (from MongoDB) with Finviz screener metadata.
+# Filtered to only the tickers currently in the Finviz screener so the table
+# stays focused on the user's active watchlist.
 @app.route("/api/scores")
 def get_scores():
     window_key = request.args.get("window", "1h")
@@ -872,6 +893,9 @@ def get_scores():
     })
 
 
+# Generates the shared time axis used to align price, score, and density series in the chart.
+# Builds a regular grid snapped to step boundaries rather than relying on price bar timestamps,
+# which can be sparse or absent outside market hours.
 def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label):
     # Always generate a regular time axis covering the full window so that
     # score/density data is never cut off by sparse price bar timestamps.
@@ -892,6 +916,10 @@ def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_
     return axis
 
 
+# ── /api/ticker — single-ticker detail (popup) ──
+# Runs multiple MongoDB queries to assemble score history, density history,
+# price history, and event markers for the popup chart. Results are cached
+# for TICKER_DETAIL_TTL seconds to avoid hammering MongoDB on rapid opens.
 @app.route("/api/ticker/<ticker>")
 def get_ticker_detail(ticker):
     window_key  = request.args.get("window", "1h")
@@ -1318,6 +1346,10 @@ def get_upcoming_catalysts():
     return jsonify(result)
 
 
+# ── /api/bubble-screener — 2D bubble map endpoint ──
+# Accepts filter params (cap, relvol, vol, float, change) as POST JSON.
+# Fetches filtered Finviz data, overlays 60-min sentiment from MongoDB,
+# and appends intraday trail history from screener_snapshots.
 @app.route("/api/bubble-screener", methods=["POST"])
 def get_bubble_screener():
     data = request.get_json(force=True) or {}
@@ -1528,6 +1560,10 @@ def get_bubble_screener():
     return jsonify(result)
 
 
+# ── /api/3d-screener — 3D bubble map endpoint ──
+# Axes: X = avg sentiment score, Y = price % change, Z = relative volume.
+# Builds a per-ticker trail by joining screener_snapshots (price/vol over time)
+# with per-minute sentiment averages so each trail point has an accurate X value.
 @app.route("/api/3d-screener")
 def get_3d_screener():
     scores = aggregate_ticker_scores(rolling_window_minutes=60)
@@ -1725,6 +1761,9 @@ def get_bullish_feed():
     return jsonify({"messages": result, "threshold": threshold})
 
 
+# ── AUTO TRADE ROUTES ──
+
+# Returns active positions, the last 50 completed trades, saved trades, and recent SMS notifications.
 @app.route("/api/auto-trades")
 def get_auto_trades_endpoint():
     def fmt(dt):
@@ -1775,6 +1814,7 @@ def get_auto_trades_endpoint():
     })
 
 
+# Allows the frontend to adjust entry/exit thresholds without restarting the server.
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
     global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP
@@ -1944,6 +1984,8 @@ def reset_scores():
     return jsonify({"status": "ok", "reset_count": result.modified_count})
 
 
+# ── PIPELINE CONTROL ROUTES ──
+
 @app.route("/api/pipeline/start", methods=["POST"])
 def start_pipeline():
     global pipeline_thread, pipeline_stop_flag
@@ -1975,7 +2017,9 @@ def pipeline_status():
     return jsonify({"running": running})
 
 
-# ── SCREENER CONFIG ─────────────────────────────────────────────────────────
+# ── SCREENER CONFIG ──
+# Persists the user's filter choices to screener_config.json and hot-swaps
+# FINVIZ_EXPORT_URL so the pipeline immediately picks up the new screener without a restart.
 
 SCREENER_CONFIG_PATH = Path(__file__).parent / "screener_config.json"
 
@@ -2061,12 +2105,15 @@ def apply_screener():
     if not config:
         return jsonify({"error": "no config"}), 400
 
+    # Persist the config to disk so it survives a server restart
     _save_screener_config(config)
 
+    # Rebuild the Finviz export URL from the new filter params and hot-swap it
     new_url = _build_finviz_export_url(config)
     FINVIZ_EXPORT_URL = new_url
     os.environ["FINVIZ_EXPORT_URL"] = new_url
 
+    # Flush the screener cache so the next /api/scores call fetches from the new URL
     with _finviz_lock:
         finviz_cache      = {}
         finviz_cache_time = 0
@@ -2106,6 +2153,10 @@ def _send_sms(body: str, meta: dict):
     })
 
 
+# ── AUTO TRADE ENGINE ──
+
+# Core decision loop: checks every active position for an exit signal, then
+# evaluates all screener tickers for an entry signal. Called on AUTO_LOOP_SEC cadence.
 def _check_auto_trades():
     now_utc   = datetime.now(timezone.utc)
 
@@ -2260,6 +2311,8 @@ def _check_auto_trades():
             print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
 
 
+# Wraps _check_auto_trades in an infinite loop with error isolation so a single
+# bad tick never crashes the thread and halts all auto trade monitoring.
 def run_auto_trade_loop(stop_flag: list):
     print("[AUTO TRADE] Starting auto trade loop...")
     while not stop_flag[0]:
@@ -2287,6 +2340,10 @@ def run_scorer_loop(stop_flag: list):
     print("[SCORER THREAD] Stopped.")
 
 
+# ── BACKGROUND SERVICES ──
+
+# Runs once at startup (after a 15-second delay) to populate screener_snapshots
+# from today's price_history so the 3D/bubble trail doesn't start empty after a restart.
 def _backfill_screener_snapshots():
     """
     Seeds screener_snapshots at startup from price_history if available.
@@ -2399,6 +2456,8 @@ def _start_background_services():
 
     _start_pipeline()
 
+    # Watchdog: polls every 30 s and restarts the pipeline if it died unexpectedly.
+    # Checks pipeline_stop_flag so a manual /api/pipeline/stop is never auto-restarted.
     def _pipeline_watchdog():
         while True:
             time.sleep(30)
