@@ -10,6 +10,7 @@ import re
 import json
 import threading
 import time
+import traceback
 import random
 import requests
 import xml.etree.ElementTree as ET
@@ -149,6 +150,47 @@ def refresh_finviz_token() -> bool:
 # needing to share a threading.Event across module reloads.
 pipeline_thread    = None
 pipeline_stop_flag = [False]
+
+# Crash diagnostics — run_pipeline() is wrapped in _launch_pipeline_thread() below
+# with `except BaseException` (not just Exception) so a SystemExit or any other
+# non-Exception error still gets logged with a full traceback instead of being
+# silently swallowed by Python's default per-thread exception hook.
+pipeline_health = {
+    "last_start_at":   None,
+    "last_crash_at":   None,
+    "last_crash_type": None,
+    "last_crash_error": None,
+    "crash_count":     0,
+}
+
+
+def _launch_pipeline_thread():
+    """
+    Starts the pipeline in a background thread with crash logging.
+    Shared by the auto-start-on-boot path and the /api/pipeline/start route so
+    both get the same diagnostics — any crash updates pipeline_health and prints
+    a full traceback, so the watchdog's restart is never a silent guess.
+    """
+    global pipeline_thread, pipeline_stop_flag
+    pipeline_stop_flag = [False]
+    stop_flag_ref = pipeline_stop_flag
+
+    def _run():
+        pipeline_health["last_start_at"] = get_timestamp()
+        try:
+            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+            from pipeline import run_pipeline
+            run_pipeline(rolling_window=60, stop_flag=stop_flag_ref)
+        except BaseException as e:
+            pipeline_health["last_crash_at"]    = get_timestamp()
+            pipeline_health["last_crash_type"]  = type(e).__name__
+            pipeline_health["last_crash_error"] = str(e)
+            pipeline_health["crash_count"]     += 1
+            print(f"[PIPELINE] CRASHED ({type(e).__name__}): {e}")
+            print(traceback.format_exc())
+
+    pipeline_thread = threading.Thread(target=_run, daemon=True)
+    pipeline_thread.start()
 
 # ── RUNTIME CACHES ──
 # Finviz screener data cache — shared across all /api/scores and /api/bubble-screener calls
@@ -1968,19 +2010,9 @@ def reset_scores():
 
 @app.route("/api/pipeline/start", methods=["POST"])
 def start_pipeline():
-    global pipeline_thread, pipeline_stop_flag
     if pipeline_thread and pipeline_thread.is_alive():
         return jsonify({"status": "already_running"})
-
-    pipeline_stop_flag = [False]
-
-    def run_pipeline_thread():
-        sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-        from pipeline import run_pipeline
-        run_pipeline(rolling_window=60, stop_flag=pipeline_stop_flag)
-
-    pipeline_thread = threading.Thread(target=run_pipeline_thread, daemon=True)
-    pipeline_thread.start()
+    _launch_pipeline_thread()
     return jsonify({"status": "started"})
 
 
@@ -1994,7 +2026,7 @@ def stop_pipeline():
 @app.route("/api/pipeline/status")
 def pipeline_status():
     running = pipeline_thread is not None and pipeline_thread.is_alive()
-    return jsonify({"running": running})
+    return jsonify({"running": running, **pipeline_health})
 
 
 @app.route("/api/debug/price-history/<ticker>")
@@ -2377,29 +2409,25 @@ def _start_background_services():
     threading.Thread(target=_backfill_screener_snapshots, daemon=True).start()
     print("[APP] Screener snapshot backfill scheduled.")
 
-    def _start_pipeline():
-        global pipeline_thread, pipeline_stop_flag
-        pipeline_stop_flag = [False]
-        def _run():
-            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-            from pipeline import run_pipeline
-            run_pipeline(rolling_window=60, stop_flag=pipeline_stop_flag)
-        pipeline_thread = threading.Thread(target=_run, daemon=True)
-        pipeline_thread.start()
-        print("[APP] Pipeline started automatically.")
-
-    _start_pipeline()
+    _launch_pipeline_thread()
+    print("[APP] Pipeline started automatically.")
 
     # Watchdog: polls every 30 s and restarts the pipeline if it died unexpectedly.
     # Checks pipeline_stop_flag so a manual /api/pipeline/stop is never auto-restarted.
+    # The whole loop body is wrapped in try/except so the watchdog itself can never
+    # go silent the way the pipeline thread did — any unexpected error here still
+    # gets logged and the loop keeps polling instead of dying quietly.
     def _pipeline_watchdog():
         while True:
             time.sleep(30)
-            # Only restart if the thread died unexpectedly — not if stop was requested
-            stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
-            if not stopped_intentionally and (pipeline_thread is None or not pipeline_thread.is_alive()):
-                print("[APP] Pipeline watchdog: thread died unexpectedly, restarting.")
-                _start_pipeline()
+            try:
+                stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
+                if not stopped_intentionally and (pipeline_thread is None or not pipeline_thread.is_alive()):
+                    print("[APP] Pipeline watchdog: thread died unexpectedly, restarting.")
+                    _launch_pipeline_thread()
+            except BaseException as e:
+                print(f"[APP] Pipeline watchdog error ({type(e).__name__}): {e}")
+                print(traceback.format_exc())
 
     threading.Thread(target=_pipeline_watchdog, daemon=True).start()
 
