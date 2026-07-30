@@ -32,13 +32,28 @@ The pipeline fetches Stocktwits messages for every ticker in a Finviz Elite scre
 
 | Layer | Technology |
 |---|---|
-| Backend | Python 3.10+, Flask |
+| Web framework | Flask (Python) — API routes, background threads, serves frontend |
+| Production server | Gunicorn — WSGI server that wraps Flask for concurrent request handling |
+| Cloud host | Railway — builds the container, runs Gunicorn, provides the public HTTPS URL |
 | AI scoring | HuggingFace Transformers, `ProsusAI/finbert` |
 | Database | MongoDB (Atlas or local) |
 | Stocktwits fetch | `curl-cffi` with Chrome TLS impersonation |
 | Finviz integration | Elite API — screener export CSV + `quote_export` price bars |
-| Frontend | Vanilla JS, Chart.js, single HTML file |
-| Deployment | Railway (backend + frontend served together) |
+| Frontend | Vanilla JS, Chart.js, single HTML file served by Flask |
+
+### Flask + Gunicorn + Railway
+
+**Flask** is the web framework. It defines every API endpoint the dashboard uses (`/api/scores`, `/api/ticker/<ticker>`, etc.), serves the frontend `index.html`, and spawns the pipeline and calendar fetcher as background threads. Flask includes a built-in development server (`python app.py`), but that server is single-threaded and not suitable for production.
+
+**Gunicorn** is the production WSGI server that wraps Flask. In production it runs as:
+
+```
+gunicorn --worker-class gthread --workers 1 --threads 4 --timeout 120 app:app
+```
+
+This gives Flask 4 concurrent threads — enough to handle dashboard polling, popup requests, and the pipeline control endpoint simultaneously without blocking.
+
+**Railway** is the cloud platform that hosts the running application. It does not build the project — it hosts it. When code is pushed to GitHub, Railway detects the Python project via Nixpacks, installs all dependencies from `requirements.txt`, and starts Gunicorn using the command in `Procfile` and `railway.toml`. Railway injects a `PORT` environment variable that Gunicorn listens on, provides a public HTTPS URL, and automatically restarts the process on failure.
 
 ---
 

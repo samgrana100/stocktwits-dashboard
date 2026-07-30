@@ -122,6 +122,20 @@ def load_tickers_from_finviz() -> list:
             .tolist()
         )
 
+        if "Price" in df.columns:
+            global _last_good_prices
+            prices = {}
+            for _, row in df.iterrows():
+                t = str(row.get("Ticker", "")).strip().upper()
+                if not t:
+                    continue
+                try:
+                    prices[t] = float(str(row.get("Price", "")).replace(",", ""))
+                except (ValueError, TypeError):
+                    pass
+            if prices:
+                _last_good_prices = prices
+
         print("[TICKERS] Loaded " + str(len(tickers)) + " tickers from Finviz.")
         return tickers
 
@@ -133,6 +147,12 @@ def load_tickers_from_finviz() -> list:
 # Stale-cache guard: if Finviz is temporarily unreachable, the pipeline
 # re-uses the most recent good list instead of stopping cold.
 _last_good_tickers: list = []
+_last_good_prices:  dict = {}
+
+def get_last_prices() -> dict:
+    """Returns the most recently fetched {ticker: price} map from the Finviz screener CSV."""
+    return _last_good_prices
+
 
 def load_tickers() -> list:
     """

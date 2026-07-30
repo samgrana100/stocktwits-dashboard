@@ -25,7 +25,6 @@ price_history         = db["price_history"]
 upcoming_catalysts    = db["upcoming_catalysts"]
 auto_trades           = db["auto_trades"]
 completed_auto_trades = db["completed_auto_trades"]
-trade_notifications   = db["trade_notifications"]
 screener_snapshots    = db["screener_snapshots"]
 
 
@@ -78,11 +77,6 @@ def ensure_indexes():
     # ── completed_auto_trades ──
     completed_auto_trades.create_index("exited_at")
     completed_auto_trades.create_index("ticker")
-
-    # ── trade_notifications ──
-    # TTL on sent_at auto-purges old SMS notification records after 30 days.
-    trade_notifications.create_index("sent_at")
-    trade_notifications.create_index("sent_at", expireAfterSeconds=2592000)  # 30-day TTL
 
     # ── screener_snapshots ──
     # TTL on ts auto-deletes bubble trail points after 24 hours — intraday only.

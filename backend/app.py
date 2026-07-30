@@ -24,7 +24,7 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, trade_notifications, price_history, screener_snapshots
+from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
@@ -53,18 +53,6 @@ _TOKEN_REFRESH_COOLDOWN = 300  # seconds between re-login attempts
 _bubble_screener_cache = {}
 _bubble_screener_lock  = threading.Lock()
 BUBBLE_SCREENER_TTL    = 120  # 2-minute cache to avoid rate limiting
-
-# ── Twilio SMS ──
-try:
-    from twilio.rest import Client as TwilioClient
-    _TWILIO_SID   = os.getenv("TWILIO_SID", "")
-    _TWILIO_TOKEN = os.getenv("TWILIO_AUTH_TOKEN", "")
-    _TWILIO_FROM  = os.getenv("TWILIO_FROM_NUMBER", "")
-    _NOTIFY_PHONE = os.getenv("NOTIFY_PHONE", "")
-    _twilio_ready = all([_TWILIO_SID, _TWILIO_TOKEN, _TWILIO_FROM, _NOTIFY_PHONE])
-except ImportError:
-    _twilio_ready = False
-    print("[SMS] twilio package not installed — SMS notifications disabled")
 
 # ── AUTO TRADE THRESHOLDS ──
 # Entry fires when density-price Pearson r ≥ AUTO_ENTRY_CORR and msgs/hr ≥ AUTO_ENTRY_MIN_DENS.
@@ -1763,7 +1751,7 @@ def get_bullish_feed():
 
 # ── AUTO TRADE ROUTES ──
 
-# Returns active positions, the last 50 completed trades, saved trades, and recent SMS notifications.
+# Returns active positions, the last 50 completed trades, and saved trades.
 @app.route("/api/auto-trades")
 def get_auto_trades_endpoint():
     def fmt(dt):
@@ -1800,16 +1788,8 @@ def get_auto_trades_endpoint():
     ]
     completed = [_fmt_completed(t) for t in recent_50 + saved_extra]
 
-    notifications = [{
-        "type":      n.get("type"),
-        "ticker":    n.get("ticker"),
-        "message":   n.get("message"),
-        "sent_at":   fmt(n.get("sent_at")),
-        "delivered": n.get("delivered", False),
-    } for n in trade_notifications.find({}, {"_id": 0}).sort("sent_at", -1).limit(20)]
-
     return jsonify({
-        "active": active, "completed": completed, "notifications": notifications,
+        "active": active, "completed": completed,
         "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP}
     })
 
@@ -2124,35 +2104,6 @@ def apply_screener():
     return jsonify({"status": "ok", "was_running": was_running})
 
 
-def _et_now_str() -> str:
-    now_utc  = datetime.now(timezone.utc)
-    offset   = -4 if 3 <= now_utc.month <= 11 else -5
-    et       = now_utc + timedelta(hours=offset)
-    tz_label = "EDT" if offset == -4 else "EST"
-    return et.strftime(f"%I:%M %p {tz_label}")
-
-
-def _send_sms(body: str, meta: dict):
-    delivered = False
-    if _twilio_ready:
-        try:
-            client = TwilioClient(_TWILIO_SID, _TWILIO_TOKEN)
-            client.messages.create(body=body, from_=_TWILIO_FROM, to=_NOTIFY_PHONE)
-            delivered = True
-            print(f"[SMS] Sent to {_NOTIFY_PHONE}: {body[:60]}...")
-        except Exception as e:
-            print(f"[SMS] Failed: {e}")
-    else:
-        print(f"[SMS] (disabled) Would send: {body}")
-
-    trade_notifications.insert_one({
-        **meta,
-        "message":   body,
-        "sent_at":   datetime.now(timezone.utc),
-        "delivered": delivered,
-    })
-
-
 # ── AUTO TRADE ENGINE ──
 
 # Core decision loop: checks every active position for an exit signal, then
@@ -2218,22 +2169,6 @@ def _check_auto_trades():
                 pass
 
             ret_str = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
-            now_str = _et_now_str()
-            msg = (
-                f"EXIT: ${ticker}\n"
-                f"Price: ${current_price}\n"
-                f"Density: {total_msgs} msgs/hr\n"
-                f"Return: {ret_str}\n"
-                f"Time: {now_str}"
-            )
-            _send_sms(msg, {
-                "type":       "exit",
-                "ticker":     ticker,
-                "exit_price": current_price,
-                "density":    total_msgs,
-                "return_pct": return_pct,
-                "entry_corr": trade.get("entry_corr"),
-            })
             completed_auto_trades.insert_one({
                 "ticker":        ticker,
                 "entry_price":   entry_price,
@@ -2284,7 +2219,6 @@ def _check_auto_trades():
                 screener_price):
             current_price = screener_price
             corr_pct = round(corr * 100)
-            now_str  = _et_now_str()
             auto_trades.insert_one({
                 "ticker":        ticker,
                 "status":        "active",
@@ -2293,20 +2227,6 @@ def _check_auto_trades():
                 "entered_at":    now_utc,
                 "peak_density":  total_msgs,
                 "entry_density": total_msgs,
-            })
-            msg = (
-                f"ENTRY: ${ticker}\n"
-                f"Price: ${current_price}\n"
-                f"Correlation: +{corr_pct}%\n"
-                f"Density: {total_msgs} msgs/hr\n"
-                f"Time: {now_str}"
-            )
-            _send_sms(msg, {
-                "type":        "entry",
-                "ticker":      ticker,
-                "entry_price": current_price,
-                "correlation": corr_pct,
-                "density":     total_msgs,
             })
             print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
 

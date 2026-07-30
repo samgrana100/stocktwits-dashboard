@@ -9,7 +9,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from fetcher import fetch_messages, fetch_messages_paginated
-from utils import load_tickers, get_timestamp, get_minute_bucket, get_utc_iso
+from pymongo import UpdateOne
+from utils import load_tickers, get_last_prices, get_timestamp, get_minute_bucket, get_utc_iso
 from db import scored_messages, message_density, price_history
 
 # --- Configuration (override via env vars for Railway deployment) ---
@@ -48,7 +49,6 @@ def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_fl
     if messages:
         store_messages(ticker, messages, rolling_window)
         update_density(ticker, len(messages), rolling_window)
-        store_price_snapshot(ticker, messages)
 
     if INTER_TICKER_DELAY > 0:
         time.sleep(INTER_TICKER_DELAY)
@@ -75,6 +75,25 @@ def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
             print("[PIPELINE] No tickers found. Check your screener filters.")
             time.sleep(LOOP_INTERVAL)
             continue
+
+        price_map = get_last_prices()
+        if price_map:
+            bucket = get_minute_bucket()
+            now_ts = datetime.now(timezone.utc)
+            ops = [
+                UpdateOne(
+                    {"ticker": t, "minute_bucket": bucket},
+                    {"$set": {"price": p, "ts": now_ts,
+                              "timestamp": get_timestamp(), "created_at_utc": get_utc_iso()}},
+                    upsert=True
+                )
+                for t, p in price_map.items()
+            ]
+            try:
+                price_history.bulk_write(ops, ordered=False)
+                print("[PIPELINE] Stored Finviz prices for " + str(len(ops)) + " tickers.")
+            except Exception as e:
+                print("[PIPELINE] price_history write failed: " + str(e))
 
         print("[PIPELINE] Loop started at " + get_timestamp())
         print("[PIPELINE] Tickers: " + str(len(tickers)) + " | Workers: " + str(PIPELINE_WORKERS) + "\n")
@@ -177,45 +196,6 @@ def update_density(ticker: str, message_count: int, rolling_window: int):
     except Exception as e:
         print("[DENSITY] Failed to update density for " + ticker + ": " + str(e))
 
-
-def store_price_snapshot(ticker: str, messages: list):
-    """
-    Extracts the current price from the first message that has price data
-    and stores it as a snapshot in the price_history collection.
-    Called once per ticker per loop.
-    """
-
-    price = None
-
-    for msg in messages:
-        prices = msg.get("prices", [])
-        for p in prices:
-            if p.get("symbol") == ticker:
-                try:
-                    price = float(p.get("price", 0))
-                    break
-                except Exception:
-                    continue
-        if price:
-            break
-
-    if not price:
-        return
-
-    bucket = get_minute_bucket()
-    try:
-        price_history.update_one(
-            {"ticker": ticker, "minute_bucket": bucket},
-            {"$set": {
-                "price":          price,
-                "timestamp":      get_timestamp(),
-                "created_at_utc": get_utc_iso(),
-                "ts":             datetime.now(timezone.utc),
-            }},
-            upsert=True
-        )
-    except Exception as e:
-        print("[PRICE] Failed to store price for " + ticker + ": " + str(e))
 
 
 # Quick test - only runs when you execute this file directly
