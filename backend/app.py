@@ -2003,7 +2003,7 @@ def debug_price_history(ticker):
     ticker = ticker.upper()
     docs = list(price_history.find(
         {"ticker": ticker},
-        {"_id": 0, "ticker": 1, "price": 1, "minute_bucket": 1, "timestamp": 1, "ts": 1}
+        {"_id": 0, "ticker": 1, "price": 1, "minute_bucket": 1, "timestamp": 1, "ts": 1, "source": 1}
     ).sort("ts", -1).limit(40))
     for d in docs:
         if isinstance(d.get("ts"), datetime):

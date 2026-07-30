@@ -10,7 +10,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from fetcher import fetch_messages, fetch_messages_paginated
 from pymongo import UpdateOne
-from utils import load_tickers, get_last_prices, get_timestamp, get_minute_bucket, get_utc_iso
+from utils import load_tickers, get_last_prices, get_timestamp, get_minute_bucket, get_utc_iso, is_regular_market_hours
 from db import scored_messages, message_density, price_history
 
 # --- Configuration (override via env vars for Railway deployment) ---
@@ -49,11 +49,12 @@ def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_fl
     if messages:
         store_messages(ticker, messages, rolling_window)
         update_density(ticker, len(messages), rolling_window)
-        # Finviz price (written in bulk in run_pipeline) is the primary source.
-        # This fallback only fires for tickers Finviz hasn't priced yet this loop —
-        # e.g. right after a redeploy, before _last_good_prices has repopulated —
-        # so price_history keeps getting fresh points without waiting on Finviz.
-        if ticker not in price_map:
+        # Finviz price (written in bulk in run_pipeline) is the primary source during
+        # regular market hours. It's a screener-export snapshot that freezes at the
+        # 4pm close, so outside regular hours (and whenever Finviz hasn't priced this
+        # ticker yet this loop — e.g. right after a redeploy) we use the price already
+        # embedded in the Stocktwits message payload instead, which keeps moving pre/post market.
+        if ticker not in price_map or not is_regular_market_hours():
             store_price_snapshot(ticker, messages)
 
     if INTER_TICKER_DELAY > 0:
@@ -90,7 +91,8 @@ def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
                 UpdateOne(
                     {"ticker": t, "minute_bucket": bucket},
                     {"$set": {"price": p, "ts": now_ts,
-                              "timestamp": get_timestamp(), "created_at_utc": get_utc_iso()}},
+                              "timestamp": get_timestamp(), "created_at_utc": get_utc_iso(),
+                              "source": "finviz_screener"}},
                     upsert=True
                 )
                 for t, p in price_map.items()
@@ -180,9 +182,10 @@ def store_messages(ticker: str, messages: list, rolling_window: int):
 def store_price_snapshot(ticker: str, messages: list):
     """
     Fallback price source for correlation continuity — extracts price from the
-    Stocktwits message payload itself. Only called when Finviz hasn't priced this
-    ticker yet this loop (see _process_ticker), so it bridges the gap right after
-    a redeploy before _last_good_prices has repopulated from a fresh Finviz fetch.
+    Stocktwits message payload itself. Called outside regular market hours (Finviz's
+    screener price freezes at the close) and whenever Finviz hasn't priced this
+    ticker yet this loop — e.g. right after a redeploy, before _last_good_prices
+    has repopulated from a fresh Finviz fetch (see _process_ticker).
     """
 
     price = None
@@ -210,6 +213,7 @@ def store_price_snapshot(ticker: str, messages: list):
                 "timestamp":      get_timestamp(),
                 "created_at_utc": get_utc_iso(),
                 "ts":             datetime.now(timezone.utc),
+                "source":         "stocktwits_price",
             }},
             upsert=True
         )

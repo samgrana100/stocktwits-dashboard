@@ -59,6 +59,23 @@ def get_window_start_iso(rolling_window_minutes: int) -> str:
     return window_start.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def is_regular_market_hours() -> bool:
+    """
+    True during NYSE regular session (9:30am-4:00pm ET, Mon-Fri).
+    The Finviz screener's Price column only reflects the regular-session quote —
+    it freezes at the close and doesn't track pre/post-market trades. Callers use
+    this to decide when to trust that price vs. falling back to a live source.
+    """
+    now_utc   = datetime.now(timezone.utc)
+    et_offset = -4 if 3 <= now_utc.month <= 11 else -5  # rough EDT/EST split
+    now_et    = now_utc + timedelta(hours=et_offset)
+    if now_et.weekday() >= 5:
+        return False
+    market_open  = now_et.replace(hour=9,  minute=30, second=0, microsecond=0)
+    market_close = now_et.replace(hour=16, minute=0,  second=0, microsecond=0)
+    return market_open <= now_et < market_close
+
+
 # ── TICKER LOADER ──
 
 def load_tickers_from_finviz() -> list:
