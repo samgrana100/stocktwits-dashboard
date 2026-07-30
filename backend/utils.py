@@ -135,6 +135,11 @@ def load_tickers_from_finviz() -> list:
                     pass
             if prices:
                 _last_good_prices = prices
+                print("[TICKERS] Captured prices for " + str(len(prices)) + "/" + str(len(tickers)) + " tickers from Finviz Price column.")
+            else:
+                print("[TICKERS] Price column present but 0 values parsed — check Price format in Finviz export.")
+        else:
+            print("[TICKERS] No Price column in Finviz export (columns: " + ", ".join(df.columns) + ") — correlation price_history will not be written.")
 
         print("[TICKERS] Loaded " + str(len(tickers)) + " tickers from Finviz.")
         return tickers
