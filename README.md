@@ -1,22 +1,44 @@
-# Stocktwits News Sentiment Dashboard
+# Stocktwits Sentiment Dashboard
 
-A real-time financial sentiment dashboard that ingests messages from Stocktwits, scores them with FinBERT and a composite trust/impact model, and displays ranked tickers on a live dashboard with interactive price and sentiment charts.
+A real-time stock sentiment screener that ingests messages from Stocktwits, scores them with FinBERT and a composite trust/impact model, and surfaces actionable signals through a live dashboard — updated every 45 seconds.
 
-Built by Samuel Grana for Professor Dr. Kaamran Raahemifar.
+**Built by Samuel Grana · Supervised by Dr. Kaamran Raahemifar · Pennsylvania State University**
+
+🔴 **Live:** [web-production-8515c.up.railway.app](https://web-production-8515c.up.railway.app)
 
 ---
 
-## What It Does
+## Overview
 
-- Fetches messages from Stocktwits every 90 seconds for every ticker in your Finviz screener
-- Scores each message using three agents:
-  - **Sentiment** — ProsusAI/FinBERT financial language model (−1 to +1)
-  - **Trust** — author credibility based on followers, account age, post count, verified status
-  - **Impact** — message density, sentiment change, and volume change signals
-- Combines scores into a single composite score with recency weighting (15-minute half-life)
-- Shows ranked tickers on a live dashboard with rolling windows from 1 minute to 1 month
-- Popup chart per ticker shows normalized price, rolling score, and message density over the selected window
-- Backfills 24 hours of history for each ticker on first pipeline run
+Small-cap stocks often see Stocktwits message activity spike before a significant price move. This system measures that crowd behavior in real time and computes the correlation between message density and price — surfacing the alignment before it becomes obvious in price alone.
+
+The pipeline fetches Stocktwits messages for every ticker in a Finviz Elite screener, scores each message using three AI agents (sentiment, trust, and impact), then computes a rolling composite score and a 30-minute correlation coefficient for every ticker. The frontend visualizes these signals across five views: a ranked screener table, a correlation card view, a news confirmation view, a 3D bubble map, and an exit monitor for active positions.
+
+---
+
+## Features
+
+- **Live screener table** — tickers ranked by composite sentiment score with price/change from Finviz, bull/bear percentages, message density, and correlation
+- **Correlation view** — Pearson correlation between message density and price over a 30-minute rolling window; tickers auto-sorted into Entry Zone, Watching, and user-pinned sections with drag-and-drop
+- **Ticker popup** — combined chart of normalized price, rolling score, and message density; event markers (FDA, earnings, squeeze); toggleable SMA and MACD overlays; entry/exit trade markers
+- **News view** — each ticker as a card with a mini chart, top-scored messages, and news from SEC 8-K, PR Newswire, Business Wire, GlobeNewswire, Benzinga, and FDA wire
+- **Bubble map** — 3D scatter of sentiment vs. price change vs. volume with a time scrubber to replay the trading day
+- **Signals panel** — live stream of highest-scoring Stocktwits messages across all tickers
+- **Exit monitor** — tracks message density falloff from peak for active positions; plots entry/exit triangles on the chart
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.10+, Flask |
+| AI scoring | HuggingFace Transformers, `ProsusAI/finbert` |
+| Database | MongoDB (Atlas or local) |
+| Stocktwits fetch | `curl-cffi` with Chrome TLS impersonation |
+| Finviz integration | Elite API — screener export CSV + `quote_export` price bars |
+| Frontend | Vanilla JS, Chart.js, single HTML file |
+| Deployment | Railway (backend + frontend served together) |
 
 ---
 
@@ -25,7 +47,7 @@ Built by Samuel Grana for Professor Dr. Kaamran Raahemifar.
 | Requirement | Notes |
 |---|---|
 | Python 3.10+ | Tested on 3.14 |
-| MongoDB | Community Edition, running locally on port 27017 |
+| MongoDB | Atlas or Community Edition on port 27017 |
 | Finviz Elite account | Required for screener export and price history API |
 | ~4 GB disk | FinBERT model downloads on first run (~440 MB) + PyTorch |
 
@@ -36,7 +58,7 @@ Built by Samuel Grana for Professor Dr. Kaamran Raahemifar.
 ### 1. Clone and create a virtual environment
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/samgrana100/stocktwits-dashboard.git
 cd stocktwits-dashboard
 python -m venv venv
 
@@ -53,26 +75,23 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **Note:** PyTorch (`torch`) is a large package (~2 GB). The first install may take several minutes.
+> **Note:** PyTorch (`torch`) is large (~2 GB). The first install may take several minutes.
 
 ### 3. Configure environment variables
 
-Copy `.env.example` to `.env` and fill in your credentials:
+Create a `.env` file in the project root:
 
-```bash
-cp .env.example .env
+```env
+MONGO_URI=mongodb://localhost:27017        # or your Atlas connection string
+FINVIZ_API_TOKEN=your_token_here
+FINVIZ_EXPORT_URL=https://elite.finviz.com/export.ashx?v=111&f=...
 ```
 
-Open `.env` and set:
-
-- `FINVIZ_API_TOKEN` — your Finviz Elite API token (found in your account settings)
-- `FINVIZ_EXPORT_URL` — the export URL from your Finviz screener (log in → Screener → apply filters → Export → copy the URL, excluding `&auth=...`)
-
-MongoDB defaults (`localhost:27017`) can be left as-is for a local install.
+**Getting your Finviz credentials:**
+- `FINVIZ_API_TOKEN` — Finviz Elite account → Settings → API Token
+- `FINVIZ_EXPORT_URL` — Finviz Screener → apply your filters → Export → copy the URL and remove `&auth=...` from the end
 
 ### 4. Start MongoDB
-
-Make sure MongoDB is running before starting the app:
 
 ```bash
 # Windows (if installed as a service)
@@ -82,37 +101,34 @@ net start MongoDB
 mongod --dbpath C:\data\db
 ```
 
-### 5. Run the dashboard
+### 5. Run
 
 ```bash
 cd backend
 python app.py
 ```
 
-Open your browser at **http://localhost:5000**
+Open **http://localhost:5000** in your browser.
 
-The FinBERT model will download automatically on first run (~440 MB from HuggingFace). Subsequent starts are instant.
+FinBERT downloads automatically on first run (~440 MB from HuggingFace). Subsequent starts are instant.
 
 ---
 
 ## Usage
 
-1. **Start the pipeline** — click the **Start Pipeline** button in the top bar. This begins fetching Stocktwits messages and backfilling 24 hours of history for each ticker.
+1. **Start the pipeline** — click **Start Pipeline** in the top bar. The system begins fetching Stocktwits messages and backfilling 24 hours of history for each ticker.
 
-2. **Rolling window** — use the window buttons (1m → 1mo) to change how far back the sentiment scores look. The table re-ranks tickers immediately.
+2. **Main table** — tickers ranked by composite score. Click any row to open the ticker popup. Sort by any column. Filter by change direction, relative volume, market cap, or keyword search.
 
-3. **Click any ticker** — opens a popup with:
-   - Composite, Sentiment, Trust, and Impact scores
-   - Combined price / rolling score / message density chart
-   - Its own window selector independent of the main table
-   - Mouse-wheel zoom and click-drag pan on the chart
+3. **Correlation view** — click **Correlation** in the nav. Tickers with a high positive correlation between message density and price appear in the Entry Zone. Drag cards between sections to pin your own watchlist. Use the ticker search to add any symbol.
 
-4. **No Recent Messages section** — tickers from your Finviz screener that have no messages in the current window are shown below the ranked table. Click any chip to view its price chart.
+4. **News view** — click **News View** to see all active tickers as cards with mini charts, scored messages, and news articles.
 
-5. **Reset scores** — if you want to re-score all messages with updated model weights, call:
-   ```
-   POST http://localhost:5000/api/reset-scores
-   ```
+5. **Bubble map** — click **Bubble Map** to see the full universe plotted by sentiment vs. price change vs. volume. Use the time slider to replay the day.
+
+6. **Signals panel** — click **Signals** to open the live message stream.
+
+7. **Rolling window** — use the window buttons (15m → 1w) to change how far back all score calculations look.
 
 ---
 
@@ -121,22 +137,23 @@ The FinBERT model will download automatically on first run (~440 MB from Hugging
 ```
 stocktwits-dashboard/
 ├── backend/
-│   ├── app.py              # Flask server — all API routes, background threads
-│   ├── pipeline.py         # 90-second Stocktwits fetch loop
-│   ├── fetcher.py          # curl-cffi Stocktwits message fetcher (Chrome impersonation)
-│   ├── score_calculator.py # FinBERT scoring + recency-weighted aggregation
-│   ├── db.py               # MongoDB connection and index setup
-│   ├── utils.py            # Ticker loading (Finviz screener), time helpers
+│   ├── app.py                  # Flask server — all API routes, pipeline control, watchdog
+│   ├── pipeline.py             # Concurrent Stocktwits ingestion loop (90-second cycle)
+│   ├── fetcher.py              # Stocktwits message fetcher with Chrome TLS impersonation
+│   ├── score_calculator.py     # Rolling score aggregation + 30-min correlation signal
+│   ├── event_detector.py       # Catalyst keyword extraction (FDA, earnings, squeeze, M&A)
+│   ├── calendar_fetcher.py     # Background PDUFA and earnings calendar fetcher
+│   ├── backfill_events.py      # One-shot utility: retroactively tag historical messages
+│   ├── db.py                   # MongoDB connection and index definitions
+│   ├── utils.py                # Finviz ticker loader, timestamp helpers
 │   └── agents/
-│       ├── sentiment_agent.py  # FinBERT sentiment scoring
+│       ├── sentiment_agent.py  # FinBERT sentiment scoring (−1 to +1)
 │       ├── trust_agent.py      # Author credibility scoring
-│       └── impact_agent.py     # Message density / volume impact scoring
+│       └── impact_agent.py     # Catalyst keyword + engagement impact scoring
 ├── frontend/
-│   └── index.html          # Single-page dashboard (Chart.js, vanilla JS)
-├── data/
-│   └── screener.csv        # Fallback ticker list if Finviz API is unavailable
-├── .env.example            # Required environment variables template
-├── requirements.txt        # Python dependencies
+│   └── index.html              # Single-page dashboard — all CSS, JS, and HTML
+├── .env.example                # Environment variable template
+├── requirements.txt            # Python dependencies
 └── README.md
 ```
 
@@ -144,32 +161,36 @@ stocktwits-dashboard/
 
 ## Scoring Model
 
-### Composite Score
+Every Stocktwits message produces three sub-scores that combine into a single composite:
 
 ```
-quality         = 0.40 + (trust_score × 0.35) + (impact_score × 0.25)
-composite_score = sentiment_score × quality
+composite_score = sentiment_score × (0.40 + trust_score × 0.35 + impact_score × 0.25)
 ```
 
-The floor of 0.40 ensures that even anonymous, low-impact messages retain 40% of their raw FinBERT signal rather than collapsing to near zero.
+| Score | Source |
+|---|---|
+| **Sentiment** | `ProsusAI/finbert` output — positive probability minus negative probability. Range: −1 to +1. |
+| **Trust** | Poster follower count (log scale), ideas published, account classification, and verified status. |
+| **Impact** | Boosted when the message contains a catalyst keyword (FDA, earnings, squeeze, merger, clinical trial). |
 
-### Trust Score
+The 0.40 floor ensures that even anonymous, low-impact messages retain 40% of their raw FinBERT signal rather than collapsing toward zero.
 
-Weighted combination of follower count (log scale), account age, post count, and verified status. A user with 200 followers scores ~0.58 (logarithmic, not linear).
+**Bull/Bear breakdown** — messages with composite > +0.05 count as bullish; < −0.05 as bearish. Displayed as a weighted percentage split on each ticker row.
 
-### Recency Weighting
+---
 
-Ticker-level aggregation uses exponential decay with a 15-minute half-life, so messages from the last few minutes dominate the rolling score.
+## Correlation Signal
 
-### Bull / Bear Breakdown
-
-Messages with composite score > +0.05 count as bullish; < −0.05 as bearish. Displayed as a weighted percentage split under each ticker's score bar.
+The CORR column and Correlation view use a **30-minute rolling Pearson coefficient** between message density (posts per minute) and price (snapshots captured from Stocktwits message payloads). A value near +1 means crowd activity and price are moving together — the earliest detectable signal of a momentum setup. Values are recomputed on every score refresh cycle.
 
 ---
 
 ## Technical Notes
 
-- **Stocktwits access** — uses `curl-cffi` with Chrome browser impersonation to bypass bot detection. No API key is required (the official API costs ~$10,000/year for commercial access).
-- **Price data** — served from the Finviz Elite `quote_export` endpoint (1-minute intraday bars). Cached per ticker for 60 seconds to avoid hammering the API.
-- **MongoDB deduplication** — a unique index on `message_id` prevents duplicate messages from being stored across pipeline loops and backfill runs.
-- **FinBERT model** — `ProsusAI/finbert` from HuggingFace, a BERT model fine-tuned on financial text. Cached locally after first download.
+- **Stocktwits access** — `curl-cffi` impersonates Chrome at the TLS fingerprint level, not just the User-Agent string. This is required because Stocktwits blocks standard Python HTTP clients.
+- **Price charts** — served from the Finviz Elite `quote_export` endpoint (1-minute intraday OHLC bars). Cached per ticker for 60 seconds.
+- **Price and % Change columns** — sourced from the Finviz screener export CSV, not from Stocktwits.
+- **MongoDB deduplication** — a unique index on `message_id` silently rejects duplicate inserts across pipeline loops and backfill runs.
+- **FinBERT model** — `ProsusAI/finbert` from HuggingFace, fine-tuned on financial analyst reports and earnings call transcripts. Cached locally after first download (~440 MB).
+- **PDUFA / earnings calendars** — fetched from BioPharma Catalyst (PDUFA) and Yahoo Finance (earnings) in a background thread. Refresh intervals: PDUFA every 6 hours, earnings every 24 hours.
+- **Stale-cache guard** — if the Finviz API is temporarily unreachable, the pipeline continues using the last successfully fetched ticker list rather than stopping.
