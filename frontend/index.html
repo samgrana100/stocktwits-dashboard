@@ -4496,8 +4496,9 @@
     const safeComp = (t.company || "--").replace(/'/g, "\\'");
     const safeSec  = (t.sector  || "--").replace(/'/g, "\\'");
     const safeInd  = (t.industry|| "--").replace(/'/g, "\\'");
-    const chgColor = (t.change || 0) > 0 ? "corr-change-up" : "corr-change-down";
-    const chgDisp  = t.change != null ? (t.change > 0 ? "+" : "") + t.change + "%" : "";
+    const chgNum   = parseFloat(t.change);
+    const chgColor = chgNum > 0 ? "corr-change-up" : "corr-change-down";
+    const chgDisp  = t.change != null ? (chgNum >= 0 ? "+" : "") + t.change : "";
     const msgCount   = t.total_messages ?? 0;
     const densColor  = msgCount >= 19 ? "#4ade80" : msgCount >= 6 ? "#facc15" : "#f87171";
     const density    = t.total_messages != null ? `<span style="color:${densColor}">${t.total_messages} msgs</span>` : "";
@@ -4750,7 +4751,6 @@
           <span class="news-industry">${t.sector ? t.sector + (t.industry ? " · " + t.industry : "") : (t.industry || "")}</span>
           ${catalystPills}
           ${countdownBadge}
-          ${t.correlation != null && Math.round(t.correlation * 100) >= corrEntryThreshold ? `<span class="signal-badge corr-entry" style="margin-left:2px">↑ Entry ${Math.round(t.correlation*100)}%</span>` : ""}
         </div>
         <div class="news-hdr-right">
           <span class="news-price">${t.price ? "$" + t.price : "--"}</span>

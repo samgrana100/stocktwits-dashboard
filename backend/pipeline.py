@@ -27,7 +27,7 @@ _seen_lock = threading.Lock()
 
 # Handles one ticker per call: backfills history on first sight, then fetches
 # the latest page and stores new messages, density, and price snapshot.
-def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_flag: list):
+def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_flag: list, price_map: dict):
     if stop_flag[0]:
         return
 
@@ -49,6 +49,12 @@ def _process_ticker(ticker: str, seen_tickers: set, rolling_window: int, stop_fl
     if messages:
         store_messages(ticker, messages, rolling_window)
         update_density(ticker, len(messages), rolling_window)
+        # Finviz price (written in bulk in run_pipeline) is the primary source.
+        # This fallback only fires for tickers Finviz hasn't priced yet this loop —
+        # e.g. right after a redeploy, before _last_good_prices has repopulated —
+        # so price_history keeps getting fresh points without waiting on Finviz.
+        if ticker not in price_map:
+            store_price_snapshot(ticker, messages)
 
     if INTER_TICKER_DELAY > 0:
         time.sleep(INTER_TICKER_DELAY)
@@ -103,7 +109,7 @@ def run_pipeline(rolling_window: int = 60, stop_flag: list = [False]):
         # logged so a single failed fetch doesn't abort the rest of the loop.
         with ThreadPoolExecutor(max_workers=PIPELINE_WORKERS) as executor:
             futures = {
-                executor.submit(_process_ticker, t, seen_tickers, rolling_window, stop_flag): t
+                executor.submit(_process_ticker, t, seen_tickers, rolling_window, stop_flag, price_map): t
                 for t in tickers
             }
             for future in as_completed(futures):
@@ -169,6 +175,46 @@ def store_messages(ticker: str, messages: list, rolling_window: int):
             skipped += 1
 
     print("[STORE] " + ticker + ": " + str(inserted) + " new, " + str(skipped) + " duplicate.")
+
+
+def store_price_snapshot(ticker: str, messages: list):
+    """
+    Fallback price source for correlation continuity — extracts price from the
+    Stocktwits message payload itself. Only called when Finviz hasn't priced this
+    ticker yet this loop (see _process_ticker), so it bridges the gap right after
+    a redeploy before _last_good_prices has repopulated from a fresh Finviz fetch.
+    """
+
+    price = None
+
+    for msg in messages:
+        for p in msg.get("prices", []):
+            if p.get("symbol") == ticker:
+                try:
+                    price = float(p.get("price", 0))
+                    break
+                except (TypeError, ValueError):
+                    continue
+        if price:
+            break
+
+    if not price:
+        return
+
+    bucket = get_minute_bucket()
+    try:
+        price_history.update_one(
+            {"ticker": ticker, "minute_bucket": bucket},
+            {"$set": {
+                "price":          price,
+                "timestamp":      get_timestamp(),
+                "created_at_utc": get_utc_iso(),
+                "ts":             datetime.now(timezone.utc),
+            }},
+            upsert=True
+        )
+    except Exception as e:
+        print("[PRICE] Failed to store fallback price for " + ticker + ": " + str(e))
 
 
 def update_density(ticker: str, message_count: int, rolling_window: int):
