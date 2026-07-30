@@ -196,7 +196,7 @@ The 0.40 floor ensures that even anonymous, low-impact messages retain 40% of th
 
 ## Correlation Signal
 
-The CORR column and Correlation view use a **30-minute rolling Pearson coefficient** between message density (posts per minute) and price (snapshots captured from Stocktwits message payloads). A value near +1 means crowd activity and price are moving together — the earliest detectable signal of a momentum setup. Values are recomputed on every score refresh cycle.
+The CORR column and Correlation view use a **30-minute rolling Pearson coefficient** between message density (posts per minute from Stocktwits) and price. Price snapshots are primarily sourced from the Finviz screener CSV, written to the database at the start of every 90-second pipeline loop; if Finviz hasn't priced a given ticker yet that loop, the price embedded in that ticker's own Stocktwits messages is used as a fallback so the signal keeps getting fresh data points through a redeploy or restart. A value near +1 means crowd activity and price are moving together — the earliest detectable signal of a momentum setup. Values are recomputed on every score refresh cycle, and require at least 5 price snapshots in the last 30 minutes before a ticker shows a value at all.
 
 ---
 
@@ -209,3 +209,4 @@ The CORR column and Correlation view use a **30-minute rolling Pearson coefficie
 - **FinBERT model** — `ProsusAI/finbert` from HuggingFace, fine-tuned on financial analyst reports and earnings call transcripts. Cached locally after first download (~440 MB).
 - **PDUFA / earnings calendars** — fetched from BioPharma Catalyst (PDUFA) and Yahoo Finance (earnings) in a background thread. Refresh intervals: PDUFA every 6 hours, earnings every 24 hours.
 - **Stale-cache guard** — if the Finviz API is temporarily unreachable, the pipeline continues using the last successfully fetched ticker list rather than stopping.
+- **Correlation continuity across restarts** — the Finviz price cache (`_last_good_prices`) is in-memory and resets to empty on every process restart. Since correlation depends on 5+ price snapshots in the trailing 30-minute window, a slow restart can otherwise blank out correlation for every ticker until the cache repopulates. The Stocktwits-message price fallback in `pipeline.py` closes that gap by writing to `price_history` immediately once message fetching resumes, without waiting on a fresh Finviz fetch.
