@@ -2234,9 +2234,17 @@ def _check_auto_trades():
     # ── ENTRY monitoring — uses full correlation scores ──
     scores = aggregate_ticker_scores(rolling_window_minutes=60)
     for s in scores:
-        ticker         = s["ticker"]
-        corr           = s.get("correlation")
-        screener_price = finviz.get(ticker, {}).get("price")
+        ticker = s["ticker"]
+        corr   = s.get("correlation")
+
+        # Same price source as exit monitoring below: prefer the cached live
+        # intraday quote (tracks pre/post-market), fall back to the Finviz
+        # screener price (regular-session only) if nothing's cached yet.
+        # Keeps entry and exit prices comparable instead of mixing sources.
+        with _price_lock:
+            _cached = price_cache.get(f"{ticker}_i1_today")
+            _bars   = _cached["data"] if _cached else []
+        screener_price = _bars[-1]["price"] if _bars else finviz.get(ticker, {}).get("price")
 
         if ticker in active_map or ticker in recent_exits:
             continue
