@@ -151,6 +151,14 @@ def refresh_finviz_token() -> bool:
 pipeline_thread    = None
 pipeline_stop_flag = [False]
 
+# Set once at import time. /api/pipeline/status uses this for a boot grace period —
+# without it, a brand-new process reports unhealthy on the very first healthcheck hit
+# (last_seen_alive_at is still None right after boot, before the pipeline thread has
+# had a chance to start), which combined with Railway's on_failure restart policy can
+# turn into a self-inflicted crash loop: 503 -> Railway kills the container -> fresh
+# boot -> 503 again before the pipeline is up -> repeat.
+_app_boot_time = datetime.now(timezone.utc)
+
 # Crash diagnostics — run_pipeline() is wrapped in _launch_pipeline_thread() below
 # with `except BaseException` (not just Exception) so a SystemExit or any other
 # non-Exception error still gets logged with a full traceback instead of being
@@ -2062,6 +2070,13 @@ def pipeline_status():
     # in-process watchdog somehow doesn't, without flapping on a normal quick restart.
     stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
     if not running and not stopped_intentionally:
+        since_boot = (datetime.now(timezone.utc) - _app_boot_time).total_seconds()
+        if since_boot < PIPELINE_DOWN_GRACE_SECONDS:
+            # Process itself just booted — the pipeline thread hasn't had a real
+            # chance to start yet. Never report unhealthy this early, or a fresh
+            # container can fail its own first healthcheck before it's had time
+            # to come up, which is exactly the self-inflicted loop described above.
+            return jsonify(payload)
         last_alive = pipeline_health.get("last_seen_alive_at")
         down_too_long = True
         if last_alive:
