@@ -2085,6 +2085,21 @@ def debug_pipeline_events():
     return jsonify({"count": len(docs), "events": docs})
 
 
+@app.route("/api/debug/auto-trade/<ticker>")
+def debug_auto_trade(ticker):
+    """TEMP diagnostic — raw active + completed auto-trade docs for one ticker, full fields."""
+    ticker = ticker.upper()
+    def _fmt(d):
+        d.pop("_id", None)
+        for k, v in d.items():
+            if isinstance(v, datetime):
+                d[k] = v.isoformat()
+        return d
+    active    = [_fmt(t) for t in auto_trades.find({"ticker": ticker})]
+    completed = [_fmt(t) for t in completed_auto_trades.find({"ticker": ticker}).sort("exited_at", -1)]
+    return jsonify({"ticker": ticker, "active": active, "completed": completed})
+
+
 @app.route("/api/debug/price-history/<ticker>")
 def debug_price_history(ticker):
     """TEMP diagnostic — raw price_history docs for one ticker, newest first. Remove after debugging correlation staleness."""
