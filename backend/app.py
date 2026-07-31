@@ -25,7 +25,7 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots
+from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots, pipeline_events
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 from utils import get_window_start_iso, get_timestamp
 from event_detector import detect_event
@@ -155,13 +155,35 @@ pipeline_stop_flag = [False]
 # with `except BaseException` (not just Exception) so a SystemExit or any other
 # non-Exception error still gets logged with a full traceback instead of being
 # silently swallowed by Python's default per-thread exception hook.
+# In-memory only — reset on every process restart/redeploy. See pipeline_events
+# (MongoDB, below) for the durable version that survives those resets.
 pipeline_health = {
-    "last_start_at":   None,
-    "last_crash_at":   None,
-    "last_crash_type": None,
-    "last_crash_error": None,
-    "crash_count":     0,
+    "last_start_at":     None,
+    "last_seen_alive_at": None,
+    "last_crash_at":     None,
+    "last_crash_type":   None,
+    "last_crash_error":  None,
+    "crash_count":       0,
 }
+
+PIPELINE_DOWN_GRACE_SECONDS = 120  # how long /api/pipeline/status tolerates a stopped
+                                   # pipeline before reporting unhealthy to Railway's
+                                   # healthcheck — avoids flapping on a normal restart.
+
+
+def _log_pipeline_event(event: str, detail: str = None):
+    """Durable lifecycle log in MongoDB — survives process restarts and redeploys,
+    unlike pipeline_health (in-memory) and Railway's own log stream (both get wiped
+    by the exact events — a crash, a redeploy — we need to diagnose)."""
+    try:
+        pipeline_events.insert_one({
+            "event":     event,
+            "detail":    detail,
+            "timestamp": get_timestamp(),
+            "ts":        datetime.now(timezone.utc),
+        })
+    except Exception as e:
+        print(f"[PIPELINE EVENTS] Failed to log '{event}': {e}")
 
 
 def _launch_pipeline_thread():
@@ -176,7 +198,9 @@ def _launch_pipeline_thread():
     stop_flag_ref = pipeline_stop_flag
 
     def _run():
-        pipeline_health["last_start_at"] = get_timestamp()
+        pipeline_health["last_start_at"]      = get_timestamp()
+        pipeline_health["last_seen_alive_at"] = get_timestamp()
+        _log_pipeline_event("started")
         try:
             sys.path.append(os.path.dirname(os.path.abspath(__file__)))
             from pipeline import run_pipeline
@@ -188,6 +212,7 @@ def _launch_pipeline_thread():
             pipeline_health["crash_count"]     += 1
             print(f"[PIPELINE] CRASHED ({type(e).__name__}): {e}")
             print(traceback.format_exc())
+            _log_pipeline_event("crashed", f"{type(e).__name__}: {e}")
 
     pipeline_thread = threading.Thread(target=_run, daemon=True)
     pipeline_thread.start()
@@ -2020,13 +2045,44 @@ def start_pipeline():
 def stop_pipeline():
     global pipeline_stop_flag
     pipeline_stop_flag[0] = True
+    _log_pipeline_event("stopped_manually")
     return jsonify({"status": "stopped"})
 
 
 @app.route("/api/pipeline/status")
 def pipeline_status():
     running = pipeline_thread is not None and pipeline_thread.is_alive()
-    return jsonify({"running": running, **pipeline_health})
+    if running:
+        pipeline_health["last_seen_alive_at"] = get_timestamp()
+    payload = {"running": running, **pipeline_health}
+
+    # Report unhealthy to Railway's healthcheck only once the pipeline has been down
+    # for longer than PIPELINE_DOWN_GRACE_SECONDS, and only when it wasn't stopped on
+    # purpose — gives Railway's own restart policy a shot at recovering it if our
+    # in-process watchdog somehow doesn't, without flapping on a normal quick restart.
+    stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
+    if not running and not stopped_intentionally:
+        last_alive = pipeline_health.get("last_seen_alive_at")
+        down_too_long = True
+        if last_alive:
+            try:
+                last_alive_dt = datetime.strptime(last_alive, "%d:%m:%Y:%H:%M:%S").replace(tzinfo=timezone.utc)
+                down_too_long = (datetime.now(timezone.utc) - last_alive_dt) > timedelta(seconds=PIPELINE_DOWN_GRACE_SECONDS)
+            except Exception:
+                pass
+        if down_too_long:
+            return jsonify(payload), 503
+    return jsonify(payload)
+
+
+@app.route("/api/debug/pipeline-events")
+def debug_pipeline_events():
+    """TEMP diagnostic — recent pipeline lifecycle events (started/crashed/watchdog_restart/stopped_manually)."""
+    docs = list(pipeline_events.find({}, {"_id": 0}).sort("ts", -1).limit(50))
+    for d in docs:
+        if isinstance(d.get("ts"), datetime):
+            d["ts"] = d["ts"].isoformat()
+    return jsonify({"count": len(docs), "events": docs})
 
 
 @app.route("/api/debug/price-history/<ticker>")
@@ -2430,12 +2486,17 @@ def _start_background_services():
             time.sleep(30)
             try:
                 stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
-                if not stopped_intentionally and (pipeline_thread is None or not pipeline_thread.is_alive()):
+                alive = pipeline_thread is not None and pipeline_thread.is_alive()
+                if alive:
+                    pipeline_health["last_seen_alive_at"] = get_timestamp()
+                if not stopped_intentionally and not alive:
                     print("[APP] Pipeline watchdog: thread died unexpectedly, restarting.")
+                    _log_pipeline_event("watchdog_restart")
                     _launch_pipeline_thread()
             except BaseException as e:
                 print(f"[APP] Pipeline watchdog error ({type(e).__name__}): {e}")
                 print(traceback.format_exc())
+                _log_pipeline_event("watchdog_error", f"{type(e).__name__}: {e}")
 
     threading.Thread(target=_pipeline_watchdog, daemon=True).start()
 

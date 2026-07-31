@@ -26,6 +26,7 @@ upcoming_catalysts    = db["upcoming_catalysts"]
 auto_trades           = db["auto_trades"]
 completed_auto_trades = db["completed_auto_trades"]
 screener_snapshots    = db["screener_snapshots"]
+pipeline_events       = db["pipeline_events"]
 
 
 def ensure_indexes():
@@ -82,6 +83,13 @@ def ensure_indexes():
     # TTL on ts auto-deletes bubble trail points after 24 hours — intraday only.
     screener_snapshots.create_index([("ticker", ASCENDING), ("ts", DESCENDING)])
     screener_snapshots.create_index("ts", expireAfterSeconds=86400)  # 1-day TTL
+
+    # ── pipeline_events ──
+    # Durable lifecycle log (started/crashed/watchdog_restart/stopped_manually) so
+    # pipeline history survives process restarts and redeploys — unlike the in-memory
+    # pipeline_health dict and Railway's own ephemeral log stream, both of which get
+    # wiped by the exact events we need to diagnose. TTL keeps 14 days of history.
+    pipeline_events.create_index("ts", expireAfterSeconds=1209600)  # 14-day TTL
 
     print("[DB] All indexes verified successfully.")
 
