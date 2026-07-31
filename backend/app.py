@@ -166,12 +166,18 @@ _app_boot_time = datetime.now(timezone.utc)
 # In-memory only — reset on every process restart/redeploy. See pipeline_events
 # (MongoDB, below) for the durable version that survives those resets.
 pipeline_health = {
-    "last_start_at":     None,
-    "last_seen_alive_at": None,
-    "last_crash_at":     None,
-    "last_crash_type":   None,
-    "last_crash_error":  None,
-    "crash_count":       0,
+    "last_start_at":       None,
+    "last_seen_alive_at":  None,
+    "last_crash_at":       None,
+    "last_crash_type":     None,
+    "last_crash_error":    None,
+    "crash_count":         0,
+    # Incremented once per watchdog loop iteration, regardless of outcome — proves
+    # the watchdog thread itself is alive and looping, independent of last_seen_alive_at
+    # (which /api/pipeline/status also updates on its own, so polling it can't be used
+    # to tell "the watchdog is ticking" apart from "we just happened to check").
+    "watchdog_ticks":      0,
+    "last_watchdog_tick_at": None,
 }
 
 PIPELINE_DOWN_GRACE_SECONDS = 120  # how long /api/pipeline/status tolerates a stopped
@@ -2515,6 +2521,8 @@ def _start_background_services():
         while True:
             time.sleep(30)
             try:
+                pipeline_health["watchdog_ticks"]        += 1
+                pipeline_health["last_watchdog_tick_at"]  = get_timestamp()
                 stopped_intentionally = pipeline_stop_flag and pipeline_stop_flag[0]
                 alive = pipeline_thread is not None and pipeline_thread.is_alive()
                 if alive:
