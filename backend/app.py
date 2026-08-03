@@ -328,6 +328,13 @@ def _utc_dt_to_et_hhmmss(dt: datetime) -> str:
     return (dt + offset).strftime("%H:%M:%S")
 
 
+def _utc_dt_to_et_date(dt: datetime) -> str:
+    """Convert a UTC datetime to its Eastern Time calendar date, YYYY-MM-DD —
+    used to bucket completed trades by day for the Trades tab's Calendar view."""
+    offset = timedelta(hours=-4) if 3 <= dt.month <= 11 else timedelta(hours=-5)
+    return (dt + offset).strftime("%Y-%m-%d")
+
+
 def get_et_now() -> datetime:
     """Returns current datetime in Eastern Time (timezone-aware)."""
     now_utc = datetime.now(timezone.utc)
@@ -2140,6 +2147,16 @@ def exit_manual_trade():
         "created_at_utc": {"$gte": get_window_start_iso(60)}
     })
 
+    # Client-supplied, same convention as entry_corr — the frontend already has
+    # this ticker's live correlation from its own polling at the moment of exit,
+    # so there's no need for a second server-side aggregate_ticker_scores() pass.
+    exit_corr = None
+    try:
+        if data.get("exit_corr") is not None:
+            exit_corr = round(float(data["exit_corr"]))
+    except (ValueError, TypeError):
+        pass
+
     now_utc       = datetime.now(timezone.utc)
     position_size = trade.get("position_size", TRADE_POSITION_SIZE)
     pnl_dollars   = round(return_pct * position_size / 100, 2) if return_pct is not None else None
@@ -2154,6 +2171,7 @@ def exit_manual_trade():
         "entered_at_et":     trade.get("entered_at_et"),
         "exited_at_et":      _utc_dt_to_et_hhmmss(now_utc),
         "entry_corr":        trade.get("entry_corr"),
+        "exit_corr":         exit_corr,
         "entry_density":     trade.get("entry_density", 0),
         "peak_density":      trade.get("peak_density", 0),
         "exit_density":      exit_density,
@@ -2316,6 +2334,47 @@ def get_trades_pnl_today():
         "losses":       losses,
         "position_size": TRADE_POSITION_SIZE,
     })
+
+
+# Per-day PnL/trade-count rollup for one ET calendar month — backs the Trades tab's
+# Calendar view. Groups completed_auto_trades by the ET date of exited_at so a whole
+# month renders from a single query rather than one request per day.
+@app.route("/api/trades/calendar")
+def get_trades_calendar():
+    month_str = request.args.get("month") or get_et_now().strftime("%Y-%m")
+    source    = (request.args.get("source") or "all").lower()
+    try:
+        year, month = (int(x) for x in month_str.split("-"))
+        if not (1 <= month <= 12):
+            raise ValueError
+    except (ValueError, AttributeError):
+        return jsonify({"error": "invalid month, expected YYYY-MM"}), 400
+
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    month_start = _et_date_str_to_utc(f"{year:04d}-{month:02d}-01")
+    month_end   = _et_date_str_to_utc(f"{next_year:04d}-{next_month:02d}-01")
+
+    f = {"exited_at": {"$gte": month_start, "$lt": month_end}}
+    if source in ("auto", "manual"):
+        f["source"] = source
+
+    days = {}
+    for t in completed_auto_trades.find(f, {"exited_at": 1, "pnl_dollars": 1}):
+        exited = t.get("exited_at")
+        if not exited:
+            continue
+        day = days.setdefault(_utc_dt_to_et_date(exited), {"pnl_dollars": 0.0, "trade_count": 0, "wins": 0, "losses": 0})
+        pnl = t.get("pnl_dollars")
+        day["trade_count"] += 1
+        if pnl is not None:
+            day["pnl_dollars"] += pnl
+            if pnl > 0: day["wins"] += 1
+            elif pnl < 0: day["losses"] += 1
+
+    for d in days.values():
+        d["pnl_dollars"] = round(d["pnl_dollars"], 2)
+
+    return jsonify({"month": f"{year:04d}-{month:02d}", "days": days})
 
 
 @app.route("/api/ticker-messages/<ticker>")
@@ -2641,6 +2700,11 @@ def _check_auto_trades():
     window_20m = get_window_start_iso(20)
     window_40m = get_window_start_iso(40)
 
+    # Computed once here (moved ahead of the exit loop below) so both EXIT and ENTRY
+    # monitoring share the same pass instead of calling this twice per tick.
+    scores        = aggregate_ticker_scores(rolling_window_minutes=60)
+    corr_by_ticker = {s["ticker"]: s.get("correlation") for s in scores}
+
     active_map = {t["ticker"]: t for t in auto_trades.find({"status": "active"})}
 
     cooldown_cutoff = now_utc - timedelta(seconds=REENTRY_COOLDOWN)
@@ -2710,6 +2774,9 @@ def _check_auto_trades():
             if sma_exit:      reasons.append("sma_off_peak")
             exit_reason = "+".join(reasons)
 
+            exit_corr = corr_by_ticker.get(ticker)
+            exit_corr_pct = round(exit_corr * 100) if exit_corr is not None else None
+
             ret_str = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
             position_size = trade.get("position_size", TRADE_POSITION_SIZE)
             pnl_dollars   = round(return_pct * position_size / 100, 2) if return_pct is not None else None
@@ -2723,6 +2790,7 @@ def _check_auto_trades():
                 "entered_at_et":     trade.get("entered_at_et"),
                 "exited_at_et":      _utc_dt_to_et_hhmmss(exit_time),
                 "entry_corr":        trade.get("entry_corr"),
+                "exit_corr":         exit_corr_pct,
                 "entry_density":     trade.get("entry_density", 0),
                 "peak_density":      peak,
                 "exit_density":      total_msgs,
@@ -2740,8 +2808,7 @@ def _check_auto_trades():
             sma_drop_pct = round((peak_sma - current_sma) / peak_sma * 100, 1) if (peak_sma and current_sma is not None) else 0
             print(f"[AUTO TRADE] EXIT {ticker} | reason={exit_reason} | peak={peak} density={total_msgs} drop={peak - total_msgs} ({drop_pct}%) | peak_sma={peak_sma} sma={current_sma} ({sma_drop_pct}%) | price={current_price} | return: {ret_str}")
 
-    # ── ENTRY monitoring — uses full correlation scores ──
-    scores = aggregate_ticker_scores(rolling_window_minutes=60)
+    # ── ENTRY monitoring — uses full correlation scores (computed above) ──
     for s in scores:
         ticker = s["ticker"]
         corr   = s.get("correlation")

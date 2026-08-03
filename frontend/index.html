@@ -1346,6 +1346,11 @@
         <span class="corr-count" id="trades-totals" style="color:var(--text-dimmed)"></span>
       </div>
       <div class="corr-controls">
+        <button id="trades-calendar-btn" onclick="toggleTradeCalendar()" style="font-size:11px;padding:4px 10px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-secondary);cursor:pointer">📅 Calendar</button>
+        <span id="trades-date-filter-badge" style="display:none;font-size:10px;color:var(--text-dimmed);align-items:center;gap:5px">
+          <span id="trades-date-filter-label"></span>
+          <button onclick="clearTradeDateFilter()" style="background:none;border:none;color:var(--text-dimmed);cursor:pointer;font-size:12px;line-height:1;padding:0">✕</button>
+        </span>
         <label class="corr-ctrl-label">Source
           <select id="trades-filter-source" onchange="fetchTrades()" style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 6px">
             <option value="all">All</option>
@@ -1403,15 +1408,52 @@
             <th style="cursor:default">PnL $</th>
             <th style="cursor:default">Entry Density</th>
             <th style="cursor:default">Exit Density</th>
+            <th style="cursor:default">Exit Reason</th>
             <th style="cursor:default">Entered (ET)</th>
             <th style="cursor:default">Exited (ET)</th>
             <th style="cursor:default">Mkt Cap</th>
           </tr>
         </thead>
         <tbody id="trades-table-body">
-          <tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
+          <tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+</div>
+
+<!-- Trade Detail Popup -->
+<div class="popup-overlay" id="trade-popup-overlay" onclick="if(event.target===this) closeTradePopup()">
+  <div class="popup-box" style="width:480px">
+    <div class="popup-header">
+      <div>
+        <div class="popup-ticker-name" id="trade-popup-ticker">--</div>
+        <div class="popup-company" id="trade-popup-meta">--</div>
+        <div class="popup-nav-wrap" id="trade-popup-nav-wrap">
+          <button class="popup-nav-btn" id="trade-popup-nav-prev" onclick="navigateTradePopup(-1)">&#8592;</button>
+          <span class="popup-nav-pos" id="trade-popup-nav-pos"></span>
+          <button class="popup-nav-btn" id="trade-popup-nav-next" onclick="navigateTradePopup(1)">&#8594;</button>
+        </div>
+      </div>
+      <button class="popup-close" onclick="closeTradePopup()">&#x2715;</button>
+    </div>
+    <div id="trade-popup-body" style="padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:14px 20px"></div>
+  </div>
+</div>
+
+<!-- Trade Calendar -->
+<div class="popup-overlay" id="trade-calendar-overlay" onclick="if(event.target===this) closeTradeCalendar()">
+  <div class="popup-box" style="width:520px">
+    <div class="popup-header">
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="popup-nav-btn" onclick="shiftTradeCalendarMonth(-1)">&#8592;</button>
+        <div class="popup-ticker-name" id="trade-calendar-month-label" style="font-size:16px">--</div>
+        <button class="popup-nav-btn" onclick="shiftTradeCalendarMonth(1)">&#8594;</button>
+      </div>
+      <button class="popup-close" onclick="closeTradeCalendar()">&#x2715;</button>
+    </div>
+    <div style="padding:16px 18px">
+      <div id="trade-calendar-grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:5px"></div>
     </div>
   </div>
 </div>
@@ -3847,6 +3889,8 @@
     document.getElementById("trades-filter-entry-density").value = "";
     document.getElementById("trades-filter-exit-density").value  = "";
     document.getElementById("trades-filter-ticker").value        = "";
+    _tradeDateFilter = null;
+    document.getElementById("trades-date-filter-badge").style.display = "none";
     fetchTrades();
   }
 
@@ -3870,6 +3914,7 @@
       if (entMin !== "") params.set("entry_density_min", entMin);
       if (exMin  !== "") params.set("exit_density_min", exMin);
       if (ticker) params.set("ticker", ticker);
+      if (_tradeDateFilter) { params.set("date_from", _tradeDateFilter); params.set("date_to", _tradeDateFilter); }
 
       const res  = await fetch("/api/trades?" + params.toString());
       if (!res.ok) return;
@@ -3877,6 +3922,15 @@
       renderTradesTable(data);
     } catch(e) { console.error("[trades]", e); }
   }
+
+  // Shared by the Trades table's Exit Reason column and the trade detail popup.
+  function _fmtExitReason(reason) {
+    if (!reason) return "--";
+    if (reason === "manual") return "Manual";
+    return reason.split("+").map(r => r === "sma_off_peak" ? "SMA" : r === "density_off_peak" ? "Density" : r).join(" + ");
+  }
+
+  let _tradeNavRows = [];
 
   function renderTradesTable(data) {
     const body   = document.getElementById("trades-table-body");
@@ -3889,6 +3943,7 @@
       const bT = b.exited_at || b.entered_at || "";
       return bT.localeCompare(aT);
     });
+    _tradeNavRows = rows;
     count.textContent = rows.length + " trade" + (rows.length !== 1 ? "s" : "");
 
     const totals = data.totals || {};
@@ -3903,11 +3958,11 @@
     }
 
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
+      body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
       return;
     }
 
-    body.innerHTML = rows.map(t => {
+    body.innerHTML = rows.map((t, i) => {
       const ret      = t.return_pct;
       const retCls   = ret == null ? "muted" : ret >= 0 ? "up" : "down";
       const retDisp  = ret == null ? "--" : (ret >= 0 ? "+" : "") + ret + "%";
@@ -3916,7 +3971,7 @@
       const pnlDisp  = pnl == null ? "--" : (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2);
       const srcDisp  = t.source === "manual" ? "Manual" : "Auto";
       const statusDisp = t._status === "Open" ? '<span class="up">● Open</span>' : "Closed";
-      return `<tr>
+      return `<tr onclick="openTradePopupAt(${i})" style="cursor:pointer">
         <td class="ticker-sym">${t.ticker}</td>
         <td class="muted">${srcDisp}</td>
         <td>${statusDisp}</td>
@@ -3926,11 +3981,170 @@
         <td class="${pnlCls}">${pnlDisp}</td>
         <td class="muted">${t.entry_density != null ? t.entry_density : "--"}</td>
         <td class="muted">${t.exit_density  != null ? t.exit_density  : "--"}</td>
+        <td class="muted">${_fmtExitReason(t.exit_reason)}</td>
         <td class="muted">${t.entered_at_et || "--"}</td>
         <td class="muted">${t.exited_at_et  || "--"}</td>
         <td class="muted">${t.market_cap_bucket || "--"}</td>
       </tr>`;
     }).join("");
+  }
+
+  // ── Trade detail popup — click a Trades-tab row, then step through the
+  // currently-filtered rows with Prev/Next (same pattern as the correlation
+  // view's ticker popup nav, but a separate overlay since the ticker popup's
+  // DOM is chart-specific and not reusable for plain trade fields). ──
+  let _tradeNavIdx = -1;
+
+  function _tf(label, html) {
+    return `<div><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dimmed)">${label}</div><div style="font-size:14px;font-weight:600;margin-top:3px;color:var(--text-primary)">${html}</div></div>`;
+  }
+
+  function _renderTradePopup(t) {
+    document.getElementById("trade-popup-ticker").textContent = t.ticker;
+    document.getElementById("trade-popup-meta").textContent =
+      (t.source === "manual" ? "Manual" : "Auto") + " · " + (t._status === "Open" ? "Open position" : "Closed trade");
+
+    const ret     = t.return_pct;
+    const retHtml = ret == null ? "--" : `<span class="${ret >= 0 ? "up" : "down"}">${(ret >= 0 ? "+" : "") + ret}%</span>`;
+    const pnl     = t.pnl_dollars;
+    const pnlHtml = pnl == null ? "--" : `<span class="${pnl >= 0 ? "up" : "down"}">${(pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2)}</span>`;
+    const statusHtml = t._status === "Open" ? '<span class="up">● Open</span>' : "Closed";
+
+    document.getElementById("trade-popup-body").innerHTML = [
+      _tf("Status", statusHtml),
+      _tf("Source", t.source === "manual" ? "Manual" : "Auto"),
+      _tf("Entry Price", t.entry_price != null ? "$" + t.entry_price : "--"),
+      _tf("Exit Price",  t.exit_price  != null ? "$" + t.exit_price  : "--"),
+      _tf("Return %", retHtml),
+      _tf("PnL $", pnlHtml),
+      _tf("Entry Density", t.entry_density != null ? t.entry_density + " msgs/hr" : "--"),
+      _tf("Exit Density",  t.exit_density  != null ? t.exit_density  + " msgs/hr" : "--"),
+      _tf("Entry Corr", t.entry_corr != null ? t.entry_corr + "%" : "--"),
+      _tf("Exit Corr",  t.exit_corr  != null ? t.exit_corr  + "%" : "--"),
+      _tf("Exit Reason", _fmtExitReason(t.exit_reason)),
+      _tf("Market Cap", t.market_cap_bucket || "--"),
+      _tf("Entered (ET)", t.entered_at_et || "--"),
+      _tf("Exited (ET)",  t.exited_at_et  || "--"),
+    ].join("");
+  }
+
+  function openTradePopupAt(idx) {
+    if (idx < 0 || idx >= _tradeNavRows.length) return;
+    _tradeNavIdx = idx;
+    _renderTradePopup(_tradeNavRows[idx]);
+
+    const wrap = document.getElementById("trade-popup-nav-wrap");
+    const pos  = document.getElementById("trade-popup-nav-pos");
+    const prev = document.getElementById("trade-popup-nav-prev");
+    const next = document.getElementById("trade-popup-nav-next");
+    if (_tradeNavRows.length > 1) {
+      wrap.classList.add("active");
+      pos.textContent = (idx + 1) + " / " + _tradeNavRows.length;
+      prev.disabled = idx <= 0;
+      next.disabled = idx >= _tradeNavRows.length - 1;
+    } else {
+      wrap.classList.remove("active");
+    }
+    document.getElementById("trade-popup-overlay").classList.add("active");
+  }
+
+  function navigateTradePopup(dir) {
+    openTradePopupAt(_tradeNavIdx + dir);
+  }
+
+  function closeTradePopup() {
+    document.getElementById("trade-popup-overlay").classList.remove("active");
+  }
+
+  // ── Trade Calendar — per-day PnL rollup, click a day to filter the Trades
+  // table down to that single ET calendar date. ──
+  let _tradeCalMonth   = null; // "YYYY-MM", set on first open
+  let _tradeDateFilter = null; // "YYYY-MM-DD" or null
+
+  function toggleTradeCalendar() {
+    const overlay = document.getElementById("trade-calendar-overlay");
+    if (overlay.classList.contains("active")) { closeTradeCalendar(); return; }
+    if (!_tradeCalMonth) {
+      _tradeCalMonth = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }).slice(0, 7);
+    }
+    fetchTradeCalendar();
+    overlay.classList.add("active");
+  }
+
+  function closeTradeCalendar() {
+    document.getElementById("trade-calendar-overlay").classList.remove("active");
+  }
+
+  function shiftTradeCalendarMonth(delta) {
+    const [y, m] = _tradeCalMonth.split("-").map(Number);
+    let newY = y, newM = m + delta;
+    if (newM < 1)  { newM = 12; newY--; }
+    if (newM > 12) { newM = 1;  newY++; }
+    _tradeCalMonth = newY + "-" + String(newM).padStart(2, "0");
+    fetchTradeCalendar();
+  }
+
+  async function fetchTradeCalendar() {
+    try {
+      const source = document.getElementById("trades-filter-source").value;
+      const params = new URLSearchParams({ month: _tradeCalMonth });
+      if (source !== "all") params.set("source", source);
+      const res = await fetch("/api/trades/calendar?" + params.toString());
+      if (!res.ok) return;
+      renderTradeCalendar(await res.json());
+    } catch(e) { console.error("[trade-calendar]", e); }
+  }
+
+  function renderTradeCalendar(data) {
+    const [year, month] = data.month.split("-").map(Number);
+    document.getElementById("trade-calendar-month-label").textContent =
+      new Date(year, month - 1, 1).toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+    const grid = document.getElementById("trade-calendar-grid");
+    const firstDow     = new Date(year, month - 1, 1).getDay();
+    const daysInMonth  = new Date(year, month, 0).getDate();
+    const dowLabels    = ["S","M","T","W","T","F","S"];
+
+    let html = dowLabels.map(d =>
+      `<div style="text-align:center;font-size:9px;font-weight:700;color:var(--text-dimmed);padding:2px 0">${d}</div>`
+    ).join("");
+
+    for (let i = 0; i < firstDow; i++) html += `<div></div>`;
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      const dateStr = year + "-" + String(month).padStart(2, "0") + "-" + String(day).padStart(2, "0");
+      const info = data.days[dateStr];
+      if (info) {
+        const pnl    = info.pnl_dollars;
+        const bg     = pnl > 0 ? "rgba(34,197,94,0.15)" : pnl < 0 ? "rgba(239,68,68,0.15)" : "rgba(148,163,184,0.08)";
+        const cls    = pnl > 0 ? "up" : pnl < 0 ? "down" : "muted";
+        const pnlTxt = (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(0);
+        html += `<div onclick="selectTradeCalendarDay('${dateStr}')"
+          style="cursor:pointer;border-radius:6px;background:${bg};padding:6px 3px;text-align:center;border:1px solid var(--border-subtle)">
+          <div style="font-size:10px;color:var(--text-dimmed)">${day}</div>
+          <div class="${cls}" style="font-size:11px;font-weight:700;margin-top:2px">${pnlTxt}</div>
+          <div style="font-size:8px;color:var(--text-dimmed)">${info.trade_count} trade${info.trade_count !== 1 ? "s" : ""}</div>
+        </div>`;
+      } else {
+        html += `<div style="padding:6px 3px;text-align:center"><div style="font-size:10px;color:var(--text-dimmed)">${day}</div></div>`;
+      }
+    }
+    grid.innerHTML = html;
+  }
+
+  function selectTradeCalendarDay(dateStr) {
+    _tradeDateFilter = dateStr;
+    closeTradeCalendar();
+    const badge = document.getElementById("trades-date-filter-badge");
+    document.getElementById("trades-date-filter-label").textContent = "Date: " + dateStr;
+    badge.style.display = "inline-flex";
+    fetchTrades();
+  }
+
+  function clearTradeDateFilter() {
+    _tradeDateFilter = null;
+    document.getElementById("trades-date-filter-badge").style.display = "none";
+    fetchTrades();
   }
 
   // ── Bubble Map ──
@@ -4921,10 +5135,15 @@
   }
 
   async function exitTrade(ticker) {
+    // Client-supplied, same convention as entry_corr on enter — allTickers already
+    // has this ticker's live correlation from the normal 45s poll, so the server
+    // doesn't need a second aggregate scoring pass just for this.
+    const tkData   = allTickers.find(t => t.ticker === ticker);
+    const exitCorr = tkData && tkData.correlation != null ? Math.round(tkData.correlation * 100) : null;
     try {
       const res = await fetch("/api/manual-trades/exit", {
         method: "POST", headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({ ticker })
+        body: JSON.stringify({ ticker, exit_corr: exitCorr })
       });
       if (!res.ok) { console.error("[exit-trade] failed:", await res.text()); return; }
     } catch(e) { console.error("[exit-trade]", e); return; }
