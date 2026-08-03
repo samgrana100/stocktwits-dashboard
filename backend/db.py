@@ -62,6 +62,11 @@ def ensure_indexes():
     price_history.create_index(
         [("ticker", ASCENDING), ("timestamp", DESCENDING)]
     )
+    # (ticker, ts) — supports the SMA exit-watch's per-ticker trailing-window query
+    # (ts is the datetime field; the compound index above is on the string timestamp).
+    price_history.create_index(
+        [("ticker", ASCENDING), ("ts", DESCENDING)]
+    )
     price_history.create_index("ts", expireAfterSeconds=604800)  # 7-day TTL
 
     # ── upcoming_catalysts ──

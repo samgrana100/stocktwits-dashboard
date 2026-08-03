@@ -1290,6 +1290,16 @@
             <span id="auto-min-dens-status" style="font-size:9px;color:var(--text-dimmed)"></span>
           </div>
         </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <label style="font-size:10px;color:var(--text-dimmed);white-space:nowrap" title="Exits when the price SMA (10-min) falls this % below its intra-trade peak — OR'd with Exit Min Drop above">Exit SMA Peak</label>
+          <div style="display:flex;align-items:center;gap:4px">
+            <input id="auto-exit-sma-peak" type="number" min="1" max="99" step="1"
+              style="width:46px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 5px;text-align:right"
+              onchange="applyAutoExitSmaPeak()">
+            <span style="font-size:10px;color:var(--text-dimmed)">%</span>
+            <span id="auto-exit-sma-peak-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+          </div>
+        </div>
       </div>
       <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
         <span class="corr-exit-title">Auto — Active</span>
@@ -1333,6 +1343,7 @@
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span class="corr-view-title">Trades</span>
         <span class="corr-count" id="trades-count">-- trades</span>
+        <span class="corr-count" id="trades-totals" style="color:var(--text-dimmed)"></span>
       </div>
       <div class="corr-controls">
         <label class="corr-ctrl-label">Source
@@ -1366,6 +1377,12 @@
         <label class="corr-ctrl-label">To (ET)
           <input type="time" id="trades-filter-time-to" onchange="fetchTrades()">
         </label>
+        <label class="corr-ctrl-label">Entry Density ≥
+          <input type="number" id="trades-filter-entry-density" min="0" step="1" style="width:46px" onchange="fetchTrades()">
+        </label>
+        <label class="corr-ctrl-label">Exit Density ≥
+          <input type="number" id="trades-filter-exit-density" min="0" step="1" style="width:46px" onchange="fetchTrades()">
+        </label>
         <div class="corr-search-wrap">
           <input type="text" id="trades-filter-ticker" class="corr-search-input" placeholder="Ticker…"
             oninput="fetchTrades()" autocomplete="off">
@@ -1384,13 +1401,15 @@
             <th style="cursor:default">Exit $</th>
             <th style="cursor:default">Return %</th>
             <th style="cursor:default">PnL $</th>
+            <th style="cursor:default">Entry Density</th>
+            <th style="cursor:default">Exit Density</th>
             <th style="cursor:default">Entered (ET)</th>
             <th style="cursor:default">Exited (ET)</th>
             <th style="cursor:default">Mkt Cap</th>
           </tr>
         </thead>
         <tbody id="trades-table-body">
-          <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
+          <tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
         </tbody>
       </table>
     </div>
@@ -3820,12 +3839,14 @@
   }
 
   function resetTradeFilters() {
-    document.getElementById("trades-filter-source").value    = "all";
-    document.getElementById("trades-filter-status").value    = "all";
-    document.getElementById("trades-filter-cap").value       = "all";
-    document.getElementById("trades-filter-time-from").value = "";
-    document.getElementById("trades-filter-time-to").value   = "";
-    document.getElementById("trades-filter-ticker").value    = "";
+    document.getElementById("trades-filter-source").value        = "all";
+    document.getElementById("trades-filter-status").value        = "all";
+    document.getElementById("trades-filter-cap").value           = "all";
+    document.getElementById("trades-filter-time-from").value     = "";
+    document.getElementById("trades-filter-time-to").value       = "";
+    document.getElementById("trades-filter-entry-density").value = "";
+    document.getElementById("trades-filter-exit-density").value  = "";
+    document.getElementById("trades-filter-ticker").value        = "";
     fetchTrades();
   }
 
@@ -3833,17 +3854,21 @@
     if (!tradesViewActive) return;
     try {
       const params = new URLSearchParams();
-      const source = document.getElementById("trades-filter-source").value;
-      const status = document.getElementById("trades-filter-status").value;
-      const cap    = document.getElementById("trades-filter-cap").value;
-      const tFrom  = document.getElementById("trades-filter-time-from").value;
-      const tTo    = document.getElementById("trades-filter-time-to").value;
-      const ticker = document.getElementById("trades-filter-ticker").value.trim();
+      const source  = document.getElementById("trades-filter-source").value;
+      const status  = document.getElementById("trades-filter-status").value;
+      const cap     = document.getElementById("trades-filter-cap").value;
+      const tFrom   = document.getElementById("trades-filter-time-from").value;
+      const tTo     = document.getElementById("trades-filter-time-to").value;
+      const entMin  = document.getElementById("trades-filter-entry-density").value;
+      const exMin   = document.getElementById("trades-filter-exit-density").value;
+      const ticker  = document.getElementById("trades-filter-ticker").value.trim();
       if (source !== "all") params.set("source", source);
       if (status !== "all") params.set("status", status);
       if (cap    !== "all") params.set("cap", cap);
       if (tFrom) params.set("time_from", tFrom);
       if (tTo)   params.set("time_to", tTo);
+      if (entMin !== "") params.set("entry_density_min", entMin);
+      if (exMin  !== "") params.set("exit_density_min", exMin);
       if (ticker) params.set("ticker", ticker);
 
       const res  = await fetch("/api/trades?" + params.toString());
@@ -3854,8 +3879,9 @@
   }
 
   function renderTradesTable(data) {
-    const body  = document.getElementById("trades-table-body");
-    const count = document.getElementById("trades-count");
+    const body   = document.getElementById("trades-table-body");
+    const count  = document.getElementById("trades-count");
+    const totalsEl = document.getElementById("trades-totals");
     const active    = (data.active    || []).map(t => ({...t, _status: "Open"}));
     const completed = (data.completed || []).map(t => ({...t, _status: "Closed"}));
     const rows = [...active, ...completed].sort((a, b) => {
@@ -3865,8 +3891,19 @@
     });
     count.textContent = rows.length + " trade" + (rows.length !== 1 ? "s" : "");
 
+    const totals = data.totals || {};
+    if (totals.trade_count) {
+      const pnlCls  = totals.pnl_dollars >= 0 ? "up" : "down";
+      const pnlTxt  = (totals.pnl_dollars >= 0 ? "+$" : "-$") + Math.abs(totals.pnl_dollars).toFixed(2);
+      const retCls  = totals.avg_return_pct == null ? "" : totals.avg_return_pct >= 0 ? "up" : "down";
+      const retTxt  = totals.avg_return_pct == null ? "--" : (totals.avg_return_pct >= 0 ? "+" : "") + totals.avg_return_pct + "%";
+      totalsEl.innerHTML = `Total PnL <span class="${pnlCls}">${pnlTxt}</span> · Avg Return <span class="${retCls}">${retTxt}</span> · ${totals.trade_count} closed (${totals.wins}W/${totals.losses}L)`;
+    } else {
+      totalsEl.textContent = "";
+    }
+
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
+      body.innerHTML = '<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
       return;
     }
 
@@ -3887,6 +3924,8 @@
         <td>${t.exit_price  != null ? "$" + t.exit_price  : "--"}</td>
         <td class="${retCls}">${retDisp}</td>
         <td class="${pnlCls}">${pnlDisp}</td>
+        <td class="muted">${t.entry_density != null ? t.entry_density : "--"}</td>
+        <td class="muted">${t.exit_density  != null ? t.exit_density  : "--"}</td>
         <td class="muted">${t.entered_at_et || "--"}</td>
         <td class="muted">${t.exited_at_et  || "--"}</td>
         <td class="muted">${t.market_cap_bucket || "--"}</td>
@@ -4377,12 +4416,16 @@
       if (!res.ok) return;
       const data = await res.json();
       if (data.config) {
-        const dropEl  = document.getElementById("auto-exit-min-drop");
-        const densEl  = document.getElementById("auto-entry-min-dens");
-        const entryEl = document.getElementById("corr-entry-threshold");
-        const exitEl  = document.getElementById("corr-exit-pct");
+        const dropEl    = document.getElementById("auto-exit-min-drop");
+        const densEl    = document.getElementById("auto-entry-min-dens");
+        const smaPeakEl = document.getElementById("auto-exit-sma-peak");
+        const entryEl   = document.getElementById("corr-entry-threshold");
+        const exitEl    = document.getElementById("corr-exit-pct");
         if (dropEl && dropEl !== document.activeElement) dropEl.value = data.config.exit_min_drop;
         if (densEl && densEl !== document.activeElement) densEl.value = data.config.entry_min_dens;
+        if (smaPeakEl && smaPeakEl !== document.activeElement && typeof data.config.exit_sma_peak === "number") {
+          smaPeakEl.value = Math.round(data.config.exit_sma_peak * 100);
+        }
         // Entry Threshold / Exit from Peak are shared with the auto trader's config
         // (see onCorrThresholdChange/onCorrExitPctChange) — keep them showing the
         // live backend value rather than a possibly-stale localStorage number, since
@@ -4451,6 +4494,13 @@
     if (cfg) _flashStatus(document.getElementById("auto-min-dens-status"), `✓ ${cfg.entry_min_dens}`, true);
   }
 
+  async function applyAutoExitSmaPeak() {
+    const val = parseFloat(document.getElementById("auto-exit-sma-peak").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ exit_sma_peak: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-exit-sma-peak-status"), `✓ ${Math.round(cfg.exit_sma_peak * 100)}%`, true);
+  }
+
   function renderAutoTrades(data) {
     const activeFeed  = document.getElementById("auto-active-feed");
     const histFeed    = document.getElementById("auto-history-feed");
@@ -4470,7 +4520,7 @@
         </div>
         <div class="corr-exit-meta">Entry: $${t.entry_price} · r=${t.entry_corr}%</div>
         <div class="corr-exit-meta">${t.entry_density} msgs/hr · ${entryTime}</div>
-        <div class="corr-exit-meta">Peak: ${t.peak_density} msgs/hr</div>
+        <div class="corr-exit-meta">Peak: ${t.peak_density} msgs/hr${t.peak_sma != null ? ` · SMA $${t.peak_sma.toFixed(4)}` : ""}</div>
       </div>`;
     }).join("") : '<div class="corr-exit-empty">No automated positions.</div>';
 
@@ -4487,6 +4537,7 @@
       const starTip    = isSaved ? "Unsave" : "Save";
       const entryDisp  = t.entry_price != null ? `$${t.entry_price}` : "--";
       const exitDisp   = t.exit_price  != null ? `$${t.exit_price}`  : "--";
+      const reasonDisp = (t.exit_reason || "").split("+").map(r => r === "sma_off_peak" ? "SMA off peak" : r === "density_off_peak" ? "density off peak" : r).join(" + ");
       return `<div class="corr-exit-card" style="${isSaved ? 'border-left:2px solid #facc15;' : ''}">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span class="corr-exit-ticker">${t.ticker}</span>
@@ -4496,6 +4547,7 @@
         </div>
         <div class="corr-exit-meta">${entryDisp} → ${exitDisp}</div>
         <div class="corr-exit-meta">r=${t.entry_corr}% · peak ${t.peak_density} msgs/hr · ${exitTime}</div>
+        ${reasonDisp ? `<div class="corr-exit-meta" style="color:var(--text-dimmed)">exit: ${reasonDisp}</div>` : ""}
         <div style="margin-top:6px">
           <button class="corr-exit-chart-btn" onclick="openTradeChart('${safeTk}','${safeEn}','${safeEx}',${t.entry_price},${t.exit_price})">View Chart</button>
         </div>

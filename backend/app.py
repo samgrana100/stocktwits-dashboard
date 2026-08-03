@@ -57,13 +57,21 @@ BUBBLE_SCREENER_TTL    = 120  # 2-minute cache to avoid rate limiting
 
 # ── AUTO TRADE THRESHOLDS ──
 # Entry fires when density-price Pearson r ≥ AUTO_ENTRY_CORR and msgs/hr ≥ AUTO_ENTRY_MIN_DENS.
-# Exit fires when density falls AUTO_EXIT_PEAK % below its intra-trade peak.
+# Exit fires when density falls AUTO_EXIT_PEAK % below its intra-trade peak, OR when
+# price SMA falls AUTO_EXIT_SMA_PEAK % below its intra-trade peak (whichever fires first).
 AUTO_ENTRY_CORR      = 0.30  # minimum correlation to enter
 AUTO_ENTRY_MIN_DENS  = 4    # minimum msgs/hr (1h rolling) to enter
 AUTO_EXIT_PEAK       = 0.20  # density % off peak to exit
 AUTO_EXIT_MIN_DROP   = 6    # minimum absolute message drop before exit fires
+AUTO_EXIT_SMA_PEAK   = 0.10  # price SMA % off peak to exit
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
 REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker
+
+# SMA window for the exit watch, in minutes. Not user-configurable (unlike the
+# threshold above) — computed from price_history, which the main ingestion pipeline
+# already populates for every tracked ticker every ~90s independent of auto-trading,
+# so this adds zero Finviz calls regardless of how many trades are active.
+SMA_WINDOW_MIN = 10
 
 # Assumed $ position size per trade, used only to turn return_pct into a dollar
 # pnl_dollars figure (no real position sizing exists yet). Snapshotted onto each
@@ -368,6 +376,21 @@ def _current_ticker_price(ticker: str, finviz: dict, live: bool = False):
         cached = price_cache.get(f"{ticker}_i1_today")
         bars   = cached["data"] if cached else []
     return bars[-1]["price"] if bars else finviz.get(ticker, {}).get("price")
+
+
+def _current_sma(ticker: str, window_min: int = SMA_WINDOW_MIN):
+    """Simple moving average of price_history snapshots for `ticker` over the
+    trailing `window_min` minutes. Reads data the main ingestion pipeline already
+    collects for every tracked ticker every ~90s (pipeline.py's run_pipeline) rather
+    than calling Finviz directly — this is a MongoDB query, so it adds zero API load
+    no matter how many trades are being monitored. Returns None if no snapshots
+    fall in the window yet (e.g. a ticker that just entered the screener)."""
+    cutoff = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=window_min)
+    docs = price_history.find({"ticker": ticker, "ts": {"$gte": cutoff}}, {"price": 1})
+    prices = [d["price"] for d in docs if d.get("price") is not None]
+    if not prices:
+        return None
+    return sum(prices) / len(prices)
 
 
 def _market_cap_bucket(raw) -> str | None:
@@ -1923,6 +1946,7 @@ def get_auto_trades_endpoint():
         "entered_at":    fmt(t.get("entered_at")),
         "peak_density":  t.get("peak_density", 0),
         "entry_density": t.get("entry_density", 0),
+        "peak_sma":      t.get("peak_sma"),
     } for t in auto_trades.find({"status": "active", "source": "auto"}, {"_id": 0})]
 
     def _fmt_completed(t):
@@ -1935,6 +1959,9 @@ def get_auto_trades_endpoint():
             "exited_at":    fmt(t.get("exited_at")),
             "entry_corr":   t.get("entry_corr"),
             "peak_density": t.get("peak_density", 0),
+            "peak_sma":     t.get("peak_sma"),
+            "exit_sma":     t.get("exit_sma"),
+            "exit_reason":  t.get("exit_reason"),
             "saved":        t.get("saved", False),
         }
 
@@ -1948,14 +1975,14 @@ def get_auto_trades_endpoint():
 
     return jsonify({
         "active": active, "completed": completed,
-        "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "position_size": TRADE_POSITION_SIZE}
+        "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "exit_sma_peak": AUTO_EXIT_SMA_PEAK, "position_size": TRADE_POSITION_SIZE}
     })
 
 
 # Allows the frontend to adjust entry/exit thresholds without restarting the server.
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
-    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, TRADE_POSITION_SIZE
+    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, TRADE_POSITION_SIZE
     data = request.get_json(force=True) or {}
     try:
         if "entry_corr" in data:
@@ -1974,14 +2001,18 @@ def set_auto_trade_config():
             val = int(data["exit_min_drop"])
             if val >= 0:
                 AUTO_EXIT_MIN_DROP = val
+        if "exit_sma_peak" in data:
+            val = float(data["exit_sma_peak"])
+            if 0.0 < val <= 1.0:
+                AUTO_EXIT_SMA_PEAK = round(val, 2)
         if "position_size" in data:
             val = float(data["position_size"])
             if val > 0:
                 TRADE_POSITION_SIZE = round(val, 2)
     except (ValueError, TypeError) as e:
         return jsonify({"error": f"Invalid config value: {e}"}), 400
-    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP} position_size={TRADE_POSITION_SIZE}")
-    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "position_size": TRADE_POSITION_SIZE})
+    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP} exit_sma_peak={AUTO_EXIT_SMA_PEAK} position_size={TRADE_POSITION_SIZE}")
+    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "exit_sma_peak": AUTO_EXIT_SMA_PEAK, "position_size": TRADE_POSITION_SIZE})
 
 
 # NOTE: scoped to source="auto" — auto_trades/completed_auto_trades also hold manual
@@ -2102,6 +2133,13 @@ def exit_manual_trade():
     except Exception:
         pass
 
+    # Same 1hr rolling density source the auto engine uses for exit_density, so
+    # manual and auto completed trades are directly comparable/filterable together.
+    exit_density = scored_messages.count_documents({
+        "ticker":         ticker,
+        "created_at_utc": {"$gte": get_window_start_iso(60)}
+    })
+
     now_utc       = datetime.now(timezone.utc)
     position_size = trade.get("position_size", TRADE_POSITION_SIZE)
     pnl_dollars   = round(return_pct * position_size / 100, 2) if return_pct is not None else None
@@ -2116,7 +2154,9 @@ def exit_manual_trade():
         "entered_at_et":     trade.get("entered_at_et"),
         "exited_at_et":      _utc_dt_to_et_hhmmss(now_utc),
         "entry_corr":        trade.get("entry_corr"),
+        "entry_density":     trade.get("entry_density", 0),
         "peak_density":      trade.get("peak_density", 0),
+        "exit_density":      exit_density,
         "exit_reason":       "manual",
         "source":            "manual",
         "market_cap":        trade.get("market_cap"),
@@ -2165,6 +2205,8 @@ def get_trades_endpoint():
     time_to   = request.args.get("time_to") or None
     date_from = request.args.get("date_from") or None
     date_to   = request.args.get("date_to") or None
+    entry_density_min = request.args.get("entry_density_min", type=int)
+    exit_density_min  = request.args.get("exit_density_min", type=int)
     limit  = min(request.args.get("limit", 200, type=int) or 200, 500)
 
     def base_filter():
@@ -2175,6 +2217,8 @@ def get_trades_endpoint():
             f["ticker"] = ticker
         if cap and cap.lower() != "all":
             f["market_cap_bucket"] = cap
+        if entry_density_min is not None:
+            f["entry_density"] = {"$gte": entry_density_min}
         return f
 
     active_docs, completed_docs = [], []
@@ -2194,10 +2238,15 @@ def get_trades_endpoint():
             if start: rng["$gte"] = start
             if end:   rng["$lt"]  = end
             if rng: f["entered_at"] = rng
-        active_docs = list(auto_trades.find(f).sort("entered_at", -1).limit(limit))
+        # exit_density doesn't exist on active docs — filtering by it implicitly
+        # asks for closed trades, so skip the active side entirely in that case.
+        if exit_density_min is None:
+            active_docs = list(auto_trades.find(f).sort("entered_at", -1).limit(limit))
 
     if status in ("all", "completed"):
         f = base_filter()
+        if exit_density_min is not None:
+            f["exit_density"] = {"$gte": exit_density_min}
         if time_from or time_to:
             rng = {}
             if time_from: rng["$gte"] = time_from
@@ -2212,10 +2261,25 @@ def get_trades_endpoint():
             if rng: f["exited_at"] = rng
         completed_docs = list(completed_auto_trades.find(f).sort("exited_at", -1).limit(limit))
 
+    # Totals over the filtered completed set — return_pct/pnl_dollars only exist
+    # once a trade is closed, so open positions don't factor into these.
+    pnl_vals = [t["pnl_dollars"] for t in completed_docs if t.get("pnl_dollars") is not None]
+    ret_vals = [t["return_pct"]  for t in completed_docs if t.get("return_pct")  is not None]
+    wins     = sum(1 for v in pnl_vals if v > 0)
+    losses   = sum(1 for v in pnl_vals if v < 0)
+    totals = {
+        "pnl_dollars":    round(sum(pnl_vals), 2) if pnl_vals else 0.0,
+        "avg_return_pct": round(sum(ret_vals) / len(ret_vals), 2) if ret_vals else None,
+        "trade_count":    len(completed_docs),
+        "wins":           wins,
+        "losses":         losses,
+    }
+
     return jsonify({
         "active":    [_fmt_trade_doc(t) for t in active_docs],
         "completed": [_fmt_trade_doc(t) for t in completed_docs],
         "counts": {"active": len(active_docs), "completed": len(completed_docs)},
+        "totals": totals,
     })
 
 
@@ -2603,7 +2667,29 @@ def _check_auto_trades():
             )
             peak = total_msgs
 
-        if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK and (peak - total_msgs) >= AUTO_EXIT_MIN_DROP:
+        # SMA peak tracking — mirrors peak_density above, but reads price_history
+        # (already collected by the pipeline) instead of calling Finviz.
+        current_sma = _current_sma(ticker)
+        peak_sma    = trade.get("peak_sma")
+        if current_sma is not None and (peak_sma is None or current_sma > peak_sma):
+            auto_trades.update_one(
+                {"ticker": ticker, "status": "active"},
+                {"$set": {"peak_sma": current_sma}}
+            )
+            peak_sma = current_sma
+
+        density_exit = (
+            peak > 0 and
+            ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK and
+            (peak - total_msgs) >= AUTO_EXIT_MIN_DROP
+        )
+        sma_exit = (
+            peak_sma is not None and current_sma is not None and
+            peak_sma > 0 and
+            ((peak_sma - current_sma) / peak_sma) >= AUTO_EXIT_SMA_PEAK
+        )
+
+        if density_exit or sma_exit:
             # Live Finviz call right at the exit decision — not a cached/stale bar —
             # so the recorded exit price and exit time are accurate to this instant.
             current_price = _current_ticker_price(ticker, finviz, live=True)
@@ -2619,6 +2705,11 @@ def _check_auto_trades():
             except Exception:
                 pass
 
+            reasons = []
+            if density_exit: reasons.append("density_off_peak")
+            if sma_exit:      reasons.append("sma_off_peak")
+            exit_reason = "+".join(reasons)
+
             ret_str = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
             position_size = trade.get("position_size", TRADE_POSITION_SIZE)
             pnl_dollars   = round(return_pct * position_size / 100, 2) if return_pct is not None else None
@@ -2632,9 +2723,12 @@ def _check_auto_trades():
                 "entered_at_et":     trade.get("entered_at_et"),
                 "exited_at_et":      _utc_dt_to_et_hhmmss(exit_time),
                 "entry_corr":        trade.get("entry_corr"),
+                "entry_density":     trade.get("entry_density", 0),
                 "peak_density":      peak,
                 "exit_density":      total_msgs,
-                "exit_reason":       "density_off_peak",
+                "peak_sma":          peak_sma,
+                "exit_sma":          current_sma,
+                "exit_reason":       exit_reason,
                 "source":            trade.get("source", "auto"),
                 "market_cap":        trade.get("market_cap"),
                 "market_cap_bucket": trade.get("market_cap_bucket"),
@@ -2642,8 +2736,9 @@ def _check_auto_trades():
                 "pnl_dollars":       pnl_dollars,
             })
             auto_trades.delete_one({"ticker": ticker, "status": "active"})
-            drop_pct = round((peak - total_msgs) / peak * 100, 1) if peak else 0
-            print(f"[AUTO TRADE] EXIT {ticker} | peak={peak} density={total_msgs} drop={peak - total_msgs} ({drop_pct}%) | price={current_price} | return: {ret_str}")
+            drop_pct    = round((peak - total_msgs) / peak * 100, 1) if peak else 0
+            sma_drop_pct = round((peak_sma - current_sma) / peak_sma * 100, 1) if (peak_sma and current_sma is not None) else 0
+            print(f"[AUTO TRADE] EXIT {ticker} | reason={exit_reason} | peak={peak} density={total_msgs} drop={peak - total_msgs} ({drop_pct}%) | peak_sma={peak_sma} sma={current_sma} ({sma_drop_pct}%) | price={current_price} | return: {ret_str}")
 
     # ── ENTRY monitoring — uses full correlation scores ──
     scores = aggregate_ticker_scores(rolling_window_minutes=60)
@@ -2692,6 +2787,7 @@ def _check_auto_trades():
                 "entered_at_et":     _utc_dt_to_et_hhmmss(entry_time),
                 "peak_density":      total_msgs,
                 "entry_density":     total_msgs,
+                "peak_sma":          _current_sma(ticker),
                 "source":            "auto",
                 "market_cap":        fv.get("market_cap", "--"),
                 "market_cap_bucket": _market_cap_bucket(fv.get("market_cap")),
