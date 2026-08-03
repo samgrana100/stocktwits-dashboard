@@ -310,6 +310,16 @@ def _utc_dt_to_et_hhmm(dt: datetime) -> str:
     return (dt + offset).strftime("%H:%M")
 
 
+def _utc_dt_to_et_hhmmss(dt: datetime) -> str:
+    """Same as _utc_dt_to_et_hhmm but with seconds — used for trade entered_at_et/
+    exited_at_et so the recorded time is traceable to the exact live price fetch,
+    not just the minute. Range-filter queries against it (time_from/time_to, both
+    "HH:MM") still work: "HH:MM" is a strict string prefix of "HH:MM:SS", so
+    lexicographic $gte/$lte comparisons order correctly across the two lengths."""
+    offset = timedelta(hours=-4) if 3 <= dt.month <= 11 else timedelta(hours=-5)
+    return (dt + offset).strftime("%H:%M:%S")
+
+
 def get_et_now() -> datetime:
     """Returns current datetime in Eastern Time (timezone-aware)."""
     now_utc = datetime.now(timezone.utc)
@@ -339,9 +349,21 @@ _CAP_BUCKET_THRESHOLDS = [
     (200e9,  "Large"),
 ]
 
-def _current_ticker_price(ticker: str, finviz: dict):
-    """Same dual-source price lookup _check_auto_trades uses for entry/exit prices:
-    prefer the cached live intraday quote, fall back to the Finviz screener price."""
+def _current_ticker_price(ticker: str, finviz: dict, live: bool = False):
+    """Price lookup used for trade entry/exit prices.
+
+    live=True (used at the exact moment a trade enters/exits) makes a direct,
+    uncached Finviz quote_export call so the recorded fill price is accurate to
+    that instant, not up to PRICE_CACHE_TTL+jitter seconds stale. Falls back to
+    the cached bar / screener price if the live call comes back empty.
+
+    live=False prefers the cached intraday quote, falling back to the Finviz
+    screener price — used where an approximate price is fine (e.g. gating
+    conditions before a trade decision is actually made)."""
+    if live:
+        bars = get_finviz_price_history(ticker, "i1", multi_day=False, force_refresh=True)
+        if bars:
+            return bars[-1]["price"]
     with _price_lock:
         cached = price_cache.get(f"{ticker}_i1_today")
         bars   = cached["data"] if cached else []
@@ -513,7 +535,7 @@ def get_finviz_data() -> dict:
 
 # ─── FINVIZ PRICE FETCHER ───
 
-def get_finviz_price_history(ticker: str, finviz_param: str, multi_day: bool = False) -> list:
+def get_finviz_price_history(ticker: str, finviz_param: str, multi_day: bool = False, force_refresh: bool = False) -> list:
     """
     Fetches price bars from Finviz quote_export (p=i1, 1-min bars).
 
@@ -522,14 +544,20 @@ def get_finviz_price_history(ticker: str, finviz_param: str, multi_day: bool = F
     multi_day=True  (1d+ charts):     returns all bars from the CSV; needsDate=True
         in the frontend keys every bar by "MM-DD HH:MM", so multi-day data is safe.
 
+    force_refresh=True skips the cache-hit check and always hits Finviz directly —
+    used to capture an accurate trade entry/exit price rather than a bar that may be
+    up to PRICE_CACHE_TTL+jitter seconds stale. The fresh result still gets written
+    into price_cache below, so normal (non-live) reads benefit from it too.
+
     CSV format: "MM/DD/YYYY HH:MM AM/PM"  e.g. "05/21/2026 04:00 AM"
     """
     cache_key = f"{ticker}_{finviz_param}_{'multi' if multi_day else 'today'}"
     now_ts    = time.time()
-    with _price_lock:
-        cached = price_cache.get(cache_key)
-        if cached and (now_ts - cached["ts"]) < PRICE_CACHE_TTL + cached.get("jitter", 0):
-            return cached["data"]
+    if not force_refresh:
+        with _price_lock:
+            cached = price_cache.get(cache_key)
+            if cached and (now_ts - cached["ts"]) < PRICE_CACHE_TTL + cached.get("jitter", 0):
+                return cached["data"]
 
     url = (
         "https://elite.finviz.com/quote_export"
@@ -2029,7 +2057,7 @@ def enter_manual_trade():
         return jsonify({"error": "invalid entry_corr/peak_density"}), 400
 
     finviz      = get_finviz_data()
-    entry_price = _current_ticker_price(ticker, finviz)
+    entry_price = _current_ticker_price(ticker, finviz, live=True)
     if not entry_price:
         return jsonify({"error": f"no current price available for {ticker}"}), 400
 
@@ -2041,7 +2069,7 @@ def enter_manual_trade():
         "entry_price":       entry_price,
         "entry_corr":        entry_corr,
         "entered_at":        now_utc,
-        "entered_at_et":     _utc_dt_to_et_hhmm(now_utc),
+        "entered_at_et":     _utc_dt_to_et_hhmmss(now_utc),
         "peak_density":      peak_density,
         "entry_density":     peak_density,
         "source":            "manual",
@@ -2065,7 +2093,7 @@ def exit_manual_trade():
         return jsonify({"error": f"no open manual trade for {ticker}"}), 404
 
     finviz     = get_finviz_data()
-    exit_price = _current_ticker_price(ticker, finviz)
+    exit_price = _current_ticker_price(ticker, finviz, live=True)
     entry_price = trade.get("entry_price")
     return_pct  = None
     try:
@@ -2086,7 +2114,7 @@ def exit_manual_trade():
         "entered_at":        trade.get("entered_at"),
         "exited_at":         now_utc,
         "entered_at_et":     trade.get("entered_at_et"),
-        "exited_at_et":      _utc_dt_to_et_hhmm(now_utc),
+        "exited_at_et":      _utc_dt_to_et_hhmmss(now_utc),
         "entry_corr":        trade.get("entry_corr"),
         "peak_density":      trade.get("peak_density", 0),
         "exit_reason":       "manual",
@@ -2562,12 +2590,7 @@ def _check_auto_trades():
     # Uses count_documents per ticker (same source as quickscore?window=1h) so the
     # density value is never affected by the main table's rolling window selection.
     for ticker, trade in active_map.items():
-        # Use cached quote_export bars if available (no new HTTP request), else screener
-        with _price_lock:
-            _cached = price_cache.get(f"{ticker}_i1_today")
-            _bars   = _cached["data"] if _cached else []
-        current_price = _bars[-1]["price"] if _bars else finviz.get(ticker, {}).get("price")
-        total_msgs    = scored_messages.count_documents({
+        total_msgs = scored_messages.count_documents({
             "ticker":         ticker,
             "created_at_utc": {"$gte": window_1h}
         })
@@ -2581,6 +2604,11 @@ def _check_auto_trades():
             peak = total_msgs
 
         if peak > 0 and ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK and (peak - total_msgs) >= AUTO_EXIT_MIN_DROP:
+            # Live Finviz call right at the exit decision — not a cached/stale bar —
+            # so the recorded exit price and exit time are accurate to this instant.
+            current_price = _current_ticker_price(ticker, finviz, live=True)
+            exit_time     = datetime.now(timezone.utc)
+
             entry_price = trade.get("entry_price")
             return_pct  = None
             try:
@@ -2600,9 +2628,9 @@ def _check_auto_trades():
                 "exit_price":        current_price,
                 "return_pct":        return_pct,
                 "entered_at":        trade["entered_at"],
-                "exited_at":         now_utc,
+                "exited_at":         exit_time,
                 "entered_at_et":     trade.get("entered_at_et"),
-                "exited_at_et":      _utc_dt_to_et_hhmm(now_utc),
+                "exited_at_et":      _utc_dt_to_et_hhmmss(exit_time),
                 "entry_corr":        trade.get("entry_corr"),
                 "peak_density":      peak,
                 "exit_density":      total_msgs,
@@ -2622,15 +2650,6 @@ def _check_auto_trades():
     for s in scores:
         ticker = s["ticker"]
         corr   = s.get("correlation")
-
-        # Same price source as exit monitoring below: prefer the cached live
-        # intraday quote (tracks pre/post-market), fall back to the Finviz
-        # screener price (regular-session only) if nothing's cached yet.
-        # Keeps entry and exit prices comparable instead of mixing sources.
-        with _price_lock:
-            _cached = price_cache.get(f"{ticker}_i1_today")
-            _bars   = _cached["data"] if _cached else []
-        screener_price = _bars[-1]["price"] if _bars else finviz.get(ticker, {}).get("price")
 
         if ticker in active_map or ticker in recent_exits:
             continue
@@ -2655,18 +2674,22 @@ def _check_auto_trades():
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
                 total_msgs >= AUTO_ENTRY_MIN_DENS and
-                density_rising and
-                screener_price):
-            current_price = screener_price
-            corr_pct = round(corr * 100)
+                density_rising):
+            # Live Finviz call right at the entry decision, same reasoning as the
+            # exit side above — an accurate fill price for this exact moment.
+            current_price = _current_ticker_price(ticker, finviz, live=True)
+            if not current_price:
+                continue
+            entry_time = datetime.now(timezone.utc)
+            corr_pct   = round(corr * 100)
             fv = finviz.get(ticker, {})
             auto_trades.insert_one({
                 "ticker":            ticker,
                 "status":            "active",
                 "entry_price":       current_price,
                 "entry_corr":        corr_pct,
-                "entered_at":        now_utc,
-                "entered_at_et":     _utc_dt_to_et_hhmm(now_utc),
+                "entered_at":        entry_time,
+                "entered_at_et":     _utc_dt_to_et_hhmmss(entry_time),
                 "peak_density":      total_msgs,
                 "entry_density":     total_msgs,
                 "source":            "auto",

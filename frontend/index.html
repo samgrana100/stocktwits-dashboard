@@ -1198,7 +1198,7 @@
             <span class="corr-ctrl-confirm" id="corr-entry-confirm">✓</span>
           </label>
           <label class="corr-ctrl-label">Exit from Peak
-            <input type="number" id="corr-exit-pct" value="20" min="1" max="99" oninput="renderCorrExitPanel()"> %
+            <input type="number" id="corr-exit-pct" value="20" min="1" max="99" oninput="onCorrExitPctChange()"> %
             <span class="corr-ctrl-confirm" id="corr-exit-confirm">✓</span>
           </label>
           <label class="corr-ctrl-label">Min Msgs
@@ -4377,10 +4377,26 @@
       if (!res.ok) return;
       const data = await res.json();
       if (data.config) {
-        const dropEl = document.getElementById("auto-exit-min-drop");
-        const densEl = document.getElementById("auto-entry-min-dens");
+        const dropEl  = document.getElementById("auto-exit-min-drop");
+        const densEl  = document.getElementById("auto-entry-min-dens");
+        const entryEl = document.getElementById("corr-entry-threshold");
+        const exitEl  = document.getElementById("corr-exit-pct");
         if (dropEl && dropEl !== document.activeElement) dropEl.value = data.config.exit_min_drop;
         if (densEl && densEl !== document.activeElement) densEl.value = data.config.entry_min_dens;
+        // Entry Threshold / Exit from Peak are shared with the auto trader's config
+        // (see onCorrThresholdChange/onCorrExitPctChange) — keep them showing the
+        // live backend value rather than a possibly-stale localStorage number, since
+        // the auto engine runs 24/7 independent of which browser last touched it.
+        if (entryEl && entryEl !== document.activeElement && typeof data.config.entry_corr === "number") {
+          corrEntryThreshold = Math.round(data.config.entry_corr * 100);
+          entryEl.value = corrEntryThreshold;
+          localStorage.setItem("corrEntryThreshold", corrEntryThreshold);
+        }
+        if (exitEl && exitEl !== document.activeElement && typeof data.config.exit_peak === "number") {
+          corrExitPct = Math.round(data.config.exit_peak * 100);
+          exitEl.value = corrExitPct;
+          localStorage.setItem("corrExitPct", corrExitPct);
+        }
       }
       renderAutoTrades(data);
     } catch(e) { console.error("[auto-trades]", e); }
@@ -4403,18 +4419,22 @@
     setTimeout(() => { el.textContent = ""; }, 3000);
   }
 
+  // Entry Threshold / Exit from Peak are shared controls: they drive both the
+  // manual Entry Zone's display filter (corrEntryThreshold/corrExitPct) AND the
+  // auto trader's real entry_corr/exit_peak config, via onCorrThresholdChange()/
+  // onCorrExitPctChange() below. The existing corr-entry-confirm/corr-exit-confirm
+  // checkmarks already give visual feedback for the shared value, so these just
+  // sync the backend silently rather than needing their own status UI.
   async function applyAutoEntryCorr() {
     const val = parseFloat(document.getElementById("corr-entry-threshold").value);
     if (isNaN(val)) return;
-    const cfg = await _postAutoConfig({ entry_corr: val / 100 });
-    if (cfg) _flashStatus(document.getElementById("auto-entry-corr-status"), `✓ Active: ${Math.round(cfg.entry_corr * 100)}%`, true);
+    await _postAutoConfig({ entry_corr: val / 100 });
   }
 
   async function applyAutoExitPeak() {
     const val = parseFloat(document.getElementById("corr-exit-pct").value);
     if (isNaN(val)) return;
-    const cfg = await _postAutoConfig({ exit_peak: val / 100 });
-    if (cfg) _flashStatus(document.getElementById("auto-exit-peak-status"), `✓ Active: ${Math.round(cfg.exit_peak * 100)}%`, true);
+    await _postAutoConfig({ exit_peak: val / 100 });
   }
 
   async function applyAutoMinDrop() {
@@ -4442,7 +4462,7 @@
     countEl.textContent = active.length;
 
     activeFeed.innerHTML = active.length ? active.map(t => {
-      const entryTime = t.entered_at ? new Date(t.entered_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "--";
+      const entryTime = t.entered_at ? new Date(t.entered_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "--";
       return `<div class="corr-exit-card">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px">
           <span class="corr-exit-ticker">${t.ticker}</span>
@@ -4458,7 +4478,7 @@
       const ret        = t.return_pct;
       const retColor   = ret === null ? "var(--text-dimmed)" : ret >= 0 ? "#4ade80" : "#f87171";
       const retDisp    = ret === null ? "N/A" : (ret >= 0 ? "+" : "") + ret + "%";
-      const exitTime   = t.exited_at ? new Date(t.exited_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}) : "--";
+      const exitTime   = t.exited_at ? new Date(t.exited_at).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"}) : "--";
       const safeTk     = t.ticker.replace(/'/g, "\\'");
       const safeEn     = (t.entered_at || "").replace(/'/g, "\\'");
       const safeEx     = (t.exited_at  || "").replace(/'/g, "\\'");
@@ -4522,6 +4542,12 @@
     localStorage.setItem("corrEntryThreshold", corrEntryThreshold);
     buildCorrView();
     _flashConfirm("corr-entry-confirm");
+    applyAutoEntryCorr();
+  }
+
+  function onCorrExitPctChange() {
+    renderCorrExitPanel(); // also saves corrExitPct + flashes corr-exit-confirm
+    applyAutoExitPeak();
   }
 
   function onCorrMinMsgsChange() {
@@ -4905,7 +4931,7 @@
       const fillW   = Math.min(pctOff, 100);
       const isExit  = pctOff >= corrExitPct;
       const safeTk  = ticker.replace(/'/g, "\\'");
-      const entryTime = new Date(entry.enteredAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+      const entryTime = new Date(entry.enteredAt).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit",second:"2-digit"});
       const tkData    = allTickers.find(t => t.ticker === ticker);
       const bullPct   = tkData?.bull_pct ?? null;
       const bullColor = bullPct === null ? "var(--text-dimmed)" : bullPct >= 65 ? "#4ade80" : bullPct >= 45 ? "#facc15" : "#f87171";
@@ -4939,8 +4965,8 @@
       const retPct    = tr.returnPct;
       const retColor  = retPct === null ? "var(--text-dimmed)" : retPct >= 0 ? "#4ade80" : "#f87171";
       const retDisp   = retPct === null ? "N/A" : (retPct >= 0 ? "+" : "") + retPct + "%";
-      const entryTime = new Date(tr.enteredAt).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
-      const exitTime  = new Date(tr.exitedAt).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit"});
+      const entryTime = new Date(tr.enteredAt).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+      const exitTime  = new Date(tr.exitedAt).toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
       const priceDisp = (tr.entryPrice && tr.exitPrice)
         ? `$${tr.entryPrice} → $${tr.exitPrice}`
         : "Price unavailable";
