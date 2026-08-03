@@ -65,6 +65,11 @@ AUTO_EXIT_MIN_DROP   = 6    # minimum absolute message drop before exit fires
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
 REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker
 
+# Assumed $ position size per trade, used only to turn return_pct into a dollar
+# pnl_dollars figure (no real position sizing exists yet). Snapshotted onto each
+# trade doc at entry time so changing this later never rewrites historical PnL.
+TRADE_POSITION_SIZE = 1000.0
+
 
 def refresh_finviz_token() -> bool:
     """
@@ -322,6 +327,50 @@ def get_et_timestamp() -> str:
     month  = datetime.now(timezone.utc).month
     label  = "EDT" if 3 <= month <= 11 else "EST"
     return now_et.strftime("%d:%m:%Y:%H:%M:%S") + " " + label
+
+
+# Bucket labels/thresholds mirror _FINVIZ_CAP_MAP's own nano/micro/small/mid/large/mega
+# convention, so a trade's captured market cap reads consistently with the rest of the app.
+_CAP_BUCKET_THRESHOLDS = [
+    (50e6,   "Nano"),
+    (300e6,  "Micro"),
+    (2e9,    "Small"),
+    (10e9,   "Mid"),
+    (200e9,  "Large"),
+]
+
+def _current_ticker_price(ticker: str, finviz: dict):
+    """Same dual-source price lookup _check_auto_trades uses for entry/exit prices:
+    prefer the cached live intraday quote, fall back to the Finviz screener price."""
+    with _price_lock:
+        cached = price_cache.get(f"{ticker}_i1_today")
+        bars   = cached["data"] if cached else []
+    return bars[-1]["price"] if bars else finviz.get(ticker, {}).get("price")
+
+
+def _market_cap_bucket(raw) -> str | None:
+    """Parses a Finviz "Market Cap" export value into a bucket label
+    (Nano/Micro/Small/Mid/Large/Mega). Returns None if unparseable.
+
+    Finviz's CSV export (get_finviz_data, used here) reports Market Cap as a
+    plain number already in millions of dollars, e.g. "4.45" == $4.45M — NOT
+    the suffixed "1.23B"/"450M" format Finviz's website displays. A suffix is
+    still handled defensively in case that ever changes."""
+    if not raw or not isinstance(raw, str):
+        return None
+    s = raw.strip().upper()
+    if not s or s == "--":
+        return None
+    suffix_mult = {"K": 1e3, "M": 1e6, "B": 1e9, "T": 1e12}
+    mult = suffix_mult.get(s[-1])
+    try:
+        value = float(s[:-1]) * mult if mult else float(s) * 1e6
+    except ValueError:
+        return None
+    for threshold, label in _CAP_BUCKET_THRESHOLDS:
+        if value < threshold:
+            return label
+    return "Mega"
 
 
 # ─── FINVIZ SCREENER CACHE ───
@@ -1846,7 +1895,7 @@ def get_auto_trades_endpoint():
         "entered_at":    fmt(t.get("entered_at")),
         "peak_density":  t.get("peak_density", 0),
         "entry_density": t.get("entry_density", 0),
-    } for t in auto_trades.find({"status": "active"}, {"_id": 0})]
+    } for t in auto_trades.find({"status": "active", "source": "auto"}, {"_id": 0})]
 
     def _fmt_completed(t):
         return {
@@ -1861,24 +1910,24 @@ def get_auto_trades_endpoint():
             "saved":        t.get("saved", False),
         }
 
-    recent_50   = list(completed_auto_trades.find({}, {"_id": 0}).sort("exited_at", -1).limit(50))
+    recent_50   = list(completed_auto_trades.find({"source": "auto"}, {"_id": 0}).sort("exited_at", -1).limit(50))
     recent_keys = {(t["ticker"], str(t.get("exited_at"))): True for t in recent_50}
     saved_extra = [
-        t for t in completed_auto_trades.find({"saved": True}, {"_id": 0})
+        t for t in completed_auto_trades.find({"saved": True, "source": "auto"}, {"_id": 0})
         if (t["ticker"], str(t.get("exited_at"))) not in recent_keys
     ]
     completed = [_fmt_completed(t) for t in recent_50 + saved_extra]
 
     return jsonify({
         "active": active, "completed": completed,
-        "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP}
+        "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "position_size": TRADE_POSITION_SIZE}
     })
 
 
 # Allows the frontend to adjust entry/exit thresholds without restarting the server.
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
-    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP
+    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, TRADE_POSITION_SIZE
     data = request.get_json(force=True) or {}
     try:
         if "entry_corr" in data:
@@ -1897,28 +1946,34 @@ def set_auto_trade_config():
             val = int(data["exit_min_drop"])
             if val >= 0:
                 AUTO_EXIT_MIN_DROP = val
+        if "position_size" in data:
+            val = float(data["position_size"])
+            if val > 0:
+                TRADE_POSITION_SIZE = round(val, 2)
     except (ValueError, TypeError) as e:
         return jsonify({"error": f"Invalid config value: {e}"}), 400
-    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP}")
-    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP})
+    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP} position_size={TRADE_POSITION_SIZE}")
+    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "position_size": TRADE_POSITION_SIZE})
 
 
+# NOTE: scoped to source="auto" — auto_trades/completed_auto_trades also hold manual
+# trades (see MANUAL TRADE ROUTES below) which must survive these clears untouched.
 @app.route("/api/auto-trades/clear", methods=["POST"])
 def clear_auto_trades():
-    auto_trades.delete_many({})
-    completed_auto_trades.delete_many({})
+    auto_trades.delete_many({"source": "auto"})
+    completed_auto_trades.delete_many({"source": "auto"})
     return jsonify({"cleared": True})
 
 
 @app.route("/api/auto-trades/clear-active", methods=["POST"])
 def clear_active_auto_trades():
-    auto_trades.delete_many({})
+    auto_trades.delete_many({"source": "auto", "status": "active"})
     return jsonify({"cleared": True})
 
 
 @app.route("/api/auto-trades/clear-history", methods=["POST"])
 def clear_auto_trade_history():
-    completed_auto_trades.delete_many({})
+    completed_auto_trades.delete_many({"source": "auto"})
     return jsonify({"cleared": True})
 
 
@@ -1939,6 +1994,236 @@ def toggle_auto_trade_saved():
         {"$set": {"saved": saved}}
     )
     return jsonify({"ticker": ticker, "saved": saved})
+
+
+# ── MANUAL TRADE ROUTES ──
+# Server-side counterpart to the Correlation tab's Entry Zone "Enter Trade"/"Exit Trade"
+# buttons. Shares the auto_trades/completed_auto_trades collections with the automated
+# engine (source="manual") so both show up in one filterable /api/trades query, but price
+# is always re-derived server-side — never trusted from the client — for data integrity.
+
+def _fmt_trade_doc(t: dict) -> dict:
+    def fmt(dt):
+        if not dt: return None
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ") if hasattr(dt, "strftime") else str(dt)
+    out = dict(t)
+    out.pop("_id", None)
+    out["entered_at"] = fmt(out.get("entered_at"))
+    out["exited_at"]  = fmt(out.get("exited_at"))
+    return out
+
+
+@app.route("/api/manual-trades/enter", methods=["POST"])
+def enter_manual_trade():
+    data   = request.get_json(force=True) or {}
+    ticker = (data.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    if auto_trades.find_one({"ticker": ticker, "status": "active", "source": "manual"}):
+        return jsonify({"error": f"{ticker} already has an open manual trade"}), 400
+
+    try:
+        entry_corr    = round(float(data.get("entry_corr"))) if data.get("entry_corr") is not None else None
+        peak_density  = int(data.get("peak_density") or 0)
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid entry_corr/peak_density"}), 400
+
+    finviz      = get_finviz_data()
+    entry_price = _current_ticker_price(ticker, finviz)
+    if not entry_price:
+        return jsonify({"error": f"no current price available for {ticker}"}), 400
+
+    now_utc  = datetime.now(timezone.utc)
+    fv       = finviz.get(ticker, {})
+    doc = {
+        "ticker":            ticker,
+        "status":            "active",
+        "entry_price":       entry_price,
+        "entry_corr":        entry_corr,
+        "entered_at":        now_utc,
+        "entered_at_et":     _utc_dt_to_et_hhmm(now_utc),
+        "peak_density":      peak_density,
+        "entry_density":     peak_density,
+        "source":            "manual",
+        "market_cap":        fv.get("market_cap", "--"),
+        "market_cap_bucket": _market_cap_bucket(fv.get("market_cap")),
+        "position_size":     TRADE_POSITION_SIZE,
+    }
+    auto_trades.insert_one(doc)
+    return jsonify(_fmt_trade_doc(doc))
+
+
+@app.route("/api/manual-trades/exit", methods=["POST"])
+def exit_manual_trade():
+    data   = request.get_json(force=True) or {}
+    ticker = (data.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+
+    trade = auto_trades.find_one({"ticker": ticker, "status": "active", "source": "manual"})
+    if not trade:
+        return jsonify({"error": f"no open manual trade for {ticker}"}), 404
+
+    finviz     = get_finviz_data()
+    exit_price = _current_ticker_price(ticker, finviz)
+    entry_price = trade.get("entry_price")
+    return_pct  = None
+    try:
+        if entry_price and exit_price:
+            return_pct = round((float(exit_price) - float(entry_price)) / float(entry_price) * 100, 2)
+    except Exception:
+        pass
+
+    now_utc       = datetime.now(timezone.utc)
+    position_size = trade.get("position_size", TRADE_POSITION_SIZE)
+    pnl_dollars   = round(return_pct * position_size / 100, 2) if return_pct is not None else None
+
+    doc = {
+        "ticker":            ticker,
+        "entry_price":       entry_price,
+        "exit_price":        exit_price,
+        "return_pct":        return_pct,
+        "entered_at":        trade.get("entered_at"),
+        "exited_at":         now_utc,
+        "entered_at_et":     trade.get("entered_at_et"),
+        "exited_at_et":      _utc_dt_to_et_hhmm(now_utc),
+        "entry_corr":        trade.get("entry_corr"),
+        "peak_density":      trade.get("peak_density", 0),
+        "exit_reason":       "manual",
+        "source":            "manual",
+        "market_cap":        trade.get("market_cap"),
+        "market_cap_bucket": trade.get("market_cap_bucket"),
+        "position_size":     position_size,
+        "pnl_dollars":       pnl_dollars,
+    }
+    completed_auto_trades.insert_one(doc)
+    auto_trades.delete_one({"ticker": ticker, "status": "active", "source": "manual"})
+    return jsonify(_fmt_trade_doc(doc))
+
+
+@app.route("/api/manual-trades/remove", methods=["POST"])
+def remove_manual_trade():
+    """Cancels an open manual position without recording a completed trade — the
+    server-side equivalent of the Correlation tab's silent-discard 'Remove' button."""
+    data   = request.get_json(force=True) or {}
+    ticker = (data.get("ticker") or "").upper().strip()
+    if not ticker:
+        return jsonify({"error": "ticker required"}), 400
+    result = auto_trades.delete_one({"ticker": ticker, "status": "active", "source": "manual"})
+    return jsonify({"ticker": ticker, "removed": result.deleted_count > 0})
+
+
+def _et_date_str_to_utc(date_str: str, end_of_day: bool = False):
+    """Converts a "YYYY-MM-DD" ET calendar date into a UTC datetime boundary,
+    inverting the UTC->ET offset used by _utc_dt_to_et_hhmm/get_et_now."""
+    try:
+        d = datetime.strptime(date_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+    offset = timedelta(hours=-4) if 3 <= d.month <= 11 else timedelta(hours=-5)
+    utc_dt = (d - offset).replace(tzinfo=timezone.utc)
+    return utc_dt + timedelta(days=1) if end_of_day else utc_dt
+
+
+# Combined view backing the Trades tab: auto + manual trades, filterable by source,
+# status, ticker, ET time-of-day range, market cap bucket, and ET calendar date range.
+@app.route("/api/trades")
+def get_trades_endpoint():
+    source = (request.args.get("source") or "all").lower()
+    status = (request.args.get("status") or "all").lower()
+    ticker = (request.args.get("ticker") or "").upper().strip()
+    cap    = (request.args.get("cap") or "all")
+    time_from = request.args.get("time_from") or None
+    time_to   = request.args.get("time_to") or None
+    date_from = request.args.get("date_from") or None
+    date_to   = request.args.get("date_to") or None
+    limit  = min(request.args.get("limit", 200, type=int) or 200, 500)
+
+    def base_filter():
+        f = {}
+        if source in ("auto", "manual"):
+            f["source"] = source
+        if ticker:
+            f["ticker"] = ticker
+        if cap and cap.lower() != "all":
+            f["market_cap_bucket"] = cap
+        return f
+
+    active_docs, completed_docs = [], []
+
+    if status in ("all", "active"):
+        f = base_filter()
+        f["status"] = "active"
+        if time_from or time_to:
+            rng = {}
+            if time_from: rng["$gte"] = time_from
+            if time_to:   rng["$lte"] = time_to
+            f["entered_at_et"] = rng
+        if date_from or date_to:
+            rng = {}
+            start = _et_date_str_to_utc(date_from) if date_from else None
+            end   = _et_date_str_to_utc(date_to, end_of_day=True) if date_to else None
+            if start: rng["$gte"] = start
+            if end:   rng["$lt"]  = end
+            if rng: f["entered_at"] = rng
+        active_docs = list(auto_trades.find(f).sort("entered_at", -1).limit(limit))
+
+    if status in ("all", "completed"):
+        f = base_filter()
+        if time_from or time_to:
+            rng = {}
+            if time_from: rng["$gte"] = time_from
+            if time_to:   rng["$lte"] = time_to
+            f["exited_at_et"] = rng
+        if date_from or date_to:
+            rng = {}
+            start = _et_date_str_to_utc(date_from) if date_from else None
+            end   = _et_date_str_to_utc(date_to, end_of_day=True) if date_to else None
+            if start: rng["$gte"] = start
+            if end:   rng["$lt"]  = end
+            if rng: f["exited_at"] = rng
+        completed_docs = list(completed_auto_trades.find(f).sort("exited_at", -1).limit(limit))
+
+    return jsonify({
+        "active":    [_fmt_trade_doc(t) for t in active_docs],
+        "completed": [_fmt_trade_doc(t) for t in completed_docs],
+        "counts": {"active": len(active_docs), "completed": len(completed_docs)},
+    })
+
+
+# Realized PnL for AUTO trades closed during today's ET calendar day — backs the
+# dashboard's "Day's PnL" tile. Manual trades are intentionally excluded (only the
+# automated engine runs unattended 24/7, so it's the only one with a meaningful
+# "today" headline figure).
+@app.route("/api/trades/pnl-today")
+def get_trades_pnl_today():
+    today_et  = get_et_now().strftime("%Y-%m-%d")
+    start_utc = _et_date_str_to_utc(today_et)
+    end_utc   = _et_date_str_to_utc(today_et, end_of_day=True)
+
+    docs = list(completed_auto_trades.find({
+        "source": "auto",
+        "exited_at": {"$gte": start_utc, "$lt": end_utc},
+    }))
+
+    pnl_dollars = 0.0
+    wins = losses = 0
+    for t in docs:
+        pnl = t.get("pnl_dollars")
+        if pnl is None:
+            rp = t.get("return_pct")
+            pnl = round(rp * t.get("position_size", TRADE_POSITION_SIZE) / 100, 2) if rp is not None else 0.0
+        pnl_dollars += pnl
+        if pnl > 0: wins += 1
+        elif pnl < 0: losses += 1
+
+    return jsonify({
+        "pnl_dollars":  round(pnl_dollars, 2),
+        "trade_count":  len(docs),
+        "wins":         wins,
+        "losses":       losses,
+        "position_size": TRADE_POSITION_SIZE,
+    })
 
 
 @app.route("/api/ticker-messages/<ticker>")
@@ -2307,17 +2592,26 @@ def _check_auto_trades():
                 pass
 
             ret_str = (("+" if return_pct >= 0 else "") + str(return_pct) + "%") if return_pct is not None else "N/A"
+            position_size = trade.get("position_size", TRADE_POSITION_SIZE)
+            pnl_dollars   = round(return_pct * position_size / 100, 2) if return_pct is not None else None
             completed_auto_trades.insert_one({
-                "ticker":        ticker,
-                "entry_price":   entry_price,
-                "exit_price":    current_price,
-                "return_pct":    return_pct,
-                "entered_at":    trade["entered_at"],
-                "exited_at":     now_utc,
-                "entry_corr":    trade.get("entry_corr"),
-                "peak_density":  peak,
-                "exit_density":  total_msgs,
-                "exit_reason":   "density_off_peak",
+                "ticker":            ticker,
+                "entry_price":       entry_price,
+                "exit_price":        current_price,
+                "return_pct":        return_pct,
+                "entered_at":        trade["entered_at"],
+                "exited_at":         now_utc,
+                "entered_at_et":     trade.get("entered_at_et"),
+                "exited_at_et":      _utc_dt_to_et_hhmm(now_utc),
+                "entry_corr":        trade.get("entry_corr"),
+                "peak_density":      peak,
+                "exit_density":      total_msgs,
+                "exit_reason":       "density_off_peak",
+                "source":            trade.get("source", "auto"),
+                "market_cap":        trade.get("market_cap"),
+                "market_cap_bucket": trade.get("market_cap_bucket"),
+                "position_size":     position_size,
+                "pnl_dollars":       pnl_dollars,
             })
             auto_trades.delete_one({"ticker": ticker, "status": "active"})
             drop_pct = round((peak - total_msgs) / peak * 100, 1) if peak else 0
@@ -2365,14 +2659,20 @@ def _check_auto_trades():
                 screener_price):
             current_price = screener_price
             corr_pct = round(corr * 100)
+            fv = finviz.get(ticker, {})
             auto_trades.insert_one({
-                "ticker":        ticker,
-                "status":        "active",
-                "entry_price":   current_price,
-                "entry_corr":    corr_pct,
-                "entered_at":    now_utc,
-                "peak_density":  total_msgs,
-                "entry_density": total_msgs,
+                "ticker":            ticker,
+                "status":            "active",
+                "entry_price":       current_price,
+                "entry_corr":        corr_pct,
+                "entered_at":        now_utc,
+                "entered_at_et":     _utc_dt_to_et_hhmm(now_utc),
+                "peak_density":      total_msgs,
+                "entry_density":     total_msgs,
+                "source":            "auto",
+                "market_cap":        fv.get("market_cap", "--"),
+                "market_cap_bucket": _market_cap_bucket(fv.get("market_cap")),
+                "position_size":     TRADE_POSITION_SIZE,
             })
             print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
 

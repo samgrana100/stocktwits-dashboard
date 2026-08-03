@@ -74,10 +74,22 @@ def ensure_indexes():
     # (ticker, status) compound index supports fast active-trade lookup in _check_auto_trades.
     auto_trades.create_index([("ticker", ASCENDING), ("status", ASCENDING)])
     auto_trades.create_index("entered_at")
+    auto_trades.create_index("source")
+    auto_trades.create_index([("source", ASCENDING), ("status", ASCENDING)])
 
     # ── completed_auto_trades ──
     completed_auto_trades.create_index("exited_at")
     completed_auto_trades.create_index("ticker")
+    completed_auto_trades.create_index([("source", ASCENDING), ("exited_at", DESCENDING)])
+    completed_auto_trades.create_index("exited_at_et")
+    completed_auto_trades.create_index("market_cap_bucket")
+
+    # Backfill: every trade doc created before the manual-trade feature shipped has no
+    # "source" field. They're unambiguously auto trades (manual trades never persisted
+    # server-side before now), so tag them once — otherwise the source-scoped clear
+    # endpoints (added alongside manual trades) silently stop matching old history.
+    auto_trades.update_many({"source": {"$exists": False}}, {"$set": {"source": "auto"}})
+    completed_auto_trades.update_many({"source": {"$exists": False}}, {"$set": {"source": "auto"}})
 
     # ── screener_snapshots ──
     # TTL on ts auto-deletes bubble trail points after 24 hours — intraday only.

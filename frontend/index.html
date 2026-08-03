@@ -971,6 +971,7 @@
     <button class="news-view-btn" id="news-view-btn" onclick="toggleNewsView()">News View</button>
     <button class="news-view-btn" id="corr-view-btn" onclick="toggleCorrView()">Correlation</button>
     <button class="news-view-btn" id="bubble-view-btn" onclick="bubbleViewActive ? closeBubbleView() : openBubbleFilterModal()">Bubble Map</button>
+    <button class="news-view-btn" id="trades-view-btn" onclick="toggleTradesView()">Trades</button>
     <button class="guide-btn" id="guide-btn" onclick="toggleGuideView()">Guide</button>
     <button class="signals-toggle-btn" id="signals-toggle-btn" onclick="toggleSignalsPanel()">Signals</button>
     <button class="pipeline-btn start" id="pipeline-btn" onclick="togglePipeline()">Start Pipeline</button>
@@ -997,6 +998,11 @@
     <div class="metric-label">Most Active</div>
     <div class="metric-value" id="metric-most-active">--</div>
     <div class="metric-sub" id="metric-most-active-count">--</div>
+  </div>
+  <div class="metric-card">
+    <div class="metric-label">Day's PnL (Auto)</div>
+    <div class="metric-value" id="metric-day-pnl">--</div>
+    <div class="metric-sub" id="metric-day-pnl-sub">--</div>
   </div>
 </div>
 
@@ -1318,6 +1324,77 @@
     </div>
   </div>
   <div id="bubble-chart" style="width:100%;height:calc(100vh - 185px);border-radius:8px;overflow:hidden"></div>
+</div>
+
+<!-- Trades View -->
+<div id="trades-view" style="display:none; background:var(--bg-base); min-height:calc(100vh - 60px)">
+  <div style="padding:0 16px 24px">
+    <div class="corr-view-hdr">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span class="corr-view-title">Trades</span>
+        <span class="corr-count" id="trades-count">-- trades</span>
+      </div>
+      <div class="corr-controls">
+        <label class="corr-ctrl-label">Source
+          <select id="trades-filter-source" onchange="fetchTrades()" style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 6px">
+            <option value="all">All</option>
+            <option value="auto">Auto</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <label class="corr-ctrl-label">Status
+          <select id="trades-filter-status" onchange="fetchTrades()" style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 6px">
+            <option value="all">All</option>
+            <option value="active">Open</option>
+            <option value="completed">Closed</option>
+          </select>
+        </label>
+        <label class="corr-ctrl-label">Mkt Cap
+          <select id="trades-filter-cap" onchange="fetchTrades()" style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 6px">
+            <option value="all">All</option>
+            <option value="Nano">Nano</option>
+            <option value="Micro">Micro</option>
+            <option value="Small">Small</option>
+            <option value="Mid">Mid</option>
+            <option value="Large">Large</option>
+            <option value="Mega">Mega</option>
+          </select>
+        </label>
+        <label class="corr-ctrl-label">From (ET)
+          <input type="time" id="trades-filter-time-from" onchange="fetchTrades()">
+        </label>
+        <label class="corr-ctrl-label">To (ET)
+          <input type="time" id="trades-filter-time-to" onchange="fetchTrades()">
+        </label>
+        <div class="corr-search-wrap">
+          <input type="text" id="trades-filter-ticker" class="corr-search-input" placeholder="Ticker…"
+            oninput="fetchTrades()" autocomplete="off">
+        </div>
+        <button onclick="resetTradeFilters()" style="font-size:10px;padding:4px 10px;background:none;border:1px solid var(--border-subtle);border-radius:4px;color:var(--text-muted);cursor:pointer">Reset</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="trades-table">
+        <thead>
+          <tr>
+            <th style="cursor:default">Ticker</th>
+            <th style="cursor:default">Source</th>
+            <th style="cursor:default">Status</th>
+            <th style="cursor:default">Entry $</th>
+            <th style="cursor:default">Exit $</th>
+            <th style="cursor:default">Return %</th>
+            <th style="cursor:default">PnL $</th>
+            <th style="cursor:default">Entered (ET)</th>
+            <th style="cursor:default">Exited (ET)</th>
+            <th style="cursor:default">Mkt Cap</th>
+          </tr>
+        </thead>
+        <tbody id="trades-table-body">
+          <tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 </div>
 
 <div id="guide-view" class="guide-view">
@@ -2504,11 +2581,46 @@
       document.getElementById("metric-most-active-count").textContent =
         mostActive ? (mostActive.total_messages||0) + " msgs" : "--";
 
+      fetchDayPnl();
+      fetchOpenPositionTickers();
+
       // Refresh stale news view cards so price data doesn't fall behind
       if (newsViewActive)  refreshStaleNewsCards();
-      if (corrViewActive)  { buildCorrView(); fetchAutoTrades(); }
+      if (corrViewActive)  { buildCorrView(); fetchAutoTrades(); fetchManualCompletedTrades(); }
+      if (tradesViewActive) fetchTrades();
 
     } catch(e) { console.error("Failed to fetch scores:", e); }
+  }
+
+  async function fetchDayPnl() {
+    try {
+      const res  = await fetch("/api/trades/pnl-today");
+      if (!res.ok) return;
+      const data = await res.json();
+      const valEl = document.getElementById("metric-day-pnl");
+      const subEl = document.getElementById("metric-day-pnl-sub");
+      const pnl   = data.pnl_dollars || 0;
+      valEl.textContent = (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2);
+      valEl.classList.toggle("up", pnl > 0);
+      valEl.classList.toggle("down", pnl < 0);
+      subEl.textContent = data.trade_count
+        ? `${data.trade_count} trade${data.trade_count !== 1 ? "s" : ""} (${data.wins}W/${data.losses}L)`
+        : "no trades yet";
+    } catch(e) { console.error("[day-pnl]", e); }
+  }
+
+  let _openPositionTickers = new Set();
+  async function fetchOpenPositionTickers() {
+    try {
+      const res  = await fetch("/api/trades?status=active");
+      if (!res.ok) return;
+      const data = await res.json();
+      _openPositionTickers = new Set((data.active || []).map(t => t.ticker));
+      // Re-render immediately rather than waiting for the next 45s tick — this fetch
+      // races with the catalysts-driven render inside fetchScores(), so without this
+      // the "in trade" badge can be missing for a full cycle after page load/entry.
+      applyFiltersAndRender();
+    } catch(e) { console.error("[open-positions]", e); }
   }
 
   function refreshStaleNewsCards() {
@@ -2578,7 +2690,7 @@
 
       return `<tr onclick="openPopup('${safeTicker}','${safeCompany}','${safeSector}','${safeIndustry}')">
         <td class="rank">${i+1}</td>
-        <td class="ticker-sym">${t.ticker||"--"}${catalystPills}${catalystCountdown}<button onclick="event.stopPropagation();openBubbleMap('${safeTicker}',true)" title="View on Bubble Map" style="margin-left:6px;font-size:10px;padding:1px 5px;background:none;border:1px solid var(--border-subtle);border-radius:3px;color:var(--text-dimmed);cursor:pointer;vertical-align:middle;line-height:1.4">⊙</button></td>
+        <td class="ticker-sym">${t.ticker||"--"}${_openPositionTickers.has(t.ticker) ? '<span title="Open position" style="margin-left:6px;font-size:9px;font-weight:700;color:var(--green);vertical-align:middle">● IN TRADE</span>' : ""}${catalystPills}${catalystCountdown}<button onclick="event.stopPropagation();openBubbleMap('${safeTicker}',true)" title="View on Bubble Map" style="margin-left:6px;font-size:10px;padding:1px 5px;background:none;border:1px solid var(--border-subtle);border-radius:3px;color:var(--text-dimmed);cursor:pointer;vertical-align:middle;line-height:1.4">⊙</button></td>
         <td class="col-toggle-td"></td>
         <td class="col-details" style="color:#aaa">${t.company||"--"}</td>
         <td class="col-details" style="color:#666">${t.industry||"--"}</td>
@@ -3622,6 +3734,7 @@
 
   function toggleNewsView() {
     if (bubbleViewActive) closeBubbleView();
+    if (tradesViewActive) toggleTradesView();
     newsViewActive = !newsViewActive;
     document.getElementById("news-view-btn").classList.toggle("active", newsViewActive);
     document.getElementById("news-view").classList.toggle("active", newsViewActive);
@@ -3667,6 +3780,7 @@
   function toggleCorrView() {
     if (newsViewActive) toggleNewsView();
     if (bubbleViewActive) toggleBubbleView();
+    if (tradesViewActive) toggleTradesView();
     corrViewActive = !corrViewActive;
     document.getElementById("corr-view-btn").classList.toggle("active", corrViewActive);
     document.getElementById("corr-view").style.display = corrViewActive ? "" : "none";
@@ -3682,7 +3796,102 @@
       document.getElementById("corr-min-msgs").value        = corrMinMsgs;
       buildCorrView();
       fetchAutoTrades();
+      fetchManualCompletedTrades();
     }
+  }
+
+  // ── Trades tab ──
+  let tradesViewActive = false;
+
+  function toggleTradesView() {
+    if (newsViewActive) toggleNewsView();
+    if (bubbleViewActive) toggleBubbleView();
+    if (corrViewActive) toggleCorrView();
+    tradesViewActive = !tradesViewActive;
+    document.getElementById("trades-view-btn").classList.toggle("active", tradesViewActive);
+    document.getElementById("trades-view").style.display = tradesViewActive ? "" : "none";
+    const filterBar     = document.querySelector(".filter-bar");
+    const contentLayout = document.querySelector(".content-layout");
+    const statusBar     = document.querySelector(".status-bar");
+    if (filterBar)     filterBar.style.display     = tradesViewActive ? "none" : "";
+    if (contentLayout) contentLayout.style.display = tradesViewActive ? "none" : "";
+    if (statusBar)     statusBar.style.display     = tradesViewActive ? "none" : "";
+    if (tradesViewActive) fetchTrades();
+  }
+
+  function resetTradeFilters() {
+    document.getElementById("trades-filter-source").value    = "all";
+    document.getElementById("trades-filter-status").value    = "all";
+    document.getElementById("trades-filter-cap").value       = "all";
+    document.getElementById("trades-filter-time-from").value = "";
+    document.getElementById("trades-filter-time-to").value   = "";
+    document.getElementById("trades-filter-ticker").value    = "";
+    fetchTrades();
+  }
+
+  async function fetchTrades() {
+    if (!tradesViewActive) return;
+    try {
+      const params = new URLSearchParams();
+      const source = document.getElementById("trades-filter-source").value;
+      const status = document.getElementById("trades-filter-status").value;
+      const cap    = document.getElementById("trades-filter-cap").value;
+      const tFrom  = document.getElementById("trades-filter-time-from").value;
+      const tTo    = document.getElementById("trades-filter-time-to").value;
+      const ticker = document.getElementById("trades-filter-ticker").value.trim();
+      if (source !== "all") params.set("source", source);
+      if (status !== "all") params.set("status", status);
+      if (cap    !== "all") params.set("cap", cap);
+      if (tFrom) params.set("time_from", tFrom);
+      if (tTo)   params.set("time_to", tTo);
+      if (ticker) params.set("ticker", ticker);
+
+      const res  = await fetch("/api/trades?" + params.toString());
+      if (!res.ok) return;
+      const data = await res.json();
+      renderTradesTable(data);
+    } catch(e) { console.error("[trades]", e); }
+  }
+
+  function renderTradesTable(data) {
+    const body  = document.getElementById("trades-table-body");
+    const count = document.getElementById("trades-count");
+    const active    = (data.active    || []).map(t => ({...t, _status: "Open"}));
+    const completed = (data.completed || []).map(t => ({...t, _status: "Closed"}));
+    const rows = [...active, ...completed].sort((a, b) => {
+      const aT = a.exited_at || a.entered_at || "";
+      const bT = b.exited_at || b.entered_at || "";
+      return bT.localeCompare(aT);
+    });
+    count.textContent = rows.length + " trade" + (rows.length !== 1 ? "s" : "");
+
+    if (!rows.length) {
+      body.innerHTML = '<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
+      return;
+    }
+
+    body.innerHTML = rows.map(t => {
+      const ret      = t.return_pct;
+      const retCls   = ret == null ? "muted" : ret >= 0 ? "up" : "down";
+      const retDisp  = ret == null ? "--" : (ret >= 0 ? "+" : "") + ret + "%";
+      const pnl      = t.pnl_dollars;
+      const pnlCls   = pnl == null ? "muted" : pnl >= 0 ? "up" : "down";
+      const pnlDisp  = pnl == null ? "--" : (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2);
+      const srcDisp  = t.source === "manual" ? "Manual" : "Auto";
+      const statusDisp = t._status === "Open" ? '<span class="up">● Open</span>' : "Closed";
+      return `<tr>
+        <td class="ticker-sym">${t.ticker}</td>
+        <td class="muted">${srcDisp}</td>
+        <td>${statusDisp}</td>
+        <td>${t.entry_price != null ? "$" + t.entry_price : "--"}</td>
+        <td>${t.exit_price  != null ? "$" + t.exit_price  : "--"}</td>
+        <td class="${retCls}">${retDisp}</td>
+        <td class="${pnlCls}">${pnlDisp}</td>
+        <td class="muted">${t.entered_at_et || "--"}</td>
+        <td class="muted">${t.exited_at_et  || "--"}</td>
+        <td class="muted">${t.market_cap_bucket || "--"}</td>
+      </tr>`;
+    }).join("");
   }
 
   // ── Bubble Map ──
@@ -3713,6 +3922,7 @@
   function toggleBubbleView(highlight) {
     if (newsViewActive) toggleNewsView();
     if (corrViewActive) toggleCorrView();
+    if (tradesViewActive) toggleTradesView();
 
     if (highlight) _bubbleHighlight = highlight;
 
@@ -4588,49 +4798,89 @@
       const res = await fetch("/api/quickscore/" + ticker + "?window=1h");
       if (res.ok) { const d = await res.json(); density = d.total_messages || 0; positionDensity1h[ticker] = density; }
     } catch(_) {}
-    corrEntered[ticker] = { enteredAt: Date.now(), entryCorrPct: corrPct, peakDensity: density, entryPrice: price || null };
-    _saveCorrEntered();
-    buildCorrView();
-  }
-
-  let completedTrades = JSON.parse(localStorage.getItem("completedTrades") || "[]");
-  function _saveCompletedTrades() { localStorage.setItem("completedTrades", JSON.stringify(completedTrades)); }
-
-  function exitTrade(ticker) {
-    const entry  = corrEntered[ticker];
-    const tkData = allTickers.find(t => t.ticker === ticker);
-    if (entry) {
-      const exitPrice  = tkData ? parseFloat(tkData.price) || null : null;
-      const entryPrice = entry.entryPrice ? parseFloat(entry.entryPrice) : null;
-      const returnPct  = (entryPrice && exitPrice) ? ((exitPrice - entryPrice) / entryPrice * 100) : null;
-      completedTrades.unshift({
-        ticker,
-        entryPrice,
-        exitPrice,
-        returnPct:   returnPct !== null ? Math.round(returnPct * 100) / 100 : null,
-        enteredAt:   entry.enteredAt,
-        exitedAt:    Date.now(),
-        entryCorrPct: entry.entryCorrPct,
-        peakDensity: entry.peakDensity,
+    try {
+      const res = await fetch("/api/manual-trades/enter", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ ticker, entry_corr: corrPct, peak_density: density })
       });
-      _saveCompletedTrades();
-    }
+      if (!res.ok) { console.error("[enter-trade] failed:", await res.text()); return; }
+      const t = await res.json();
+      // Local corrEntered is a fast-path cache for this tab's own rendering — Mongo
+      // (via the server's returned doc) is the source of truth going forward.
+      corrEntered[ticker] = { enteredAt: t.entered_at, entryCorrPct: t.entry_corr, peakDensity: t.peak_density, entryPrice: t.entry_price };
+      _saveCorrEntered();
+      buildCorrView();
+      fetchOpenPositionTickers();
+    } catch(e) { console.error("[enter-trade]", e); }
+  }
+
+  // completedTrades is fetched from Mongo (source=manual) by fetchManualCompletedTrades()
+  // below — no longer a localStorage array pushed to on exit. dismissedTradeIds tracks
+  // which trades the small sidebar Clear button has hidden client-side only; the full
+  // Trades tab always shows everything regardless of this list.
+  let completedTrades   = [];
+  let dismissedTradeIds = (() => { try { return JSON.parse(localStorage.getItem("dismissedTradeIds") || "[]"); } catch { return []; } })();
+  function _saveDismissedTradeIds() { localStorage.setItem("dismissedTradeIds", JSON.stringify(dismissedTradeIds)); }
+
+  async function fetchManualCompletedTrades() {
+    try {
+      const res = await fetch("/api/trades?source=manual&status=completed&limit=50");
+      if (!res.ok) return;
+      const data = await res.json();
+      completedTrades = (data.completed || []).map(t => ({
+        ticker:       t.ticker,
+        entryPrice:   t.entry_price,
+        exitPrice:    t.exit_price,
+        returnPct:    t.return_pct,
+        enteredAt:    t.entered_at,
+        exitedAt:     t.exited_at,
+        entryCorrPct: t.entry_corr,
+        peakDensity:  t.peak_density,
+        _key:         t.ticker + "|" + t.exited_at,
+      }));
+      renderCorrExitPanel();
+    } catch(e) { console.error("[manual-completed-trades]", e); }
+  }
+
+  async function exitTrade(ticker) {
+    try {
+      const res = await fetch("/api/manual-trades/exit", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ ticker })
+      });
+      if (!res.ok) { console.error("[exit-trade] failed:", await res.text()); return; }
+    } catch(e) { console.error("[exit-trade]", e); return; }
+    delete corrEntered[ticker];
+    _saveCorrEntered();
+    fetchManualCompletedTrades();
+    fetchOpenPositionTickers();
+    buildCorrView();
+  }
+
+  async function removePosition(ticker) {
+    try {
+      const res = await fetch("/api/manual-trades/remove", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ ticker })
+      });
+      if (!res.ok) { console.error("[remove-trade] failed:", await res.text()); return; }
+    } catch(e) { console.error("[remove-trade]", e); return; }
     delete corrEntered[ticker];
     _saveCorrEntered();
     renderCorrExitPanel();
     buildCorrView();
+    fetchOpenPositionTickers();
   }
 
-  function removePosition(ticker) {
-    delete corrEntered[ticker];
-    _saveCorrEntered();
-    renderCorrExitPanel();
-    buildCorrView();
-  }
-
+  // Never deletes the underlying Mongo record — permanently-saved trade history
+  // shouldn't be destroyable from a "Clear" button. Just hides currently-shown
+  // trades from this small sidebar feed; they still appear in the full Trades tab.
   function clearCompletedTrades() {
-    completedTrades = [];
-    _saveCompletedTrades();
+    const shownKeys = completedTrades
+      .filter(tr => !dismissedTradeIds.includes(tr._key))
+      .map(tr => tr._key);
+    dismissedTradeIds.push(...shownKeys);
+    _saveDismissedTradeIds();
     renderCorrExitPanel();
   }
 
@@ -4646,9 +4896,7 @@
 
     if (!positions.length) {
       feed.innerHTML = '<div class="corr-exit-empty">No positions tracked.<br>Enter a trade from the Entry Zone.</div>';
-      return;
-    }
-
+    } else {
     feed.innerHTML = positions.map(ticker => {
       const entry   = corrEntered[ticker];
       const current = positionDensity1h[ticker] ?? 0;
@@ -4677,15 +4925,17 @@
         </div>
       </div>`;
     }).join("");
+    }
 
-    // Completed trades
+    // Completed trades (Mongo-fed, filtered through the client-side dismiss list)
     const completedFeed = document.getElementById("corr-completed-feed");
     if (!completedFeed) return;
-    if (!completedTrades.length) {
+    const visibleCompleted = completedTrades.filter(tr => !dismissedTradeIds.includes(tr._key));
+    if (!visibleCompleted.length) {
       completedFeed.innerHTML = '<div class="corr-exit-empty">No completed trades yet.</div>';
       return;
     }
-    completedFeed.innerHTML = completedTrades.map(tr => {
+    completedFeed.innerHTML = visibleCompleted.map(tr => {
       const retPct    = tr.returnPct;
       const retColor  = retPct === null ? "var(--text-dimmed)" : retPct >= 0 ? "#4ade80" : "#f87171";
       const retDisp   = retPct === null ? "N/A" : (retPct >= 0 ? "+" : "") + retPct + "%";
