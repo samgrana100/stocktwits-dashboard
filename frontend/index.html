@@ -1422,25 +1422,6 @@
   </div>
 </div>
 
-<!-- Trade Detail Popup -->
-<div class="popup-overlay" id="trade-popup-overlay" onclick="if(event.target===this) closeTradePopup()">
-  <div class="popup-box" style="width:480px">
-    <div class="popup-header">
-      <div>
-        <div class="popup-ticker-name" id="trade-popup-ticker">--</div>
-        <div class="popup-company" id="trade-popup-meta">--</div>
-        <div class="popup-nav-wrap" id="trade-popup-nav-wrap">
-          <button class="popup-nav-btn" id="trade-popup-nav-prev" onclick="navigateTradePopup(-1)">&#8592;</button>
-          <span class="popup-nav-pos" id="trade-popup-nav-pos"></span>
-          <button class="popup-nav-btn" id="trade-popup-nav-next" onclick="navigateTradePopup(1)">&#8594;</button>
-        </div>
-      </div>
-      <button class="popup-close" onclick="closeTradePopup()">&#x2715;</button>
-    </div>
-    <div id="trade-popup-body" style="padding:18px 22px;display:grid;grid-template-columns:1fr 1fr;gap:14px 20px"></div>
-  </div>
-</div>
-
 <!-- Trade Calendar -->
 <div class="popup-overlay" id="trade-calendar-overlay" onclick="if(event.target===this) closeTradeCalendar()">
   <div class="popup-box" style="width:520px">
@@ -2889,6 +2870,10 @@
 
   let _corrNavTickers = [];
   let _corrNavIdx     = -1;
+  // "ticker" = default nav (openPopup gets called directly with the next ticker's
+  // own data). "trade" = Trades-tab chart popup, where each nav step must re-fetch
+  // that ticker/day's trades before opening — see openTradeChartForRow().
+  let _popupNavKind   = "ticker";
 
   function _setCorrNav(tickers, idx) {
     _corrNavTickers = tickers;
@@ -2910,8 +2895,12 @@
   function navigateCorrPopup(dir) {
     const newIdx = _corrNavIdx + dir;
     if (newIdx < 0 || newIdx >= _corrNavTickers.length) return;
-    const t = _corrNavTickers[newIdx];
     _corrNavIdx = newIdx;
+    if (_popupNavKind === "trade") {
+      openTradeChartForRow(newIdx);
+      return;
+    }
+    const t = _corrNavTickers[newIdx];
     openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, newIdx);
   }
 
@@ -2926,13 +2915,17 @@
     openBubbleMap(ticker, true);
   }
 
-  async function openPopup(ticker, company, sector, industry, _navList, _navIdx) {
+  async function openPopup(ticker, company, sector, industry, _navList, _navIdx, windowOverride) {
     currentPopupTicker  = ticker;
-    currentPopupWindow  = currentWindow;
+    // windowOverride lets a caller force a specific chart window (e.g. "1d" from
+    // openTradeChartForRow, so a trade's entry/exit markers are guaranteed to fall
+    // inside the visible range regardless of whatever window the main dashboard
+    // table happens to be on) instead of inheriting currentWindow.
+    currentPopupWindow  = windowOverride || currentWindow;
     // Inject entry triangle if this ticker has an active monitored position and no explicit trade markers set
     if (!_tradeMarkers && corrEntered[ticker]?.entryPrice) {
       const e = corrEntered[ticker];
-      _tradeMarkers = { enteredAt: e.enteredAt, exitedAt: null, entryPrice: e.entryPrice, exitPrice: null };
+      _tradeMarkers = [{ enteredAt: e.enteredAt, exitedAt: null, entryPrice: e.entryPrice, exitPrice: null }];
     }
     document.getElementById("popup-overlay").classList.add("active");
     // Show back-to-map button only when launched from the bubble map
@@ -2945,10 +2938,11 @@
     }
     document.getElementById("popup-ticker").textContent = ticker;
     document.getElementById("popup-meta").textContent =
-      company + "  \u00b7  " + sector + "  \u00b7  " + industry;
-    // Sync popup window buttons to the global chart window
+      [company, sector, industry].filter(Boolean).join("  \u00b7  ");
+    // Sync popup window buttons to this popup's actual window (may differ from
+    // the main table's currentWindow when windowOverride was passed).
     document.querySelectorAll(".popup-window-btn").forEach(b => {
-      b.classList.toggle("active", b.textContent.trim() === currentWindow);
+      b.classList.toggle("active", b.textContent.trim() === currentPopupWindow);
     });
     ["score-composite","score-sentiment","score-trust","score-impact"].forEach(id => {
       document.getElementById(id).textContent = "--";
@@ -3062,6 +3056,7 @@
     document.getElementById("popup-back-btn").style.display = "none";
     currentPopupTicker = "";
     _tradeMarkers = null;
+    _popupNavKind = "ticker";
     _lastPopupData = null;
     // Reset indicator toggles
     _activeSMAs.clear();
@@ -3283,9 +3278,12 @@
     const evColors = evRaw.map(v => v ? ((EVENT_META[v.event_type] || {}).color || "#888") : "transparent");
     const evRadii  = evRaw.map(v => v ? 7 : 0);
 
-    // Trade entry/exit markers — injected when popup opened via openTradeChart
+    // Trade entry/exit markers — injected when popup opened via openTradeChart /
+    // openTradeChartForRow. _tradeMarkers is an array so every trade taken on this
+    // ticker that day (not just the one clicked) gets its own entry/exit triangle,
+    // all drawn into one dataset keyed by axis position.
     let tradeDataset = null;
-    if (_tradeMarkers && isPopup) {
+    if (_tradeMarkers && _tradeMarkers.length && isPopup) {
       const pKnown = rawPFilled.filter(v => v != null);
       const pLo = pKnown.length ? Math.min(...pKnown) : 0;
       const pHi = pKnown.length ? Math.max(...pKnown) : 1;
@@ -3307,21 +3305,44 @@
         return sh + ":" + sm;
       };
 
-      const entryKey = _tradeMarkers.enteredAt ? toAxisKey(_tradeMarkers.enteredAt) : null;
-      const exitKey  = _tradeMarkers.exitedAt  ? toAxisKey(_tradeMarkers.exitedAt)  : null;
+      const tmY     = axisKeys.map(() => null);
+      const tmRaw   = axisKeys.map(() => null);
+      const tmColor = axisKeys.map(() => "transparent");
+      const tmRot   = axisKeys.map(() => 0);
+      const tmRad   = axisKeys.map(() => 0);
 
-      // If exit price wasn't stored (429 at exit time), recover it from chart bar data
-      let exitPrice = _tradeMarkers.exitPrice;
-      if (exitPrice == null && exitKey) {
-        const exitIdx = axisKeys.indexOf(exitKey);
-        if (exitIdx !== -1 && rawPFilled[exitIdx] != null) exitPrice = rawPFilled[exitIdx];
-      }
+      _tradeMarkers.forEach(tm => {
+        const entryKey = tm.enteredAt ? toAxisKey(tm.enteredAt) : null;
+        const exitKey  = tm.exitedAt  ? toAxisKey(tm.exitedAt)  : null;
 
-      const tmY     = axisKeys.map(k => k===entryKey ? normTrade(_tradeMarkers.entryPrice) : (exitKey && k===exitKey) ? normTrade(exitPrice) : null);
-      const tmRaw   = axisKeys.map(k => k===entryKey ? "▲ ENTRY $"+_tradeMarkers.entryPrice : (exitKey && k===exitKey) ? "▼ EXIT $"+exitPrice : null);
-      const tmColor = axisKeys.map(k => k===entryKey ? "#4ade80" : (exitKey && k===exitKey) ? "#f87171" : "transparent");
-      const tmRot   = axisKeys.map(k => k===entryKey ? 0 : 180);
-      const tmRad   = axisKeys.map(k => (k===entryKey || (exitKey && k===exitKey)) ? 11 : 0);
+        // If exit price wasn't stored (429 at exit time), recover it from chart bar data
+        let exitPrice = tm.exitPrice;
+        if (exitPrice == null && exitKey) {
+          const exitIdx = axisKeys.indexOf(exitKey);
+          if (exitIdx !== -1 && rawPFilled[exitIdx] != null) exitPrice = rawPFilled[exitIdx];
+        }
+
+        if (entryKey) {
+          const idx = axisKeys.indexOf(entryKey);
+          if (idx !== -1) {
+            tmY[idx] = normTrade(tm.entryPrice);
+            tmRaw[idx] = "▲ ENTRY $" + tm.entryPrice;
+            tmColor[idx] = "#4ade80";
+            tmRot[idx] = 0;
+            tmRad[idx] = 11;
+          }
+        }
+        if (exitKey && exitPrice != null) {
+          const idx = axisKeys.indexOf(exitKey);
+          if (idx !== -1) {
+            tmY[idx] = normTrade(exitPrice);
+            tmRaw[idx] = "▼ EXIT $" + exitPrice;
+            tmColor[idx] = "#f87171";
+            tmRot[idx] = 180;
+            tmRad[idx] = 11;
+          }
+        }
+      });
 
       tradeDataset = {
         label: "Trade", data: tmY, rawData: tmRaw,
@@ -3971,7 +3992,7 @@
       const pnlDisp  = pnl == null ? "--" : (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2);
       const srcDisp  = t.source === "manual" ? "Manual" : "Auto";
       const statusDisp = t._status === "Open" ? '<span class="up">● Open</span>' : "Closed";
-      return `<tr onclick="openTradePopupAt(${i})" style="cursor:pointer">
+      return `<tr onclick="openTradeChartForRow(${i})" style="cursor:pointer">
         <td class="ticker-sym">${t.ticker}</td>
         <td class="muted">${srcDisp}</td>
         <td>${statusDisp}</td>
@@ -3989,71 +4010,51 @@
     }).join("");
   }
 
-  // ── Trade detail popup — click a Trades-tab row, then step through the
-  // currently-filtered rows with Prev/Next (same pattern as the correlation
-  // view's ticker popup nav, but a separate overlay since the ticker popup's
-  // DOM is chart-specific and not reusable for plain trade fields). ──
-  let _tradeNavIdx = -1;
-
-  function _tf(label, html) {
-    return `<div><div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dimmed)">${label}</div><div style="font-size:14px;font-weight:600;margin-top:3px;color:var(--text-primary)">${html}</div></div>`;
+  // ── Trade chart popup — click a Trades-tab row to open the ticker's price
+  // chart (the same popup/chart used elsewhere) with entry/exit triangle
+  // markers for EVERY trade on that ticker that ET calendar day, not just the
+  // row clicked. Prev/Next steps through the currently-filtered rows exactly
+  // like openTradePopupAt used to, but re-fetches markers for each ticker/day
+  // instead of reusing openPopup's default ticker-nav behavior — see
+  // _popupNavKind branch in navigateCorrPopup(). ──
+  function _etDateOf(isoUtc) {
+    return new Date(isoUtc).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   }
 
-  function _renderTradePopup(t) {
-    document.getElementById("trade-popup-ticker").textContent = t.ticker;
-    document.getElementById("trade-popup-meta").textContent =
-      (t.source === "manual" ? "Manual" : "Auto") + " · " + (t._status === "Open" ? "Open position" : "Closed trade");
-
-    const ret     = t.return_pct;
-    const retHtml = ret == null ? "--" : `<span class="${ret >= 0 ? "up" : "down"}">${(ret >= 0 ? "+" : "") + ret}%</span>`;
-    const pnl     = t.pnl_dollars;
-    const pnlHtml = pnl == null ? "--" : `<span class="${pnl >= 0 ? "up" : "down"}">${(pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2)}</span>`;
-    const statusHtml = t._status === "Open" ? '<span class="up">● Open</span>' : "Closed";
-
-    document.getElementById("trade-popup-body").innerHTML = [
-      _tf("Status", statusHtml),
-      _tf("Source", t.source === "manual" ? "Manual" : "Auto"),
-      _tf("Entry Price", t.entry_price != null ? "$" + t.entry_price : "--"),
-      _tf("Exit Price",  t.exit_price  != null ? "$" + t.exit_price  : "--"),
-      _tf("Return %", retHtml),
-      _tf("PnL $", pnlHtml),
-      _tf("Entry Density", t.entry_density != null ? t.entry_density + " msgs/hr" : "--"),
-      _tf("Exit Density",  t.exit_density  != null ? t.exit_density  + " msgs/hr" : "--"),
-      _tf("Entry Corr", t.entry_corr != null ? t.entry_corr + "%" : "--"),
-      _tf("Exit Corr",  t.exit_corr  != null ? t.exit_corr  + "%" : "--"),
-      _tf("Exit Reason", _fmtExitReason(t.exit_reason)),
-      _tf("Market Cap", t.market_cap_bucket || "--"),
-      _tf("Entered (ET)", t.entered_at_et || "--"),
-      _tf("Exited (ET)",  t.exited_at_et  || "--"),
-    ].join("");
-  }
-
-  function openTradePopupAt(idx) {
+  async function openTradeChartForRow(idx) {
     if (idx < 0 || idx >= _tradeNavRows.length) return;
-    _tradeNavIdx = idx;
-    _renderTradePopup(_tradeNavRows[idx]);
+    const t   = _tradeNavRows[idx];
+    const day = _etDateOf(t.exited_at || t.entered_at);
 
-    const wrap = document.getElementById("trade-popup-nav-wrap");
-    const pos  = document.getElementById("trade-popup-nav-pos");
-    const prev = document.getElementById("trade-popup-nav-prev");
-    const next = document.getElementById("trade-popup-nav-next");
-    if (_tradeNavRows.length > 1) {
-      wrap.classList.add("active");
-      pos.textContent = (idx + 1) + " / " + _tradeNavRows.length;
-      prev.disabled = idx <= 0;
-      next.disabled = idx >= _tradeNavRows.length - 1;
-    } else {
-      wrap.classList.remove("active");
+    try {
+      const params = new URLSearchParams({ ticker: t.ticker, date_from: day, date_to: day });
+      const res    = await fetch("/api/trades?" + params.toString());
+      const data   = res.ok ? await res.json() : { active: [], completed: [] };
+      const dayTrades = [...(data.active || []), ...(data.completed || [])];
+      _tradeMarkers = dayTrades.map(dt => ({
+        enteredAt:  dt.entered_at,
+        exitedAt:   dt.exited_at,
+        entryPrice: dt.entry_price,
+        exitPrice:  dt.exit_price,
+      }));
+    } catch(e) {
+      console.error("[trade-chart]", e);
+      // Fall back to just the clicked trade so the chart still opens with something.
+      _tradeMarkers = [{ enteredAt: t.entered_at, exitedAt: t.exited_at, entryPrice: t.entry_price, exitPrice: t.exit_price }];
     }
-    document.getElementById("trade-popup-overlay").classList.add("active");
-  }
 
-  function navigateTradePopup(dir) {
-    openTradePopupAt(_tradeNavIdx + dir);
-  }
+    _popupNavKind = "trade";
+    const ret     = t.return_pct;
+    const retTxt  = ret == null ? "--" : (ret >= 0 ? "+" : "") + ret + "%";
+    const pnl     = t.pnl_dollars;
+    const pnlTxt  = pnl == null ? "--" : (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2);
+    const srcTxt  = t.source === "manual" ? "Manual" : "Auto";
+    const statusTxt = t._status === "Open" ? "Open" : "Closed";
+    const meta = `${srcTxt} · ${statusTxt} · Return ${retTxt} · PnL ${pnlTxt} · Exit: ${_fmtExitReason(t.exit_reason)}`;
 
-  function closeTradePopup() {
-    document.getElementById("trade-popup-overlay").classList.remove("active");
+    // "1d" so the entry/exit markers are guaranteed visible regardless of
+    // whatever window the main table happens to be on.
+    openPopup(t.ticker, meta, "", "", _tradeNavRows, idx, "1d");
   }
 
   // ── Trade Calendar — per-day PnL rollup, click a day to filter the Trades
@@ -4790,8 +4791,9 @@
   }
 
   function openTradeChart(ticker, entered_at, exited_at, entry_price, exit_price) {
-    _tradeMarkers = { enteredAt: entered_at, exitedAt: exited_at, entryPrice: entry_price, exitPrice: exit_price };
-    openPopup(ticker, "", "", "");
+    _tradeMarkers = [{ enteredAt: entered_at, exitedAt: exited_at, entryPrice: entry_price, exitPrice: exit_price }];
+    _popupNavKind = "ticker";
+    openPopup(ticker, "", "", "", null, null, "1d");
   }
 
   const _confirmTimers = {};
@@ -4942,6 +4944,7 @@
   function openCorrPopupAt(idx) {
     const t = _corrNavTickers[idx];
     if (!t) return;
+    _popupNavKind = "ticker";
     openPopup(t.ticker, t.company || "", t.sector || "", t.industry || "", _corrNavTickers, idx);
   }
 
