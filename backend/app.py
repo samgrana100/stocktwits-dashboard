@@ -164,6 +164,14 @@ def refresh_finviz_token() -> bool:
 pipeline_thread    = None
 pipeline_stop_flag = [False]
 
+# Auto-trade loop thread — tracked the same way as pipeline_thread so the shared
+# watchdog below (see _pipeline_watchdog) can also detect and restart it if it
+# ever dies unexpectedly. There's no manual stop endpoint for this one (unlike
+# the pipeline's /api/pipeline/stop), so auto_trade_stop_flag[0] never gets set
+# intentionally today — a dead thread always means "restart it."
+auto_trade_thread    = None
+auto_trade_stop_flag = [False]
+
 # Set once at import time. /api/pipeline/status uses this for a boot grace period —
 # without it, a brand-new process reports unhealthy on the very first healthcheck hit
 # (last_seen_alive_at is still None right after boot, before the pipeline thread has
@@ -191,6 +199,18 @@ pipeline_health = {
     # to tell "the watchdog is ticking" apart from "we just happened to check").
     "watchdog_ticks":      0,
     "last_watchdog_tick_at": None,
+}
+
+# Same shape as pipeline_health, for the auto-trade loop thread. Shares the
+# pipeline's watchdog_ticks/last_watchdog_tick_at (one shared watchdog loop
+# checks both threads each tick) rather than duplicating those two fields.
+auto_trade_health = {
+    "last_start_at":      None,
+    "last_seen_alive_at": None,
+    "last_crash_at":      None,
+    "last_crash_type":    None,
+    "last_crash_error":   None,
+    "crash_count":        0,
 }
 
 PIPELINE_DOWN_GRACE_SECONDS = 120  # how long /api/pipeline/status tolerates a stopped
@@ -2504,7 +2524,21 @@ def pipeline_status():
     running = pipeline_thread is not None and pipeline_thread.is_alive()
     if running:
         pipeline_health["last_seen_alive_at"] = get_timestamp()
-    payload = {"running": running, **pipeline_health}
+    auto_trade_running = auto_trade_thread is not None and auto_trade_thread.is_alive()
+    if auto_trade_running:
+        auto_trade_health["last_seen_alive_at"] = get_timestamp()
+    # auto_trade health is surfaced here for visibility only — it does NOT affect
+    # this endpoint's HTTP status below. That 503 path is what Railway's restart
+    # policy acts on; folding a second, independently-healing subsystem into it
+    # would need its own carefully-tuned grace period or risk exactly the kind of
+    # self-inflicted crash loop already fixed for the pipeline itself. The
+    # watchdog already restarts this thread on its own — this is just so a human
+    # (or a future alert) can see it happened.
+    payload = {
+        "running": running,
+        **pipeline_health,
+        "auto_trade": {"running": auto_trade_running, **auto_trade_health},
+    }
 
     # Report unhealthy to Railway's healthcheck only once the pipeline has been down
     # for longer than PIPELINE_DOWN_GRACE_SECONDS, and only when it wasn't stopped on
@@ -2876,6 +2910,37 @@ def run_auto_trade_loop(stop_flag: list):
     print("[AUTO TRADE] Stopped.")
 
 
+def _launch_auto_trade_thread():
+    """Starts run_auto_trade_loop in a background thread with the same crash-
+    logging pattern as _launch_pipeline_thread() — run_auto_trade_loop's own
+    while loop already isolates per-tick errors (a single bad _check_auto_trades
+    call can't kill the thread), so the except BaseException here only catches
+    something that escapes that loop entirely. Without this, a dead auto-trade
+    thread would be a completely silent failure: trades just stop happening,
+    with nothing in the logs and no way to notice short of checking manually."""
+    global auto_trade_thread, auto_trade_stop_flag
+    auto_trade_stop_flag = [False]
+    stop_flag_ref = auto_trade_stop_flag
+
+    def _run():
+        auto_trade_health["last_start_at"]      = get_timestamp()
+        auto_trade_health["last_seen_alive_at"] = get_timestamp()
+        _log_pipeline_event("auto_trade_started")
+        try:
+            run_auto_trade_loop(stop_flag_ref)
+        except BaseException as e:
+            auto_trade_health["last_crash_at"]    = get_timestamp()
+            auto_trade_health["last_crash_type"]  = type(e).__name__
+            auto_trade_health["last_crash_error"] = str(e)
+            auto_trade_health["crash_count"]     += 1
+            print(f"[AUTO TRADE] CRASHED ({type(e).__name__}): {e}")
+            print(traceback.format_exc())
+            _log_pipeline_event("auto_trade_crashed", f"{type(e).__name__}: {e}")
+
+    auto_trade_thread = threading.Thread(target=_run, daemon=True)
+    auto_trade_thread.start()
+
+
 def run_scorer_loop(stop_flag: list):
     """Runs the score calculator continuously in a background thread."""
     print("[SCORER THREAD] Starting continuous scoring loop...")
@@ -2988,8 +3053,7 @@ def _start_background_services():
     threading.Thread(target=run_scorer_loop, args=(_scorer_stop,), daemon=True).start()
     print("[APP] Score calculator started automatically.")
 
-    _auto_stop = [False]
-    threading.Thread(target=run_auto_trade_loop, args=(_auto_stop,), daemon=True).start()
+    _launch_auto_trade_thread()
     print("[APP] Auto trade loop started.")
 
     threading.Thread(target=_backfill_screener_snapshots, daemon=True).start()
@@ -2998,11 +3062,12 @@ def _start_background_services():
     _launch_pipeline_thread()
     print("[APP] Pipeline started automatically.")
 
-    # Watchdog: polls every 30 s and restarts the pipeline if it died unexpectedly.
-    # Checks pipeline_stop_flag so a manual /api/pipeline/stop is never auto-restarted.
-    # The whole loop body is wrapped in try/except so the watchdog itself can never
-    # go silent the way the pipeline thread did — any unexpected error here still
-    # gets logged and the loop keeps polling instead of dying quietly.
+    # Watchdog: polls every 30 s and restarts the pipeline (and, below, the
+    # auto-trade loop) if either died unexpectedly. Checks each thread's own
+    # stop_flag so an intentional stop is never auto-restarted. The whole loop
+    # body is wrapped in try/except so the watchdog itself can never go silent
+    # the way a monitored thread did — any unexpected error here still gets
+    # logged and the loop keeps polling instead of dying quietly.
     def _pipeline_watchdog():
         while True:
             time.sleep(30)
@@ -3017,6 +3082,20 @@ def _start_background_services():
                     print("[APP] Pipeline watchdog: thread died unexpectedly, restarting.")
                     _log_pipeline_event("watchdog_restart")
                     _launch_pipeline_thread()
+
+                # Auto-trade thread — same self-healing, checked in the same tick
+                # so there's one watchdog loop to reason about instead of two.
+                # No manual stop exists for this thread today, so
+                # auto_trade_stop_flag[0] is never intentionally True — a dead
+                # thread always means "restart it."
+                auto_stopped_intentionally = auto_trade_stop_flag and auto_trade_stop_flag[0]
+                auto_alive = auto_trade_thread is not None and auto_trade_thread.is_alive()
+                if auto_alive:
+                    auto_trade_health["last_seen_alive_at"] = get_timestamp()
+                if not auto_stopped_intentionally and not auto_alive:
+                    print("[APP] Auto-trade watchdog: thread died unexpectedly, restarting.")
+                    _log_pipeline_event("auto_trade_watchdog_restart")
+                    _launch_auto_trade_thread()
             except BaseException as e:
                 print(f"[APP] Pipeline watchdog error ({type(e).__name__}): {e}")
                 print(traceback.format_exc())
