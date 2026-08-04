@@ -1305,6 +1305,14 @@
               <span id="auto-entry-max-off-peak-status" class="auto-settings-status"></span>
             </div>
           </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="For a ticker that already exited today: re-entry requires density to bounce this % above the lowest reading seen since that exit. Replaces a noisy tick-to-tick rising check that kept re-entering during an overall decline. Only applies after a same-day exit — first entries are unaffected.">Re-entry Trough Bounce ≥</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-entry-trough-bounce" type="number" min="1" max="99" step="1" onchange="applyAutoEntryTroughBounce()">
+              <span class="auto-settings-unit">%</span>
+              <span id="auto-entry-trough-bounce-status" class="auto-settings-status"></span>
+            </div>
+          </div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px">
@@ -1451,6 +1459,9 @@
         <label class="corr-ctrl-label">To (ET)
           <input type="time" id="trades-filter-time-to" onchange="fetchTrades()">
         </label>
+        <label class="corr-ctrl-label">Entry Corr ≥
+          <input type="number" id="trades-filter-entry-corr" min="0" max="100" step="1" style="width:46px" onchange="fetchTrades()">
+        </label>
         <label class="corr-ctrl-label">Entry Density ≥
           <input type="number" id="trades-filter-entry-density" min="0" step="1" style="width:46px" onchange="fetchTrades()">
         </label>
@@ -1468,23 +1479,24 @@
       <table id="trades-table">
         <thead>
           <tr>
-            <th style="cursor:default">Ticker</th>
-            <th style="cursor:default">Source</th>
-            <th style="cursor:default">Status</th>
-            <th style="cursor:default">Entry $</th>
-            <th style="cursor:default">Exit $</th>
-            <th style="cursor:default">Return %</th>
-            <th style="cursor:default">PnL $</th>
-            <th style="cursor:default">Entry Density</th>
-            <th style="cursor:default">Exit Density</th>
-            <th style="cursor:default">Exit Reason</th>
-            <th style="cursor:default">Entered (ET)</th>
-            <th style="cursor:default">Exited (ET)</th>
-            <th style="cursor:default">Mkt Cap</th>
+            <th onclick="sortTradesTable('ticker')">Ticker</th>
+            <th onclick="sortTradesTable('source')">Source</th>
+            <th onclick="sortTradesTable('_status')">Status</th>
+            <th onclick="sortTradesTable('entry_price')">Entry $</th>
+            <th onclick="sortTradesTable('exit_price')">Exit $</th>
+            <th onclick="sortTradesTable('return_pct')">Return %</th>
+            <th onclick="sortTradesTable('pnl_dollars')">PnL $</th>
+            <th onclick="sortTradesTable('entry_corr')">Entry Corr</th>
+            <th onclick="sortTradesTable('entry_density')">Entry Density</th>
+            <th onclick="sortTradesTable('exit_density')">Exit Density</th>
+            <th onclick="sortTradesTable('exit_reason')">Exit Reason</th>
+            <th onclick="sortTradesTable('entered_at')">Entered (ET)</th>
+            <th onclick="sortTradesTable('exited_at')">Exited (ET)</th>
+            <th onclick="sortTradesTable('market_cap_bucket')">Mkt Cap</th>
           </tr>
         </thead>
         <tbody id="trades-table-body">
-          <tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
+          <tr><td colspan="14" style="text-align:center;padding:40px;color:var(--text-muted)">Loading trades...</td></tr>
         </tbody>
       </table>
     </div>
@@ -4004,6 +4016,7 @@
     document.getElementById("trades-filter-cap").value           = "all";
     document.getElementById("trades-filter-time-from").value     = "";
     document.getElementById("trades-filter-time-to").value       = "";
+    document.getElementById("trades-filter-entry-corr").value    = "";
     document.getElementById("trades-filter-entry-density").value = "";
     document.getElementById("trades-filter-exit-density").value  = "";
     document.getElementById("trades-filter-ticker").value        = "";
@@ -4021,6 +4034,7 @@
       const cap     = document.getElementById("trades-filter-cap").value;
       const tFrom   = document.getElementById("trades-filter-time-from").value;
       const tTo     = document.getElementById("trades-filter-time-to").value;
+      const corrMin = document.getElementById("trades-filter-entry-corr").value;
       const entMin  = document.getElementById("trades-filter-entry-density").value;
       const exMin   = document.getElementById("trades-filter-exit-density").value;
       const ticker  = document.getElementById("trades-filter-ticker").value.trim();
@@ -4029,6 +4043,7 @@
       if (cap    !== "all") params.set("cap", cap);
       if (tFrom) params.set("time_from", tFrom);
       if (tTo)   params.set("time_to", tTo);
+      if (corrMin !== "") params.set("entry_corr_min", corrMin);
       if (entMin !== "") params.set("entry_density_min", entMin);
       if (exMin  !== "") params.set("exit_density_min", exMin);
       if (ticker) params.set("ticker", ticker);
@@ -4037,6 +4052,7 @@
       const res  = await fetch("/api/trades?" + params.toString());
       if (!res.ok) return;
       const data = await res.json();
+      _lastTradesData = data;
       renderTradesTable(data);
     } catch(e) { console.error("[trades]", e); }
   }
@@ -4048,7 +4064,43 @@
     return reason.split("+").map(r => r === "sma_off_peak" ? "SMA" : r === "density_off_peak" ? "Density" : r).join(" + ");
   }
 
-  let _tradeNavRows = [];
+  let _tradeNavRows   = [];
+  let _lastTradesData = null;
+
+  // ── Trades table sorting — click a header to sort by that column, click again
+  // to reverse; mirrors the main dashboard table's sortTable()/sort-arrow style
+  // but as a single-key sort (no shift-click multi-sort — the trades table's
+  // columns don't need tie-breaking the way the main table's do).
+  let _tradesSortKey = null;  // null => default: most-recent-first by exit/entry time
+  let _tradesSortAsc = false;
+  const TRADES_TEXT_SORT_KEYS = ["ticker", "source", "_status", "exit_reason", "market_cap_bucket"];
+
+  function sortTradesTable(key) {
+    if (_tradesSortKey === key) {
+      _tradesSortAsc = !_tradesSortAsc;
+    } else {
+      _tradesSortKey = key;
+      _tradesSortAsc = TRADES_TEXT_SORT_KEYS.includes(key);
+    }
+    updateTradesSortHeaders();
+    if (_lastTradesData) renderTradesTable(_lastTradesData);
+  }
+
+  function updateTradesSortHeaders() {
+    const ths = document.querySelectorAll("#trades-table thead th");
+    ths.forEach(th => {
+      th.classList.remove("sort-active");
+      th.querySelectorAll(".sort-arrow").forEach(el => el.remove());
+    });
+    if (!_tradesSortKey) return;
+    const th = Array.from(ths).find(el => el.getAttribute("onclick") === `sortTradesTable('${_tradesSortKey}')`);
+    if (!th) return;
+    th.classList.add("sort-active");
+    const span = document.createElement("span");
+    span.className = "sort-arrow";
+    span.textContent = _tradesSortAsc ? " ▲" : " ▼";
+    th.appendChild(span);
+  }
 
   function renderTradesTable(data) {
     const body   = document.getElementById("trades-table-body");
@@ -4056,11 +4108,27 @@
     const totalsEl = document.getElementById("trades-totals");
     const active    = (data.active    || []).map(t => ({...t, _status: "Open"}));
     const completed = (data.completed || []).map(t => ({...t, _status: "Closed"}));
-    const rows = [...active, ...completed].sort((a, b) => {
-      const aT = a.exited_at || a.entered_at || "";
-      const bT = b.exited_at || b.entered_at || "";
-      return bT.localeCompare(aT);
-    });
+    const rows = [...active, ...completed];
+    if (_tradesSortKey) {
+      const key    = _tradesSortKey;
+      const isText = TRADES_TEXT_SORT_KEYS.includes(key);
+      rows.sort((a, b) => {
+        let av = a[key], bv = b[key];
+        if (av == null && bv == null) return 0;
+        if (av == null) return 1;   // nulls always sort last, regardless of direction
+        if (bv == null) return -1;
+        if (isText) { av = String(av).toLowerCase(); bv = String(bv).toLowerCase(); }
+        if (av < bv) return _tradesSortAsc ? -1 : 1;
+        if (av > bv) return _tradesSortAsc ? 1 : -1;
+        return 0;
+      });
+    } else {
+      rows.sort((a, b) => {
+        const aT = a.exited_at || a.entered_at || "";
+        const bT = b.exited_at || b.entered_at || "";
+        return bT.localeCompare(aT);
+      });
+    }
     _tradeNavRows = rows;
     count.textContent = rows.length + " trade" + (rows.length !== 1 ? "s" : "");
 
@@ -4076,7 +4144,7 @@
     }
 
     if (!rows.length) {
-      body.innerHTML = '<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
+      body.innerHTML = '<tr><td colspan="14" style="text-align:center;padding:40px;color:var(--text-muted)">No trades match these filters.</td></tr>';
       return;
     }
 
@@ -4097,6 +4165,7 @@
         <td>${t.exit_price  != null ? "$" + t.exit_price  : "--"}</td>
         <td class="${retCls}">${retDisp}</td>
         <td class="${pnlCls}">${pnlDisp}</td>
+        <td class="muted">${t.entry_corr != null ? t.entry_corr + "%" : "--"}</td>
         <td class="muted">${t.entry_density != null ? t.entry_density : "--"}</td>
         <td class="muted">${t.exit_density  != null ? t.exit_density  : "--"}</td>
         <td class="muted">${_fmtExitReason(t.exit_reason)}</td>
@@ -4742,6 +4811,7 @@
         setNum("auto-entry-corr",         c.entry_corr,          100);
         setNum("auto-entry-min-dens",     c.entry_min_dens);
         setNum("auto-entry-max-off-peak", c.entry_max_off_peak,  100);
+        setNum("auto-entry-trough-bounce", c.entry_trough_bounce, 100);
         setNum("auto-exit-density-peak",  c.exit_peak,           100);
         setNum("auto-exit-min-drop",     c.exit_min_drop);
         setNum("auto-exit-sma-peak",     c.exit_sma_peak,  100);
@@ -4790,6 +4860,13 @@
     if (isNaN(val)) return;
     const cfg = await _postAutoConfig({ entry_max_off_peak: val / 100 });
     if (cfg) _flashStatus(document.getElementById("auto-entry-max-off-peak-status"), `✓ ${Math.round(cfg.entry_max_off_peak * 100)}%`, true);
+  }
+
+  async function applyAutoEntryTroughBounce() {
+    const val = parseFloat(document.getElementById("auto-entry-trough-bounce").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ entry_trough_bounce: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-entry-trough-bounce-status"), `✓ ${Math.round(cfg.entry_trough_bounce * 100)}%`, true);
   }
 
   async function applyAutoExitSmaPeak() {

@@ -68,6 +68,12 @@ AUTO_ENTRY_MIN_DENS  = 4    # minimum msgs/hr (1h rolling) to enter
 # below), independent of trading hours, so a fresh move late in the day still
 # enters fine while a stale one doesn't, regardless of the clock.
 AUTO_ENTRY_MAX_OFF_PEAK = 0.35  # max % current density may sit below today's session peak to still enter
+# Gates RE-entry on a ticker that already exited today: density must bounce this %
+# above the lowest rolling density seen SINCE that exit (see _post_exit_density_trough
+# below), not just tick up from whatever the immediately-prior minute happened to read.
+# Replaces the old blanket "count_20m > count_prior_20m" check for these tickers, which
+# fired on ordinary noise and kept re-entering during an overall afternoon decline.
+AUTO_ENTRY_TROUGH_BOUNCE = 0.07  # min % bounce off post-exit trough density to re-enter
 AUTO_EXIT_PEAK       = 0.20  # density % off peak to exit
 AUTO_EXIT_MIN_DROP   = 6    # minimum absolute message drop before exit fires
 AUTO_EXIT_SMA_PEAK   = 0.10  # price SMA % off peak to exit
@@ -233,6 +239,14 @@ auto_trade_health = {
 # the ET calendar date changes so yesterday's peak never blocks today's entries.
 _session_peak_density = {}
 _session_peak_date    = None
+
+# Lowest rolling density seen since a ticker's most recent exit today, for
+# AUTO_ENTRY_TROUGH_BOUNCE — seeded at exit-time density when a trade closes,
+# then ratcheted down each entry-loop tick until the ticker re-enters. A ticker
+# with no entry here today has never exited, so the trough-bounce gate simply
+# doesn't apply to it (first entries keep using density_rising). Reset on ET
+# calendar date change alongside _session_peak_density.
+_post_exit_density_trough = {}
 
 PIPELINE_DOWN_GRACE_SECONDS = 120  # how long /api/pipeline/status tolerates a stopped
                                    # pipeline before reporting unhealthy to Railway's
@@ -2035,6 +2049,7 @@ def _auto_trade_config_dict() -> dict:
         "entry_corr":            AUTO_ENTRY_CORR,
         "entry_min_dens":        AUTO_ENTRY_MIN_DENS,
         "entry_max_off_peak":    AUTO_ENTRY_MAX_OFF_PEAK,
+        "entry_trough_bounce":   AUTO_ENTRY_TROUGH_BOUNCE,
         "exit_peak":             AUTO_EXIT_PEAK,
         "exit_min_drop":         AUTO_EXIT_MIN_DROP,
         "exit_sma_peak":         AUTO_EXIT_SMA_PEAK,
@@ -2048,7 +2063,7 @@ def _auto_trade_config_dict() -> dict:
 # Allows the frontend to adjust entry/exit thresholds without restarting the server.
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
-    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_ENTRY_MAX_OFF_PEAK, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, \
+    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_ENTRY_MAX_OFF_PEAK, AUTO_ENTRY_TROUGH_BOUNCE, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, \
         AUTO_EXIT_DENSITY_ENABLED, AUTO_EXIT_SMA_ENABLED, TRADE_POSITION_SIZE, REENTRY_COOLDOWN
     data = request.get_json(force=True) or {}
     try:
@@ -2064,6 +2079,10 @@ def set_auto_trade_config():
             val = float(data["entry_max_off_peak"])
             if 0.0 < val <= 1.0:
                 AUTO_ENTRY_MAX_OFF_PEAK = round(val, 2)
+        if "entry_trough_bounce" in data:
+            val = float(data["entry_trough_bounce"])
+            if 0.0 < val <= 1.0:
+                AUTO_ENTRY_TROUGH_BOUNCE = round(val, 2)
         if "exit_peak" in data:
             val = float(data["exit_peak"])
             if 0.0 < val <= 1.0:
@@ -2298,6 +2317,7 @@ def get_trades_endpoint():
     date_to   = request.args.get("date_to") or None
     entry_density_min = request.args.get("entry_density_min", type=int)
     exit_density_min  = request.args.get("exit_density_min", type=int)
+    entry_corr_min    = request.args.get("entry_corr_min", type=int)
     limit  = min(request.args.get("limit", 200, type=int) or 200, 500)
 
     def base_filter():
@@ -2310,6 +2330,8 @@ def get_trades_endpoint():
             f["market_cap_bucket"] = cap
         if entry_density_min is not None:
             f["entry_density"] = {"$gte": entry_density_min}
+        if entry_corr_min is not None:
+            f["entry_corr"] = {"$gte": entry_corr_min}
         return f
 
     active_docs, completed_docs = [], []
@@ -2770,7 +2792,7 @@ def apply_screener():
 # Core decision loop: checks every active position for an exit signal, then
 # evaluates all screener tickers for an entry signal. Called on AUTO_LOOP_SEC cadence.
 def _check_auto_trades():
-    global _session_peak_density, _session_peak_date
+    global _session_peak_density, _session_peak_date, _post_exit_density_trough
     now_utc   = datetime.now(timezone.utc)
 
     # Only run during extended trading hours: 4:00–20:00 ET (Mon–Fri)
@@ -2785,8 +2807,9 @@ def _check_auto_trades():
 
     today_et = now_et.strftime("%Y-%m-%d")
     if _session_peak_date != today_et:
-        _session_peak_density = {}
-        _session_peak_date    = today_et
+        _session_peak_density     = {}
+        _post_exit_density_trough = {}
+        _session_peak_date        = today_et
 
     finviz    = get_finviz_data()
     window_1h  = get_window_start_iso(60)
@@ -2899,6 +2922,10 @@ def _check_auto_trades():
                 "pnl_dollars":       pnl_dollars,
             })
             auto_trades.delete_one({"ticker": ticker, "status": "active"})
+            # Seed the post-exit trough at this exit's density — AUTO_ENTRY_TROUGH_BOUNCE
+            # requires a re-entry on this ticker to bounce up from whatever low point
+            # density reaches from here, not just from this exit-time reading itself.
+            _post_exit_density_trough[ticker] = total_msgs
             drop_pct    = round((peak - total_msgs) / peak * 100, 1) if peak else 0
             sma_drop_pct = round((peak_sma - current_sma) / peak_sma * 100, 1) if (peak_sma and current_sma is not None) else 0
             print(f"[AUTO TRADE] EXIT {ticker} | reason={exit_reason} | peak={peak} density={total_msgs} drop={peak - total_msgs} ({drop_pct}%) | peak_sma={peak_sma} sma={current_sma} ({sma_drop_pct}%) | price={current_price} | return: {ret_str}")
@@ -2927,16 +2954,27 @@ def _check_auto_trades():
             ((session_peak - total_msgs) / session_peak) < AUTO_ENTRY_MAX_OFF_PEAK
         )
 
-        # density_rising: last 20 min vs prior 20 min — blocks entries when both density and price are declining
-        count_20m = scored_messages.count_documents({
-            "ticker":         ticker,
-            "created_at_utc": {"$gte": window_20m}
-        })
-        count_prior_20m = scored_messages.count_documents({
-            "ticker":         ticker,
-            "created_at_utc": {"$gte": window_40m, "$lt": window_20m}
-        })
-        density_rising = count_20m > count_prior_20m
+        # Tickers with no exit yet today have no trough to bounce off of — fall back
+        # to the original "last 20 min vs prior 20 min" rising check for those.
+        # Tickers that already exited today use AUTO_ENTRY_TROUGH_BOUNCE instead:
+        # noisy tick-to-tick upticks kept re-triggering the old check throughout an
+        # overall afternoon decline, so re-entry now requires density to have
+        # genuinely bounced off the low point reached since that exit.
+        trough = _post_exit_density_trough.get(ticker)
+        if trough is None:
+            count_20m = scored_messages.count_documents({
+                "ticker":         ticker,
+                "created_at_utc": {"$gte": window_20m}
+            })
+            count_prior_20m = scored_messages.count_documents({
+                "ticker":         ticker,
+                "created_at_utc": {"$gte": window_40m, "$lt": window_20m}
+            })
+            density_rising = count_20m > count_prior_20m
+        else:
+            density_rising = trough <= 0 or ((total_msgs - trough) / trough) >= AUTO_ENTRY_TROUGH_BOUNCE
+            if total_msgs < trough:
+                _post_exit_density_trough[ticker] = total_msgs
 
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
