@@ -1297,6 +1297,14 @@
               <span id="auto-min-dens-status" class="auto-settings-status"></span>
             </div>
           </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Blocks entry if current density is already down this % from the ticker's own session-so-far peak — catches a local bounce inside a longer decline, at any hour">Max % Off Session Peak</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-entry-max-off-peak" type="number" min="1" max="99" step="1" onchange="applyAutoEntryMaxOffPeak()">
+              <span class="auto-settings-unit">%</span>
+              <span id="auto-entry-max-off-peak-status" class="auto-settings-status"></span>
+            </div>
+          </div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px">
@@ -4703,9 +4711,10 @@
           const el = document.getElementById(id);
           if (el && el !== document.activeElement && typeof val === "boolean") el.checked = val;
         };
-        setNum("auto-entry-corr",        c.entry_corr,     100);
-        setNum("auto-entry-min-dens",    c.entry_min_dens);
-        setNum("auto-exit-density-peak", c.exit_peak,      100);
+        setNum("auto-entry-corr",         c.entry_corr,          100);
+        setNum("auto-entry-min-dens",     c.entry_min_dens);
+        setNum("auto-entry-max-off-peak", c.entry_max_off_peak,  100);
+        setNum("auto-exit-density-peak",  c.exit_peak,           100);
         setNum("auto-exit-min-drop",     c.exit_min_drop);
         setNum("auto-exit-sma-peak",     c.exit_sma_peak,  100);
         setNum("auto-reentry-cooldown",  c.reentry_cooldown_min);
@@ -4746,6 +4755,13 @@
     if (isNaN(val)) return;
     const cfg = await _postAutoConfig({ entry_min_dens: val });
     if (cfg) _flashStatus(document.getElementById("auto-min-dens-status"), `✓ ${cfg.entry_min_dens}`, true);
+  }
+
+  async function applyAutoEntryMaxOffPeak() {
+    const val = parseFloat(document.getElementById("auto-entry-max-off-peak").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ entry_max_off_peak: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-entry-max-off-peak-status"), `✓ ${Math.round(cfg.entry_max_off_peak * 100)}%`, true);
   }
 
   async function applyAutoExitSmaPeak() {

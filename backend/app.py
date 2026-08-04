@@ -61,6 +61,13 @@ BUBBLE_SCREENER_TTL    = 120  # 2-minute cache to avoid rate limiting
 # price SMA falls AUTO_EXIT_SMA_PEAK % below its intra-trade peak (whichever fires first).
 AUTO_ENTRY_CORR      = 0.30  # minimum correlation to enter
 AUTO_ENTRY_MIN_DENS  = 4    # minimum msgs/hr (1h rolling) to enter
+# Blocks entries on a ticker whose density already peaked earlier today and is
+# now drifting down — a short-window density_rising blip can still fire during
+# a longer decline, which is exactly the "entering on the way down" pattern.
+# Tracked per ticker across the whole ET session (see _session_peak_density
+# below), independent of trading hours, so a fresh move late in the day still
+# enters fine while a stale one doesn't, regardless of the clock.
+AUTO_ENTRY_MAX_OFF_PEAK = 0.35  # max % current density may sit below today's session peak to still enter
 AUTO_EXIT_PEAK       = 0.20  # density % off peak to exit
 AUTO_EXIT_MIN_DROP   = 6    # minimum absolute message drop before exit fires
 AUTO_EXIT_SMA_PEAK   = 0.10  # price SMA % off peak to exit
@@ -218,6 +225,14 @@ auto_trade_health = {
     "last_crash_error":   None,
     "crash_count":        0,
 }
+
+# Session-long density peak per ticker, for AUTO_ENTRY_MAX_OFF_PEAK — tracked for
+# every ticker seen in _check_auto_trades' entry loop each tick (not just ones
+# with an open position, unlike peak_density on the trade doc itself, since this
+# needs to exist for candidate tickers before any trade exists). Reset whenever
+# the ET calendar date changes so yesterday's peak never blocks today's entries.
+_session_peak_density = {}
+_session_peak_date    = None
 
 PIPELINE_DOWN_GRACE_SECONDS = 120  # how long /api/pipeline/status tolerates a stopped
                                    # pipeline before reporting unhealthy to Railway's
@@ -2019,6 +2034,7 @@ def _auto_trade_config_dict() -> dict:
     return {
         "entry_corr":            AUTO_ENTRY_CORR,
         "entry_min_dens":        AUTO_ENTRY_MIN_DENS,
+        "entry_max_off_peak":    AUTO_ENTRY_MAX_OFF_PEAK,
         "exit_peak":             AUTO_EXIT_PEAK,
         "exit_min_drop":         AUTO_EXIT_MIN_DROP,
         "exit_sma_peak":         AUTO_EXIT_SMA_PEAK,
@@ -2032,7 +2048,7 @@ def _auto_trade_config_dict() -> dict:
 # Allows the frontend to adjust entry/exit thresholds without restarting the server.
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
-    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, \
+    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_ENTRY_MAX_OFF_PEAK, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, \
         AUTO_EXIT_DENSITY_ENABLED, AUTO_EXIT_SMA_ENABLED, TRADE_POSITION_SIZE, REENTRY_COOLDOWN
     data = request.get_json(force=True) or {}
     try:
@@ -2044,6 +2060,10 @@ def set_auto_trade_config():
             val = int(data["entry_min_dens"])
             if val >= 0:
                 AUTO_ENTRY_MIN_DENS = val
+        if "entry_max_off_peak" in data:
+            val = float(data["entry_max_off_peak"])
+            if 0.0 < val <= 1.0:
+                AUTO_ENTRY_MAX_OFF_PEAK = round(val, 2)
         if "exit_peak" in data:
             val = float(data["exit_peak"])
             if 0.0 < val <= 1.0:
@@ -2750,6 +2770,7 @@ def apply_screener():
 # Core decision loop: checks every active position for an exit signal, then
 # evaluates all screener tickers for an entry signal. Called on AUTO_LOOP_SEC cadence.
 def _check_auto_trades():
+    global _session_peak_density, _session_peak_date
     now_utc   = datetime.now(timezone.utc)
 
     # Only run during extended trading hours: 4:00–20:00 ET (Mon–Fri)
@@ -2761,6 +2782,11 @@ def _check_auto_trades():
     market_close = now_et.replace(hour=20, minute=0, second=0, microsecond=0)
     if not (market_open <= now_et < market_close):
         return
+
+    today_et = now_et.strftime("%Y-%m-%d")
+    if _session_peak_date != today_et:
+        _session_peak_density = {}
+        _session_peak_date    = today_et
 
     finviz    = get_finviz_data()
     window_1h  = get_window_start_iso(60)
@@ -2891,6 +2917,16 @@ def _check_auto_trades():
             "created_at_utc": {"$gte": window_1h}
         })
 
+        # Session-so-far peak for this ticker, independent of trading hours —
+        # blocks entries that are really just a local bounce inside a longer
+        # decline from an earlier peak today (see AUTO_ENTRY_MAX_OFF_PEAK above).
+        session_peak = max(_session_peak_density.get(ticker, 0), total_msgs)
+        _session_peak_density[ticker] = session_peak
+        not_off_session_peak = (
+            session_peak <= 0 or
+            ((session_peak - total_msgs) / session_peak) < AUTO_ENTRY_MAX_OFF_PEAK
+        )
+
         # density_rising: last 20 min vs prior 20 min — blocks entries when both density and price are declining
         count_20m = scored_messages.count_documents({
             "ticker":         ticker,
@@ -2905,7 +2941,8 @@ def _check_auto_trades():
         if (corr is not None and
                 corr >= AUTO_ENTRY_CORR and
                 total_msgs >= AUTO_ENTRY_MIN_DENS and
-                density_rising):
+                density_rising and
+                not_off_session_peak):
             # Live Finviz call right at the entry decision, same reasoning as the
             # exit side above — an accurate fill price for this exact moment.
             current_price = _current_ticker_price(ticker, finviz, live=True)
