@@ -64,8 +64,14 @@ AUTO_ENTRY_MIN_DENS  = 4    # minimum msgs/hr (1h rolling) to enter
 AUTO_EXIT_PEAK       = 0.20  # density % off peak to exit
 AUTO_EXIT_MIN_DROP   = 6    # minimum absolute message drop before exit fires
 AUTO_EXIT_SMA_PEAK   = 0.10  # price SMA % off peak to exit
+# Master on/off switches for each exit mechanism — peak tracking (peak_density/
+# peak_sma) keeps running either way so thresholds stay meaningful if re-enabled
+# mid-trade; only the resulting exit decision is suppressed when disabled.
+AUTO_EXIT_DENSITY_ENABLED = True
+AUTO_EXIT_SMA_ENABLED     = True
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
-REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker
+REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker — adjustable
+                            # live via /api/auto-trade-config (reentry_cooldown_min)
 
 # SMA window for the exit watch, in minutes. Not user-configurable (unlike the
 # threshold above) — computed from price_history, which the main ingestion pipeline
@@ -2002,14 +2008,32 @@ def get_auto_trades_endpoint():
 
     return jsonify({
         "active": active, "completed": completed,
-        "config": {"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "exit_sma_peak": AUTO_EXIT_SMA_PEAK, "position_size": TRADE_POSITION_SIZE}
+        "config": _auto_trade_config_dict()
     })
+
+
+def _auto_trade_config_dict() -> dict:
+    """Single source of truth for the auto-trade config payload — used by both
+    GET /api/auto-trades and the response of POST /api/auto-trade-config, so the
+    two can never drift out of sync with each other."""
+    return {
+        "entry_corr":            AUTO_ENTRY_CORR,
+        "entry_min_dens":        AUTO_ENTRY_MIN_DENS,
+        "exit_peak":             AUTO_EXIT_PEAK,
+        "exit_min_drop":         AUTO_EXIT_MIN_DROP,
+        "exit_sma_peak":         AUTO_EXIT_SMA_PEAK,
+        "exit_density_enabled":  AUTO_EXIT_DENSITY_ENABLED,
+        "exit_sma_enabled":      AUTO_EXIT_SMA_ENABLED,
+        "position_size":         TRADE_POSITION_SIZE,
+        "reentry_cooldown_min":  round(REENTRY_COOLDOWN / 60, 1),
+    }
 
 
 # Allows the frontend to adjust entry/exit thresholds without restarting the server.
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
-    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, TRADE_POSITION_SIZE
+    global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, \
+        AUTO_EXIT_DENSITY_ENABLED, AUTO_EXIT_SMA_ENABLED, TRADE_POSITION_SIZE, REENTRY_COOLDOWN
     data = request.get_json(force=True) or {}
     try:
         if "entry_corr" in data:
@@ -2032,14 +2056,23 @@ def set_auto_trade_config():
             val = float(data["exit_sma_peak"])
             if 0.0 < val <= 1.0:
                 AUTO_EXIT_SMA_PEAK = round(val, 2)
+        if "exit_density_enabled" in data:
+            AUTO_EXIT_DENSITY_ENABLED = bool(data["exit_density_enabled"])
+        if "exit_sma_enabled" in data:
+            AUTO_EXIT_SMA_ENABLED = bool(data["exit_sma_enabled"])
         if "position_size" in data:
             val = float(data["position_size"])
             if val > 0:
                 TRADE_POSITION_SIZE = round(val, 2)
+        if "reentry_cooldown_min" in data:
+            val = float(data["reentry_cooldown_min"])
+            if 0 < val <= 1440:  # cap at 24h — guards against a fat-fingered value locking a ticker out for days
+                REENTRY_COOLDOWN = round(val * 60)
     except (ValueError, TypeError) as e:
         return jsonify({"error": f"Invalid config value: {e}"}), 400
-    print(f"[AUTO TRADE CONFIG] entry_corr={AUTO_ENTRY_CORR} entry_min_dens={AUTO_ENTRY_MIN_DENS} exit_peak={AUTO_EXIT_PEAK} exit_min_drop={AUTO_EXIT_MIN_DROP} exit_sma_peak={AUTO_EXIT_SMA_PEAK} position_size={TRADE_POSITION_SIZE}")
-    return jsonify({"entry_corr": AUTO_ENTRY_CORR, "entry_min_dens": AUTO_ENTRY_MIN_DENS, "exit_peak": AUTO_EXIT_PEAK, "exit_min_drop": AUTO_EXIT_MIN_DROP, "exit_sma_peak": AUTO_EXIT_SMA_PEAK, "position_size": TRADE_POSITION_SIZE})
+    cfg = _auto_trade_config_dict()
+    print(f"[AUTO TRADE CONFIG] {cfg}")
+    return jsonify(cfg)
 
 
 # NOTE: scoped to source="auto" — auto_trades/completed_auto_trades also hold manual
@@ -2777,11 +2810,13 @@ def _check_auto_trades():
             peak_sma = current_sma
 
         density_exit = (
+            AUTO_EXIT_DENSITY_ENABLED and
             peak > 0 and
             ((peak - total_msgs) / peak) >= AUTO_EXIT_PEAK and
             (peak - total_msgs) >= AUTO_EXIT_MIN_DROP
         )
         sma_exit = (
+            AUTO_EXIT_SMA_ENABLED and
             peak_sma is not None and current_sma is not None and
             peak_sma > 0 and
             ((peak_sma - current_sma) / peak_sma) >= AUTO_EXIT_SMA_PEAK

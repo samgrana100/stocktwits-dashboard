@@ -393,6 +393,14 @@
     .corr-exit-hdr { display: flex; align-items: center; justify-content: space-between; padding: 12px 14px 10px; border-bottom: 1px solid var(--border-subtle); position: sticky; top: 0; background: var(--bg-elevated); z-index: 1; }
     .corr-exit-title { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--text-primary); }
     .corr-exit-count { font-size: 10px; color: var(--text-dimmed); }
+    /* Auto Trade Settings panel — one consolidated spot for every auto-trade setting */
+    .auto-settings-subhdr { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .07em; color: var(--text-muted); border-bottom: 1px solid var(--border-faint); padding-bottom: 5px; }
+    .auto-settings-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .auto-settings-label { font-size: 10px; color: var(--text-dimmed); white-space: nowrap; }
+    .auto-settings-ctrl { display: flex; align-items: center; gap: 4px; }
+    .auto-settings-ctrl input[type="number"] { width: 46px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 4px; color: var(--text-primary); font-size: 11px; padding: 3px 5px; text-align: right; }
+    .auto-settings-unit { font-size: 10px; color: var(--text-dimmed); }
+    .auto-settings-status { font-size: 9px; color: var(--text-dimmed); }
     .corr-exit-card { padding: 10px 14px; border-bottom: 1px solid var(--border-faint); }
     .corr-exit-ticker { font-size: 13px; font-weight: 700; color: var(--blue); }
     .corr-exit-meta { font-size: 10px; color: var(--text-dimmed); margin: 3px 0 7px; }
@@ -1267,39 +1275,92 @@
       </div>
       <div id="corr-completed-feed"><div class="corr-exit-empty">No completed trades yet.</div></div>
       <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
-        <span class="corr-exit-title">Auto — Settings</span>
+        <span class="corr-exit-title" title="Every setting that controls the automated trader lives here — nothing auto-trade-related is configured anywhere else in this tab.">Auto Trade Settings</span>
       </div>
-      <div style="padding:10px 14px;display:flex;flex-direction:column;gap:8px;border-bottom:1px solid var(--border-faint)">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <label style="font-size:10px;color:var(--text-dimmed);white-space:nowrap">Exit Min Drop</label>
-          <div style="display:flex;align-items:center;gap:4px">
-            <input id="auto-exit-min-drop" type="number" min="0" max="50" step="1"
-              style="width:46px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 5px;text-align:right"
-              onchange="applyAutoMinDrop()">
-            <span style="font-size:10px;color:var(--text-dimmed)">msgs</span>
-            <span id="auto-min-drop-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+      <div style="padding:10px 14px 14px;display:flex;flex-direction:column;gap:14px;border-bottom:1px solid var(--border-faint)">
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="auto-settings-subhdr">Entry — when the bot opens a position</div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Minimum density/price correlation required to enter">Entry Correlation ≥</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-entry-corr" type="number" min="1" max="99" step="1" onchange="applyAutoEntryCorr()">
+              <span class="auto-settings-unit">%</span>
+              <span id="auto-entry-corr-status" class="auto-settings-status"></span>
+            </div>
+          </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Minimum messages/hour (1h rolling) required to enter">Entry Min Density ≥</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-entry-min-dens" type="number" min="0" max="200" step="1" onchange="applyAutoMinDens()">
+              <span class="auto-settings-unit">msgs/hr</span>
+              <span id="auto-min-dens-status" class="auto-settings-status"></span>
+            </div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <label style="font-size:10px;color:var(--text-dimmed);white-space:nowrap">Entry Min Density</label>
-          <div style="display:flex;align-items:center;gap:4px">
-            <input id="auto-entry-min-dens" type="number" min="0" max="200" step="1"
-              style="width:46px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 5px;text-align:right"
-              onchange="applyAutoMinDens()">
-            <span style="font-size:10px;color:var(--text-dimmed)">msgs/hr</span>
-            <span id="auto-min-dens-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="auto-settings-subhdr">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="auto-exit-density-enabled" onchange="applyAutoExitDensityEnabled()">
+              Exit — Density Off Peak
+            </label>
+          </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Exits when 1h rolling message density falls this % below its intra-trade peak">Density Drop ≥</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-exit-density-peak" type="number" min="1" max="99" step="1" onchange="applyAutoExitPeak()">
+              <span class="auto-settings-unit">%</span>
+              <span id="auto-exit-peak-status" class="auto-settings-status"></span>
+            </div>
+          </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Minimum absolute message drop required before the density exit can fire (avoids noise on very low counts)">Min Msg Drop ≥</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-exit-min-drop" type="number" min="0" max="50" step="1" onchange="applyAutoMinDrop()">
+              <span class="auto-settings-unit">msgs</span>
+              <span id="auto-min-drop-status" class="auto-settings-status"></span>
+            </div>
           </div>
         </div>
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-          <label style="font-size:10px;color:var(--text-dimmed);white-space:nowrap" title="Exits when the price SMA (10-min) falls this % below its intra-trade peak — OR'd with Exit Min Drop above">Exit SMA Peak</label>
-          <div style="display:flex;align-items:center;gap:4px">
-            <input id="auto-exit-sma-peak" type="number" min="1" max="99" step="1"
-              style="width:46px;background:var(--bg-elevated);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:11px;padding:3px 5px;text-align:right"
-              onchange="applyAutoExitSmaPeak()">
-            <span style="font-size:10px;color:var(--text-dimmed)">%</span>
-            <span id="auto-exit-sma-peak-status" style="font-size:9px;color:var(--text-dimmed)"></span>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="auto-settings-subhdr">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="auto-exit-sma-enabled" onchange="applyAutoExitSmaEnabled()">
+              Exit — Price SMA Off Peak
+            </label>
+          </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Exits when the price SMA (10-min) falls this % below its intra-trade peak">SMA Drop ≥</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-exit-sma-peak" type="number" min="1" max="99" step="1" onchange="applyAutoExitSmaPeak()">
+              <span class="auto-settings-unit">%</span>
+              <span id="auto-exit-sma-peak-status" class="auto-settings-status"></span>
+            </div>
           </div>
         </div>
+
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div class="auto-settings-subhdr">Other</div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Minimum time before the bot will re-enter a ticker it just exited">Reentry Cooldown</label>
+            <div class="auto-settings-ctrl">
+              <input id="auto-reentry-cooldown" type="number" min="1" max="1440" step="1" onchange="applyAutoReentryCooldown()">
+              <span class="auto-settings-unit">min</span>
+              <span id="auto-reentry-cooldown-status" class="auto-settings-status"></span>
+            </div>
+          </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="Assumed $ size per trade — used only to turn return % into a $ PnL figure, no real position sizing exists">Position Size</label>
+            <div class="auto-settings-ctrl">
+              <span class="auto-settings-unit" style="margin-right:2px">$</span>
+              <input id="auto-position-size" type="number" min="1" step="1" onchange="applyAutoPositionSize()">
+              <span id="auto-position-size-status" class="auto-settings-status"></span>
+            </div>
+          </div>
+        </div>
+
       </div>
       <div class="corr-exit-hdr" style="margin-top:0;border-top:1px solid var(--border-subtle)">
         <span class="corr-exit-title">Auto — Active</span>
@@ -4631,30 +4692,26 @@
       if (!res.ok) return;
       const data = await res.json();
       if (data.config) {
-        const dropEl    = document.getElementById("auto-exit-min-drop");
-        const densEl    = document.getElementById("auto-entry-min-dens");
-        const smaPeakEl = document.getElementById("auto-exit-sma-peak");
-        const entryEl   = document.getElementById("corr-entry-threshold");
-        const exitEl    = document.getElementById("corr-exit-pct");
-        if (dropEl && dropEl !== document.activeElement) dropEl.value = data.config.exit_min_drop;
-        if (densEl && densEl !== document.activeElement) densEl.value = data.config.entry_min_dens;
-        if (smaPeakEl && smaPeakEl !== document.activeElement && typeof data.config.exit_sma_peak === "number") {
-          smaPeakEl.value = Math.round(data.config.exit_sma_peak * 100);
-        }
-        // Entry Threshold / Exit from Peak are shared with the auto trader's config
-        // (see onCorrThresholdChange/onCorrExitPctChange) — keep them showing the
-        // live backend value rather than a possibly-stale localStorage number, since
-        // the auto engine runs 24/7 independent of which browser last touched it.
-        if (entryEl && entryEl !== document.activeElement && typeof data.config.entry_corr === "number") {
-          corrEntryThreshold = Math.round(data.config.entry_corr * 100);
-          entryEl.value = corrEntryThreshold;
-          localStorage.setItem("corrEntryThreshold", corrEntryThreshold);
-        }
-        if (exitEl && exitEl !== document.activeElement && typeof data.config.exit_peak === "number") {
-          corrExitPct = Math.round(data.config.exit_peak * 100);
-          exitEl.value = corrExitPct;
-          localStorage.setItem("corrExitPct", corrExitPct);
-        }
+        const c = data.config;
+        const setNum = (id, val, scale) => {
+          const el = document.getElementById(id);
+          if (el && el !== document.activeElement && typeof val === "number") {
+            el.value = scale ? Math.round(val * scale) : val;
+          }
+        };
+        const setChecked = (id, val) => {
+          const el = document.getElementById(id);
+          if (el && el !== document.activeElement && typeof val === "boolean") el.checked = val;
+        };
+        setNum("auto-entry-corr",        c.entry_corr,     100);
+        setNum("auto-entry-min-dens",    c.entry_min_dens);
+        setNum("auto-exit-density-peak", c.exit_peak,      100);
+        setNum("auto-exit-min-drop",     c.exit_min_drop);
+        setNum("auto-exit-sma-peak",     c.exit_sma_peak,  100);
+        setNum("auto-reentry-cooldown",  c.reentry_cooldown_min);
+        setNum("auto-position-size",     c.position_size);
+        setChecked("auto-exit-density-enabled", c.exit_density_enabled);
+        setChecked("auto-exit-sma-enabled",     c.exit_sma_enabled);
       }
       renderAutoTrades(data);
     } catch(e) { console.error("[auto-trades]", e); }
@@ -4677,24 +4734,6 @@
     setTimeout(() => { el.textContent = ""; }, 3000);
   }
 
-  // Entry Threshold / Exit from Peak are shared controls: they drive both the
-  // manual Entry Zone's display filter (corrEntryThreshold/corrExitPct) AND the
-  // auto trader's real entry_corr/exit_peak config, via onCorrThresholdChange()/
-  // onCorrExitPctChange() below. The existing corr-entry-confirm/corr-exit-confirm
-  // checkmarks already give visual feedback for the shared value, so these just
-  // sync the backend silently rather than needing their own status UI.
-  async function applyAutoEntryCorr() {
-    const val = parseFloat(document.getElementById("corr-entry-threshold").value);
-    if (isNaN(val)) return;
-    await _postAutoConfig({ entry_corr: val / 100 });
-  }
-
-  async function applyAutoExitPeak() {
-    const val = parseFloat(document.getElementById("corr-exit-pct").value);
-    if (isNaN(val)) return;
-    await _postAutoConfig({ exit_peak: val / 100 });
-  }
-
   async function applyAutoMinDrop() {
     const val = parseInt(document.getElementById("auto-exit-min-drop").value);
     if (isNaN(val)) return;
@@ -4714,6 +4753,44 @@
     if (isNaN(val)) return;
     const cfg = await _postAutoConfig({ exit_sma_peak: val / 100 });
     if (cfg) _flashStatus(document.getElementById("auto-exit-sma-peak-status"), `✓ ${Math.round(cfg.exit_sma_peak * 100)}%`, true);
+  }
+
+  async function applyAutoReentryCooldown() {
+    const val = parseFloat(document.getElementById("auto-reentry-cooldown").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ reentry_cooldown_min: val });
+    if (cfg) _flashStatus(document.getElementById("auto-reentry-cooldown-status"), `✓ ${cfg.reentry_cooldown_min}min`, true);
+  }
+
+  async function applyAutoEntryCorr() {
+    const val = parseFloat(document.getElementById("auto-entry-corr").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ entry_corr: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-entry-corr-status"), `✓ ${Math.round(cfg.entry_corr * 100)}%`, true);
+  }
+
+  async function applyAutoExitPeak() {
+    const val = parseFloat(document.getElementById("auto-exit-density-peak").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ exit_peak: val / 100 });
+    if (cfg) _flashStatus(document.getElementById("auto-exit-peak-status"), `✓ ${Math.round(cfg.exit_peak * 100)}%`, true);
+  }
+
+  async function applyAutoExitDensityEnabled() {
+    const checked = document.getElementById("auto-exit-density-enabled").checked;
+    await _postAutoConfig({ exit_density_enabled: checked });
+  }
+
+  async function applyAutoExitSmaEnabled() {
+    const checked = document.getElementById("auto-exit-sma-enabled").checked;
+    await _postAutoConfig({ exit_sma_enabled: checked });
+  }
+
+  async function applyAutoPositionSize() {
+    const val = parseFloat(document.getElementById("auto-position-size").value);
+    if (isNaN(val)) return;
+    const cfg = await _postAutoConfig({ position_size: val });
+    if (cfg) _flashStatus(document.getElementById("auto-position-size-status"), `✓ $${cfg.position_size}`, true);
   }
 
   function renderAutoTrades(data) {
@@ -4805,17 +4882,20 @@
     _confirmTimers[id] = setTimeout(() => el.classList.remove("show"), 1500);
   }
 
+  // Entry Threshold / Exit from Peak here are purely local to the manual Entry
+  // Zone/Exit Monitor display (which candidates show as entry-worthy, when a
+  // manually-held position flashes "EXIT SIGNAL") — NOT the auto trader's
+  // config. All auto-trade settings, including its own entry/exit thresholds,
+  // live in one place: the Auto Trade Settings panel below.
   function onCorrThresholdChange() {
     corrEntryThreshold = parseInt(document.getElementById("corr-entry-threshold").value) || 30;
     localStorage.setItem("corrEntryThreshold", corrEntryThreshold);
     buildCorrView();
     _flashConfirm("corr-entry-confirm");
-    applyAutoEntryCorr();
   }
 
   function onCorrExitPctChange() {
     renderCorrExitPanel(); // also saves corrExitPct + flashes corr-exit-confirm
-    applyAutoExitPeak();
   }
 
   function onCorrMinMsgsChange() {
