@@ -3161,7 +3161,7 @@
     });
   }
 
-  function renderCombinedChart(data, densityRollingKey, sentimentRollingKey, canvasEl) {
+  function renderCombinedChart(data, densityRollingKey, sentimentRollingKey, canvasEl, tradeMarkersOverride) {
     const isPopup = !canvasEl;
     canvasEl = canvasEl || document.getElementById("chart-combined");
     if (isPopup && combinedChart) { combinedChart.destroy(); combinedChart = null; }
@@ -3348,11 +3348,14 @@
     const evRadii  = evRaw.map(v => v ? 7 : 0);
 
     // Trade entry/exit markers — injected when popup opened via openTradeChart /
-    // openTradeChartForRow. _tradeMarkers is an array so every trade taken on this
-    // ticker that day (not just the one clicked) gets its own entry/exit triangle,
-    // all drawn into one dataset keyed by axis position.
+    // openTradeChartForRow (via the global _tradeMarkers) or passed directly by
+    // News View (tradeMarkersOverride, one card per ticker so a shared global
+    // won't do). Either way it's an array so every trade taken on this ticker
+    // that day gets its own entry/exit triangle, all drawn into one dataset
+    // keyed by axis position.
+    const tradeMarkers = tradeMarkersOverride || (isPopup ? _tradeMarkers : null);
     let tradeDataset = null;
-    if (_tradeMarkers && _tradeMarkers.length && isPopup) {
+    if (tradeMarkers && tradeMarkers.length) {
       const pKnown = rawPFilled.filter(v => v != null);
       const pLo = pKnown.length ? Math.min(...pKnown) : 0;
       const pHi = pKnown.length ? Math.max(...pKnown) : 1;
@@ -3380,7 +3383,7 @@
       const tmRot   = axisKeys.map(() => 0);
       const tmRad   = axisKeys.map(() => 0);
 
-      _tradeMarkers.forEach(tm => {
+      tradeMarkers.forEach(tm => {
         const entryKey = tm.enteredAt ? toAxisKey(tm.enteredAt) : null;
         const exitKey  = tm.exitedAt  ? toAxisKey(tm.exitedAt)  : null;
 
@@ -3835,8 +3838,32 @@
 
     recentSection.style.display = "";
   }
-  let newsObserver         = null;
-  let newsViewBatchPromise = null;
+  let newsObserver          = null;
+  let newsViewBatchPromise  = null;
+  let newsViewTradesByTicker = {}; // { TICKER: [{enteredAt, exitedAt, entryPrice, exitPrice}, ...] } — today's ET trades, all sources
+
+  // Batch-fetches today's (ET) auto + manual trades once per buildNewsView() call,
+  // grouped by ticker, so every card's chart can show entry/exit markers without
+  // a per-card round trip. Mirrors the newsViewBatchPromise pattern above.
+  async function fetchNewsViewTrades() {
+    newsViewTradesByTicker = {};
+    try {
+      const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+      const res = await fetch("/api/trades?date_from=" + today + "&date_to=" + today + "&limit=500");
+      if (!res.ok) return;
+      const data = await res.json();
+      const all = [...(data.active || []), ...(data.completed || [])];
+      all.forEach(t => {
+        if (!newsViewTradesByTicker[t.ticker]) newsViewTradesByTicker[t.ticker] = [];
+        newsViewTradesByTicker[t.ticker].push({
+          enteredAt:  t.entered_at,
+          exitedAt:   t.exited_at,
+          entryPrice: t.entry_price,
+          exitPrice:  t.exit_price,
+        });
+      });
+    } catch(e) { console.error("[news-trades]", e); }
+  }
 
   // ── Catalyst calendar (PDUFA + earnings) ──────────────────────────────────
   let catalystData = {};  // { TICKER: { pdufa: {...}, earnings: {...} } }
@@ -3909,6 +3936,7 @@
       buildNewsView();
     } else {
       newsViewBatchPromise = null;
+      newsViewTradesByTicker = {};
       Object.values(newsCardCharts).forEach(ch => { try { ch.destroy(); } catch(e) {} });
       Object.keys(newsCardCharts).forEach(k => delete newsCardCharts[k]);
       if (newsObserver) document.querySelectorAll(".news-card").forEach(c => newsObserver.unobserve(c));
@@ -5370,6 +5398,7 @@
       .catch(() => ({}));
 
     fetchCatalysts(tickers);
+    fetchNewsViewTrades();
 
     tickers.forEach(t => {
       const card = document.createElement("div");
@@ -5491,7 +5520,8 @@
       canvas.style.display = "";
 
       newsCardEvents[ticker] = chartData.event_history || [];
-      const chartInst = renderCombinedChart(chartData, densityRollingW, sentimentRollingW, canvas);
+      const tradeMarkers = newsViewTradesByTicker[ticker] || null;
+      const chartInst = renderCombinedChart(chartData, densityRollingW, sentimentRollingW, canvas, tradeMarkers);
       newsCardCharts[ticker] = chartInst;
       card.dataset.loadedAt = Date.now(); // timestamp for stale-refresh logic
 
