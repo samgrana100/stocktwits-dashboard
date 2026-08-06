@@ -1079,15 +1079,15 @@
     <select id="global-density-sel" class="win-sel" style="font-size:12px;padding:3px 6px">
       <option value="1m">1m</option>
       <option value="3m">3m</option>
-      <option value="5m" selected>5m</option>
+      <option value="5m">5m</option>
       <option value="15m">15m</option>
       <option value="30m">30m</option>
-      <option value="1h">1h</option>
+      <option value="1h" selected>1h</option>
       <option value="2h">2h</option>
       <option value="4h">4h</option>
       <option value="1d">1d</option>
     </select>
-    <button class="filter-reset" style="margin-left:4px" onclick="setAllDensityWindows(document.getElementById('global-density-sel').value)">Set All</button>
+    <button class="filter-reset" style="margin-left:4px" title="Sets the default for every ticker that hasn't been individually changed below. Also drives the auto-trader's own correlation calculation." onclick="applyDefaultDensityWindow(document.getElementById('global-density-sel').value)">Set Default</button>
   </div>
   <div class="filter-sep"></div>
   <div class="filter-item">
@@ -2101,23 +2101,46 @@
     });
   }
 
-  // ── Per-ticker window state (persisted to localStorage) ──
+  // ── Per-ticker window state ──
+  // tickerDensityWindows is now server-backed (see /api/density-window-config) rather
+  // than localStorage: it's the same window used both for the dashboard's Msg Density
+  // display AND the auto-trader's own correlation calculation (score_calculator.py), so
+  // it needs one shared source of truth the 24/7 background thread can read too, not a
+  // per-browser cache. tickerSentimentWindows is unrelated (display-only) and stays as
+  // a plain localStorage setting.
   const WINDOW_OPTIONS  = ["1m","3m","5m","15m","30m","1h","2h","4h","1d"];
   const WINDOW_MINUTES  = { "1m":1,"3m":3,"5m":5,"15m":15,"30m":30,"1h":60,"2h":120,"4h":240,"1d":1440,"1w":10080 };
-  let tickerDensityWindows  = {};
+  const MINUTES_TO_WINDOW_KEY = Object.fromEntries(Object.entries(WINDOW_MINUTES).map(([k, v]) => [v, k]));
+  function _minutesToWindowKey(mins) { return MINUTES_TO_WINDOW_KEY[mins] || (mins + "m"); }
+
+  let tickerDensityWindows   = {};   // {ticker: windowKey} — explicit per-ticker overrides only
+  let defaultDensityWindowKey = "5m"; // fallback for any ticker without its own override
   let tickerSentimentWindows = {};
-  let tickerDensityCounts   = {};
-  let positionDensity1h     = {};
-  let _tradeMarkers         = null;
+  let tickerDensityCounts    = {};
+  let positionDensity1h      = {};
+  let _tradeMarkers          = null;
 
   function loadTickerWindows() {
-    try { tickerDensityWindows  = JSON.parse(localStorage.getItem("tickerDensityWindows")  || "{}"); }
-    catch(e) { tickerDensityWindows = {}; }
     try { tickerSentimentWindows = JSON.parse(localStorage.getItem("tickerSentimentWindows") || "{}"); }
     catch(e) { tickerSentimentWindows = {}; }
   }
-  function saveDensityWindows()   { localStorage.setItem("tickerDensityWindows",  JSON.stringify(tickerDensityWindows));  }
   function saveSentimentWindows() { localStorage.setItem("tickerSentimentWindows", JSON.stringify(tickerSentimentWindows)); }
+
+  async function fetchDensityWindowConfig() {
+    try {
+      const res = await fetch("/api/density-window-config");
+      if (!res.ok) return;
+      const data = await res.json();
+      defaultDensityWindowKey = _minutesToWindowKey(data.default_minutes);
+      const sel = document.getElementById("global-density-sel");
+      if (sel) sel.value = defaultDensityWindowKey;
+      tickerDensityWindows = {};
+      Object.entries(data.overrides || {}).forEach(([ticker, mins]) => {
+        tickerDensityWindows[ticker] = _minutesToWindowKey(mins);
+      });
+      scheduleDensityDisplay();
+    } catch(e) { console.error("[density-window-config]", e); }
+  }
 
   function computeRollingDensity(densityHistory, rollingMinutes) {
     const cutoff = new Date(Date.now() - rollingMinutes * 60000).toISOString();
@@ -2156,11 +2179,17 @@
     if (newsObserver) { newsObserver.unobserve(card); newsObserver.observe(card); }
   }
 
+  // Sets this ONE ticker's own rolling density window — from here on it drives both
+  // its displayed density AND its own correlation calculation, independent of whatever
+  // the default is or later becomes (see applyDefaultDensityWindow below).
   function setTickerDensityWindow(ticker, w) {
     tickerDensityWindows[ticker] = w;
-    saveDensityWindows();
     _reloadNewsCard(ticker);
     scheduleDensityDisplay();
+    fetch("/api/density-window-config", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ ticker, minutes: WINDOW_MINUTES[w] })
+    }).catch(e => console.error("[density-window-config]", e));
   }
 
   function setTickerSentimentWindow(ticker, w) {
@@ -2170,14 +2199,28 @@
     _reloadNewsCard(ticker);
   }
 
-  function setAllDensityWindows(w) {
-    allTickers.forEach(t => {
-      tickerDensityWindows[t.ticker] = w;
-      const sel = document.getElementById("dwsel-" + t.ticker);
-      if (sel) sel.value = w;
-    });
-    saveDensityWindows();
+  // Sets the DEFAULT rolling density window — applies to every ticker that doesn't have
+  // its own explicit override (set via the per-row selector above). Deliberately does NOT
+  // touch tickers that were already individually customized, unlike the old "Set All"
+  // behavior this replaced.
+  async function applyDefaultDensityWindow(w) {
+    defaultDensityWindowKey = w;
+    applyFiltersAndRender();
     scheduleDensityDisplay();
+    try {
+      const res = await fetch("/api/density-window-config", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({ default_minutes: WINDOW_MINUTES[w] })
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      tickerDensityWindows = {};
+      Object.entries(data.overrides || {}).forEach(([ticker, mins]) => {
+        tickerDensityWindows[ticker] = _minutesToWindowKey(mins);
+      });
+      applyFiltersAndRender();
+      scheduleDensityDisplay();
+    } catch(e) { console.error("[density-window-config]", e); }
   }
 
   function setAllSentimentWindows(w) {
@@ -2242,7 +2285,7 @@
     const targets = lastFilteredTickers.length ? lastFilteredTickers : allTickers;
     if (!targets.length) return;
     await Promise.all(targets.map(async t => {
-      const densityW = tickerDensityWindows[t.ticker] || "1h";
+      const densityW = tickerDensityWindows[t.ticker] || defaultDensityWindowKey;
       if (densityW === currentWindow) return;
       try {
         const res = await fetch("/api/quickscore/" + t.ticker + "?window=" + densityW);
@@ -2802,7 +2845,7 @@
            </div>`
         : "";
 
-      const selD    = tickerDensityWindows[t.ticker]  || "5m";
+      const selD    = tickerDensityWindows[t.ticker]  || defaultDensityWindowKey;
       const selS    = tickerSentimentWindows[t.ticker] || "5m";
       const winCell = `
         <td onclick="event.stopPropagation()" style="padding:4px 8px">
@@ -3055,7 +3098,7 @@
 
   async function loadPopupData(ticker) {
     try {
-      const densityRollingW   = tickerDensityWindows[ticker]  || "5m";
+      const densityRollingW   = tickerDensityWindows[ticker]  || defaultDensityWindowKey;
       const sentimentRollingW = tickerSentimentWindows[ticker] || "5m";
       const res  = await fetch("/api/ticker/" + ticker + "?window=" + currentPopupWindow + "&rolling=" + sentimentRollingW + "&density_window=" + densityRollingW);
       if (!res.ok) throw new Error("ticker " + res.status);
@@ -3540,7 +3583,7 @@
                 if (raw == null) return ctx.dataset.label + ": --";
                 if (ctx.dataset.label === "Price")         return "Price: $"  + raw.toFixed(2);
                 if (ctx.dataset.label === "Rolling Score") return "Score: "   + raw.toFixed(4);
-                if (ctx.dataset.label === "Msg Density")   return "Density: " + raw + " msgs/" + (densityRollingKey || "5m");
+                if (ctx.dataset.label === "Msg Density")   return "Density: " + raw + " msgs/" + (densityRollingKey || defaultDensityWindowKey);
                 if (ctx.dataset.label === "Trade")         return raw;
                 if (ctx.dataset.label === "MACD Hist")     return "Hist: "    + raw.toFixed(4);
                 if (ctx.dataset.label === "MACD")          return "MACD: "    + raw.toFixed(4);
@@ -5776,6 +5819,7 @@
   });
 
   loadTickerWindows();
+  fetchDensityWindowConfig();
   checkPipelineStatus();
   fetchScores();
   startCountdown();

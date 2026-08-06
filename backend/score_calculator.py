@@ -129,13 +129,44 @@ def score_unscored_messages(batch_size: int = 50):
 
 
 # ── PEARSON CORRELATION CONFIG ──
-# DENSITY_WINDOW_MIN: how far back to sum messages to get a density value at each price point.
-# CORR_LOOKBACK_MIN: how many price snapshots (minutes) to include in each correlation vector.
-# CORR_FETCH_MIN: total message history needed = lookback + density window (to prime the rolling sum).
-DENSITY_WINDOW_MIN = 60   # rolling window used to compute density at each point
+# DEFAULT_DENSITY_WINDOW_MIN / _ticker_density_window_min: how far back to sum messages
+# to get a density value at each price point — this is the SAME "Msg Density Rolling"
+# setting exposed on the main dashboard (the "Set Default" control + each row's own
+# selector), not a separate correlation-only knob. A ticker with no explicit override
+# uses the default; changing a ticker's rolling density on the dashboard changes ITS
+# OWN correlation calculation only. Settable live via GET/POST /api/density-window-config
+# in app.py — in-memory only, same as every other auto-trade threshold, resets on restart.
+DEFAULT_DENSITY_WINDOW_MIN = 60   # minutes — matches the old hardcoded correlation window,
+                                   # so this ships without changing AUTO_ENTRY_CORR's live
+                                   # behavior. Keep the dashboard's <select id="global-
+                                   # density-sel"> default option in sync with this value.
+_ticker_density_window_min = {}   # {ticker: minutes} — explicit per-ticker overrides
 CORR_LOOKBACK_MIN  = 30   # how many minutes back to look for price snapshots
-CORR_FETCH_MIN     = CORR_LOOKBACK_MIN + DENSITY_WINDOW_MIN  # total message history needed
 CORR_MIN_POINTS    = 5    # minimum price points required to compute correlation
+
+
+def get_density_window_min(ticker: str) -> int:
+    return _ticker_density_window_min.get(ticker, DEFAULT_DENSITY_WINDOW_MIN)
+
+
+def set_default_density_window_min(minutes: int) -> None:
+    global DEFAULT_DENSITY_WINDOW_MIN
+    DEFAULT_DENSITY_WINDOW_MIN = minutes
+
+
+def set_ticker_density_window_min(ticker: str, minutes) -> None:
+    """minutes=None clears the override so `ticker` falls back to the default again."""
+    if minutes is None:
+        _ticker_density_window_min.pop(ticker, None)
+    else:
+        _ticker_density_window_min[ticker] = minutes
+
+
+def _max_density_window_min() -> int:
+    """Widest density window currently in play (default or any override) — used to size
+    the one shared message-history fetch in aggregate_ticker_scores so it covers whichever
+    ticker needs the most history, since that fetch happens once for every ticker at once."""
+    return max([DEFAULT_DENSITY_WINDOW_MIN] + list(_ticker_density_window_min.values()))
 
 # Standard Pearson r formula: covariance / (std_x × std_y).
 # Returns None when there are too few points or one vector is constant (zero denominator).
@@ -227,9 +258,11 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60, session_scoped: bo
     }
 
     # ── Density-price correlation
-    # Fetch CORR_FETCH_MIN of message history so each price point can have a
-    # full DENSITY_WINDOW_MIN rolling count computed behind it.
-    corr_start_iso      = get_window_start_iso(CORR_FETCH_MIN)
+    # Fetch enough message history so each price point can have a full rolling density
+    # count computed behind it, sized to whichever ticker currently needs the widest
+    # window (default or per-ticker override — see _max_density_window_min).
+    corr_fetch_min       = CORR_LOOKBACK_MIN + _max_density_window_min()
+    corr_start_iso      = get_window_start_iso(corr_fetch_min)
     corr_price_start_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=CORR_LOOKBACK_MIN)
 
     # session_scoped clips both fetch boundaries to the current session's start (if that's
@@ -271,14 +304,16 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60, session_scoped: bo
         if len(price_minutes) < CORR_MIN_POINTS:
             return None, 0.0, False, False
 
+        density_window_min = get_density_window_min(ticker)
         d_vec, p_vec = [], []
         for m in price_minutes:
             m_dt    = datetime.strptime(m, "%Y-%m-%dT%H:%M")
-            # Rolling density: sum all message-per-minute counts in the DENSITY_WINDOW_MIN
-            # look-back behind this price point, giving msgs/hour at that moment.
+            # Rolling density: sum all message-per-minute counts in this ticker's own
+            # rolling-density window (default, or its individual override) behind this
+            # price point — the same window shown as "Msg Density" on the dashboard.
             rolling = sum(
                 d_map.get((m_dt - timedelta(minutes=i)).strftime("%Y-%m-%dT%H:%M"), 0)
-                for i in range(DENSITY_WINDOW_MIN)
+                for i in range(density_window_min)
             )
             d_vec.append(rolling)
             p_vec.append(p_map[m])

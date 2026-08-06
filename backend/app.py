@@ -27,6 +27,9 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from flask import Flask, jsonify, request, render_template
 from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots, pipeline_events
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
+import score_calculator  # module-qualified access for density-window config (see
+                          # /api/density-window-config) — a plain `from X import NAME`
+                          # binding wouldn't stay live-linked after set_*() mutates it
 from utils import get_window_start_iso, get_timestamp, get_current_session_start_utc, get_current_session_name
 from event_detector import detect_event
 from calendar_fetcher import start_calendar_threads
@@ -2163,6 +2166,43 @@ def set_auto_trade_config():
     cfg = _auto_trade_config_dict()
     print(f"[AUTO TRADE CONFIG] {cfg}")
     return jsonify(cfg)
+
+
+# Msg Density Rolling window used everywhere density is computed — the main dashboard's
+# display AND the correlation calc (score_calculator._compute_correlation) share this one
+# setting, so what you see is genuinely what the auto-trader is using. A ticker with no
+# explicit override uses the default; the main table's "Set Default" control only ever
+# touches the default, never an individual ticker's own choice.
+def _density_window_config_dict() -> dict:
+    return {
+        "default_minutes": score_calculator.DEFAULT_DENSITY_WINDOW_MIN,
+        "overrides":       dict(score_calculator._ticker_density_window_min),
+    }
+
+
+@app.route("/api/density-window-config")
+def get_density_window_config():
+    return jsonify(_density_window_config_dict())
+
+
+@app.route("/api/density-window-config", methods=["POST"])
+def set_density_window_config():
+    data = request.get_json(force=True) or {}
+    try:
+        if "default_minutes" in data:
+            val = int(data["default_minutes"])
+            if val > 0:
+                score_calculator.set_default_density_window_min(val)
+        if "ticker" in data:
+            ticker = (data["ticker"] or "").upper().strip()
+            if ticker:
+                minutes = data.get("minutes")
+                score_calculator.set_ticker_density_window_min(
+                    ticker, int(minutes) if minutes is not None else None
+                )
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": f"Invalid value: {e}"}), 400
+    return jsonify(_density_window_config_dict())
 
 
 # NOTE: scoped to source="auto" — auto_trades/completed_auto_trades also hold manual
