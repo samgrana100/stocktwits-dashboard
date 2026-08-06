@@ -14,7 +14,7 @@ from db import scored_messages, message_density, price_history
 from agents.trust_agent import calculate_trust_score
 from agents.impact_agent import calculate_impact_score
 from agents.sentiment_agent import calculate_sentiment_scores_batch
-from utils import get_timestamp, get_window_start_iso
+from utils import get_timestamp, get_window_start_iso, get_current_session_start_utc
 from event_detector import detect_event
 
 
@@ -158,11 +158,18 @@ def _bucket_to_minute_key(bucket):
     return f"{p[2]}-{p[1]}-{p[0]}T{p[3]}:{p[4]}"
 
 
-def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
+def aggregate_ticker_scores(rolling_window_minutes: int = 60, session_scoped: bool = False) -> list:
     """
     Aggregates composite scores per ticker within the rolling window.
     Uses simple averages across all scored messages in the window.
     Also computes per-ticker Pearson correlation between message density and price.
+
+    session_scoped: when True, the correlation's density/price lookback is additionally
+    bounded to "since the current session started" (4:00, 9:30, or 16:00 ET) so a stale
+    premarket read can't leak into a regular-hours correlation. Defaults False and is only
+    ever passed True by the auto-trader's own internal call — every other caller (the main
+    dashboard, bubble map, popup charts) always gets the unscoped calculation, unaffected
+    by AUTO_SESSION_SCOPED_ENABLED.
     """
 
     window_start = get_window_start_iso(rolling_window_minutes)
@@ -224,6 +231,16 @@ def aggregate_ticker_scores(rolling_window_minutes: int = 60) -> list:
     # full DENSITY_WINDOW_MIN rolling count computed behind it.
     corr_start_iso      = get_window_start_iso(CORR_FETCH_MIN)
     corr_price_start_dt = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=CORR_LOOKBACK_MIN)
+
+    # session_scoped clips both fetch boundaries to the current session's start (if that's
+    # later than the fixed lookback) — density/price from before the session began then
+    # simply never enters d_map/p_map, so _compute_correlation's rolling sums naturally
+    # come up short near session open instead of bleeding in a prior session's data.
+    if session_scoped:
+        session_start_dt  = get_current_session_start_utc()
+        session_start_iso = session_start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        corr_start_iso      = max(corr_start_iso, session_start_iso)
+        corr_price_start_dt = max(corr_price_start_dt, session_start_dt)
 
     corr_density_docs = list(scored_messages.aggregate([
         {"$match": {"created_at_utc": {"$gte": corr_start_iso}}},

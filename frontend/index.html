@@ -1313,6 +1313,17 @@
               <span id="auto-entry-trough-bounce-status" class="auto-settings-status"></span>
             </div>
           </div>
+          <div class="auto-settings-row">
+            <label class="auto-settings-label" title="When on, NEW-entry screening (density floor, rising/trough-bounce check, and correlation) only looks at data since the current session started (4:00, 9:30, or 16:00 ET) instead of a fixed rolling window — so a stale premarket read can't carry into regular hours. Does NOT affect already-open positions (they keep running on the window they entered under) or the correlation shown anywhere else in the app (main table, bubble map, popup charts always use the unscoped calculation).">
+              <span style="display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="auto-session-scoped-enabled" onchange="applyAutoSessionScopedEnabled()">
+                Session-Scoped Entries
+              </span>
+            </label>
+            <div class="auto-settings-ctrl">
+              <span id="auto-session-scoped-status" class="auto-settings-status"></span>
+            </div>
+          </div>
         </div>
 
         <div style="display:flex;flex-direction:column;gap:8px">
@@ -4187,16 +4198,35 @@
     return new Date(isoUtc).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   }
 
+  // "premarket" (4:00-9:30 ET) / "market" (9:30-16:00 ET) / "afterhours" (16:00-20:00 ET) —
+  // mirrors the backend's get_current_session_name() bucketing, applied to an ET "HH:MM:SS"
+  // string already on the trade doc rather than "now".
+  function _sessionOfEtTime(hms) {
+    if (!hms) return null;
+    const [h, m] = hms.split(":").map(Number);
+    const total  = h * 60 + m;
+    if (total < 9 * 60 + 30) return "premarket";
+    if (total < 16 * 60) return "market";
+    return "afterhours";
+  }
+
   async function openTradeChartForRow(idx) {
     if (idx < 0 || idx >= _tradeNavRows.length) return;
     const t   = _tradeNavRows[idx];
     const day = _etDateOf(t.exited_at || t.entered_at);
+    // Only trades taken under AUTO_SESSION_SCOPED_ENABLED have a meaningful session to
+    // narrow to — a trade from before that setting existed (or a manual trade, which
+    // never sets session_scoped) falls back to the full-day view below.
+    const clickedSession = t.session_scoped ? _sessionOfEtTime(t.entered_at_et) : null;
 
     try {
       const params = new URLSearchParams({ ticker: t.ticker, date_from: day, date_to: day });
       const res    = await fetch("/api/trades?" + params.toString());
       const data   = res.ok ? await res.json() : { active: [], completed: [] };
-      const dayTrades = [...(data.active || []), ...(data.completed || [])];
+      let dayTrades = [...(data.active || []), ...(data.completed || [])];
+      if (clickedSession) {
+        dayTrades = dayTrades.filter(dt => _sessionOfEtTime(dt.entered_at_et) === clickedSession);
+      }
       _tradeMarkers = dayTrades.map(dt => ({
         enteredAt:  dt.entered_at,
         exitedAt:   dt.exited_at,
@@ -4216,11 +4246,16 @@
     const pnlTxt  = pnl == null ? "--" : (pnl >= 0 ? "+$" : "-$") + Math.abs(pnl).toFixed(2);
     const srcTxt  = t.source === "manual" ? "Manual" : "Auto";
     const statusTxt = t._status === "Open" ? "Open" : "Closed";
-    const meta = `${srcTxt} · ${statusTxt} · Return ${retTxt} · PnL ${pnlTxt} · Exit: ${_fmtExitReason(t.exit_reason)}`;
+    const sessionLabel = { premarket: "Premarket", market: "Market Hours", afterhours: "After Hours" }[clickedSession];
+    const meta = `${srcTxt} · ${statusTxt} · Return ${retTxt} · PnL ${pnlTxt} · Exit: ${_fmtExitReason(t.exit_reason)}` +
+      (sessionLabel ? ` · Session: ${sessionLabel}` : "");
 
-    // "1d" so the entry/exit markers are guaranteed visible regardless of
-    // whatever window the main table happens to be on.
-    openPopup(t.ticker, meta, "", "", _tradeNavRows, idx, "1d");
+    // Session-scoped trades get their own session's window ("premarket"/"market"/
+    // "afterhours" — a real backend window_key, see SESSION_WINDOW_BOUNDS) so the
+    // chart shows just the slice that trade's entry decision was evaluated in.
+    // Everything else falls back to "1d" so markers are guaranteed visible regardless
+    // of whatever window the main table happens to be on.
+    openPopup(t.ticker, meta, "", "", _tradeNavRows, idx, clickedSession || "1d");
   }
 
   // ── Trade Calendar — per-day PnL rollup, click a day to filter the Trades
@@ -4744,7 +4779,7 @@
         chartEl._trailTicker = ticker;
       } catch(e) { chartEl._trailIdx = null; chartEl._trailTicker = null; }
       chartEl._trailBusy = false;
-    };
+    };d
 
     const _debouncedHide = () => {
       chartEl._hoverTrailClearTimer = setTimeout(() => {
@@ -4819,6 +4854,7 @@
         setNum("auto-position-size",     c.position_size);
         setChecked("auto-exit-density-enabled", c.exit_density_enabled);
         setChecked("auto-exit-sma-enabled",     c.exit_sma_enabled);
+        setChecked("auto-session-scoped-enabled", c.session_scoped_enabled);
       }
       renderAutoTrades(data);
     } catch(e) { console.error("[auto-trades]", e); }
@@ -4905,6 +4941,12 @@
   async function applyAutoExitSmaEnabled() {
     const checked = document.getElementById("auto-exit-sma-enabled").checked;
     await _postAutoConfig({ exit_sma_enabled: checked });
+  }
+
+  async function applyAutoSessionScopedEnabled() {
+    const checked = document.getElementById("auto-session-scoped-enabled").checked;
+    const cfg = await _postAutoConfig({ session_scoped_enabled: checked });
+    if (cfg) _flashStatus(document.getElementById("auto-session-scoped-status"), checked ? "✓ on" : "✓ off", true);
   }
 
   async function applyAutoPositionSize() {

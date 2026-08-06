@@ -27,7 +27,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from flask import Flask, jsonify, request, render_template
 from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots, pipeline_events
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
-from utils import get_window_start_iso, get_timestamp
+from utils import get_window_start_iso, get_timestamp, get_current_session_start_utc, get_current_session_name
 from event_detector import detect_event
 from calendar_fetcher import start_calendar_threads
 from dotenv import load_dotenv
@@ -82,6 +82,17 @@ AUTO_EXIT_SMA_PEAK   = 0.10  # price SMA % off peak to exit
 # mid-trade; only the resulting exit decision is suppressed when disabled.
 AUTO_EXIT_DENSITY_ENABLED = True
 AUTO_EXIT_SMA_ENABLED     = True
+# When on, NEW-ENTRY screening (density floor, density_rising/trough-bounce, and
+# correlation) is bounded to "since the current session started" (4:00, 9:30, or
+# 16:00 ET) instead of a fixed rolling window, so a stale premarket read can't
+# carry into the regular session or vice versa. Deliberately does NOT touch
+# already-open positions — their own peak_density/peak_sma exit tracking keeps
+# running on the fixed rolling window they entered under, uninterrupted by a
+# session boundary crossing mid-trade — and does not affect the correlation shown
+# on the main dashboard/bubble map/popup charts, which always use the unscoped
+# calculation regardless of this setting. See aggregate_ticker_scores's
+# session_scoped param and _check_auto_trades' entry_window_* variables.
+AUTO_SESSION_SCOPED_ENABLED = False
 AUTO_LOOP_SEC      = 60     # seconds between auto trade checks
 REENTRY_COOLDOWN   = 3600   # seconds before re-entering the same ticker — adjustable
                             # live via /api/auto-trade-config (reentry_cooldown_min)
@@ -341,6 +352,17 @@ WINDOW_CONFIG = {
     "4h":  {"minutes": 240,   "finviz_param": "i1"},
     "1d":  {"minutes": 1440,  "finviz_param": "i1"},
     "1w":  {"minutes": 10080, "finviz_param": "i1"},
+}
+
+# Session-anchored chart windows — used only by the Trades tab's popup for a trade
+# taken under AUTO_SESSION_SCOPED_ENABLED, so the chart shows just the session that
+# trade's entry decision was actually evaluated in, instead of the whole day. Each
+# is an absolute ET clock-time range (today's date), not a rolling duration back
+# from now — see get_ticker_detail's session_key handling.
+SESSION_WINDOW_BOUNDS = {
+    "premarket": ((4, 0),  (9, 30)),
+    "market":    ((9, 30), (16, 0)),
+    "afterhours": ((16, 0), (20, 0)),
 }
 
 
@@ -1127,12 +1149,15 @@ def get_scores():
 # Generates the shared time axis used to align price, score, and density series in the chart.
 # Builds a regular grid snapped to step boundaries rather than relying on price bar timestamps,
 # which can be sparse or absent outside market hours.
-def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label):
+def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label, axis_end_dt=None):
     # Always generate a regular time axis covering the full window so that
     # score/density data is never cut off by sparse price bar timestamps.
     # Axis is snapped to clean step boundaries so frontend snapKey lookups match.
+    # axis_end_dt lets a session-anchored window (see SESSION_WINDOW_BOUNDS) stop the
+    # axis at that session's own end instead of always extending out to right now.
     axis = []
     step = 1 if window_min <= 1440 else (60 if window_min <= 10080 else 1440)
+    axis_end = axis_end_dt if axis_end_dt is not None else now_utc
 
     # Snap start to the nearest step boundary (UTC minutes since midnight).
     # UTC-ET offset is always whole hours, so snapping in UTC = snapping in ET.
@@ -1141,7 +1166,7 @@ def _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_
     snapped   = (total_min // step) * step
     current   = raw.replace(hour=snapped // 60, minute=snapped % 60)
 
-    while current <= now_utc:
+    while current <= axis_end:
         axis.append(utc_to_et(current.strftime("%Y-%m-%dT%H:%M:%SZ")))
         current += timedelta(minutes=step)
     return axis
@@ -1164,17 +1189,33 @@ def get_ticker_detail(ticker):
         if cached and (now_ts - cached["ts"]) < TICKER_DETAIL_TTL:
             return jsonify(cached["data"])
 
-    config        = WINDOW_CONFIG.get(window_key, WINDOW_CONFIG["1h"])
-    window_min    = config["minutes"]
-    finviz_param  = config["finviz_param"]
-    window_start  = get_window_start_iso(window_min)
+    now_utc = datetime.now(timezone.utc)
 
-    rolling_config = WINDOW_CONFIG.get(rolling_key, config)
+    if window_key in SESSION_WINDOW_BOUNDS:
+        # Session-anchored: an absolute ET clock-time range for TODAY, not a rolling
+        # duration back from now — used by the Trades tab popup so a trade taken under
+        # AUTO_SESSION_SCOPED_ENABLED shows just its own session instead of the whole day.
+        (sh, sm), (eh, em) = SESSION_WINDOW_BOUNDS[window_key]
+        et_offset   = timedelta(hours=-4) if 3 <= now_utc.month <= 11 else timedelta(hours=-5)
+        now_et      = now_utc + et_offset
+        session_start_et = now_et.replace(hour=sh, minute=sm, second=0, microsecond=0)
+        session_end_et   = now_et.replace(hour=eh, minute=em, second=0, microsecond=0)
+        window_start_dt  = session_start_et - et_offset
+        axis_end_dt       = min(session_end_et - et_offset, now_utc)
+        window_min    = max(1, round((axis_end_dt - window_start_dt).total_seconds() / 60))
+        finviz_param  = "i1"
+        window_start  = window_start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    else:
+        config        = WINDOW_CONFIG.get(window_key, WINDOW_CONFIG["1h"])
+        window_min    = config["minutes"]
+        finviz_param  = config["finviz_param"]
+        window_start  = get_window_start_iso(window_min)
+        window_start_dt = now_utc - timedelta(minutes=window_min)
+        axis_end_dt      = now_utc
+
+    rolling_config = WINDOW_CONFIG.get(rolling_key, WINDOW_CONFIG.get(window_key, WINDOW_CONFIG["1h"]))
     rolling_min    = rolling_config["minutes"]
     rolling_start  = get_window_start_iso(rolling_min)
-
-    now_utc         = datetime.now(timezone.utc)
-    window_start_dt = now_utc - timedelta(minutes=window_min)
 
     # ─── Rolling score history ───
     score_docs = list(scored_messages.find(
@@ -1237,7 +1278,7 @@ def get_ticker_detail(ticker):
 
     month    = datetime.now(timezone.utc).month
     tz_label = "EDT" if 3 <= month <= 11 else "EST"
-    time_axis = _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label)
+    time_axis = _build_time_axis(price_hist, finviz_param, window_min, window_start_dt, now_utc, tz_label, axis_end_dt=axis_end_dt)
 
     # ─── Rolling window aggregate scores (independent of chart window) ───
     # Uses rolling_start so the header cards reflect the per-ticker rolling window,
@@ -2055,6 +2096,7 @@ def _auto_trade_config_dict() -> dict:
         "exit_sma_peak":         AUTO_EXIT_SMA_PEAK,
         "exit_density_enabled":  AUTO_EXIT_DENSITY_ENABLED,
         "exit_sma_enabled":      AUTO_EXIT_SMA_ENABLED,
+        "session_scoped_enabled": AUTO_SESSION_SCOPED_ENABLED,
         "position_size":         TRADE_POSITION_SIZE,
         "reentry_cooldown_min":  round(REENTRY_COOLDOWN / 60, 1),
     }
@@ -2064,7 +2106,7 @@ def _auto_trade_config_dict() -> dict:
 @app.route("/api/auto-trade-config", methods=["POST"])
 def set_auto_trade_config():
     global AUTO_ENTRY_CORR, AUTO_ENTRY_MIN_DENS, AUTO_ENTRY_MAX_OFF_PEAK, AUTO_ENTRY_TROUGH_BOUNCE, AUTO_EXIT_PEAK, AUTO_EXIT_MIN_DROP, AUTO_EXIT_SMA_PEAK, \
-        AUTO_EXIT_DENSITY_ENABLED, AUTO_EXIT_SMA_ENABLED, TRADE_POSITION_SIZE, REENTRY_COOLDOWN
+        AUTO_EXIT_DENSITY_ENABLED, AUTO_EXIT_SMA_ENABLED, AUTO_SESSION_SCOPED_ENABLED, TRADE_POSITION_SIZE, REENTRY_COOLDOWN
     data = request.get_json(force=True) or {}
     try:
         if "entry_corr" in data:
@@ -2099,6 +2141,8 @@ def set_auto_trade_config():
             AUTO_EXIT_DENSITY_ENABLED = bool(data["exit_density_enabled"])
         if "exit_sma_enabled" in data:
             AUTO_EXIT_SMA_ENABLED = bool(data["exit_sma_enabled"])
+        if "session_scoped_enabled" in data:
+            AUTO_SESSION_SCOPED_ENABLED = bool(data["session_scoped_enabled"])
         if "position_size" in data:
             val = float(data["position_size"])
             if val > 0:
@@ -2361,10 +2405,13 @@ def get_trades_endpoint():
         if exit_density_min is not None:
             f["exit_density"] = {"$gte": exit_density_min}
         if time_from or time_to:
+            # entered_at_et, not exited_at_et — matches the active-trade branch above
+            # and the adjacent Entry Corr/Entry Density filters, so "9:30-10:00" means
+            # "trades taken in this window" regardless of when they closed.
             rng = {}
             if time_from: rng["$gte"] = time_from
             if time_to:   rng["$lte"] = time_to
-            f["exited_at_et"] = rng
+            f["entered_at_et"] = rng
         if date_from or date_to:
             rng = {}
             start = _et_date_str_to_utc(date_from) if date_from else None
@@ -2805,20 +2852,38 @@ def _check_auto_trades():
     if not (market_open <= now_et < market_close):
         return
 
-    today_et = now_et.strftime("%Y-%m-%d")
-    if _session_peak_date != today_et:
+    # Reset key for the entry-gating peak/trough dicts: just the ET calendar date
+    # normally (once/day), or date+session (3x/day, at 4:00/9:30/16:00 ET) when
+    # AUTO_SESSION_SCOPED_ENABLED is on. Flipping the toggle mid-day causes one
+    # harmless extra reset the moment the key format changes.
+    reset_key = f"{now_et.strftime('%Y-%m-%d')}:{get_current_session_name()}" if AUTO_SESSION_SCOPED_ENABLED else now_et.strftime("%Y-%m-%d")
+    if _session_peak_date != reset_key:
         _session_peak_density     = {}
         _post_exit_density_trough = {}
-        _session_peak_date        = today_et
+        _session_peak_date        = reset_key
 
     finviz    = get_finviz_data()
     window_1h  = get_window_start_iso(60)
     window_20m = get_window_start_iso(20)
     window_40m = get_window_start_iso(40)
 
+    # Entry-side-only windows — bounded to the current session's start when
+    # AUTO_SESSION_SCOPED_ENABLED is on, so a candidate's density reading can't be
+    # inflated by a prior session's activity. Deliberately separate from window_1h
+    # above: the EXIT loop below always uses the fixed rolling window, because an
+    # already-open position's own peak tracking must never reset mid-trade just
+    # because a session boundary was crossed.
+    if AUTO_SESSION_SCOPED_ENABLED:
+        session_start_iso = get_current_session_start_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
+        entry_window_1h  = max(window_1h,  session_start_iso)
+        entry_window_20m = max(window_20m, session_start_iso)
+        entry_window_40m = max(window_40m, session_start_iso)
+    else:
+        entry_window_1h, entry_window_20m, entry_window_40m = window_1h, window_20m, window_40m
+
     # Computed once here (moved ahead of the exit loop below) so both EXIT and ENTRY
     # monitoring share the same pass instead of calling this twice per tick.
-    scores        = aggregate_ticker_scores(rolling_window_minutes=60)
+    scores        = aggregate_ticker_scores(rolling_window_minutes=60, session_scoped=AUTO_SESSION_SCOPED_ENABLED)
     corr_by_ticker = {s["ticker"]: s.get("correlation") for s in scores}
 
     active_map = {t["ticker"]: t for t in auto_trades.find({"status": "active"})}
@@ -2920,6 +2985,7 @@ def _check_auto_trades():
                 "market_cap_bucket": trade.get("market_cap_bucket"),
                 "position_size":     position_size,
                 "pnl_dollars":       pnl_dollars,
+                "session_scoped":    trade.get("session_scoped"),
             })
             auto_trades.delete_one({"ticker": ticker, "status": "active"})
             # Seed the post-exit trough at this exit's density — AUTO_ENTRY_TROUGH_BOUNCE
@@ -2941,7 +3007,7 @@ def _check_auto_trades():
         # 1hr rolling density — recorded on entry for peak tracking
         total_msgs = scored_messages.count_documents({
             "ticker":         ticker,
-            "created_at_utc": {"$gte": window_1h}
+            "created_at_utc": {"$gte": entry_window_1h}
         })
 
         # Session-so-far peak for this ticker, independent of trading hours —
@@ -2964,11 +3030,11 @@ def _check_auto_trades():
         if trough is None:
             count_20m = scored_messages.count_documents({
                 "ticker":         ticker,
-                "created_at_utc": {"$gte": window_20m}
+                "created_at_utc": {"$gte": entry_window_20m}
             })
             count_prior_20m = scored_messages.count_documents({
                 "ticker":         ticker,
-                "created_at_utc": {"$gte": window_40m, "$lt": window_20m}
+                "created_at_utc": {"$gte": entry_window_40m, "$lt": entry_window_20m}
             })
             density_rising = count_20m > count_prior_20m
         else:
@@ -3003,6 +3069,7 @@ def _check_auto_trades():
                 "market_cap":        fv.get("market_cap", "--"),
                 "market_cap_bucket": _market_cap_bucket(fv.get("market_cap")),
                 "position_size":     TRADE_POSITION_SIZE,
+                "session_scoped":    AUTO_SESSION_SCOPED_ENABLED,
             })
             print(f"[AUTO TRADE] ENTER {ticker} @ {current_price} | corr: {corr_pct}%")
 

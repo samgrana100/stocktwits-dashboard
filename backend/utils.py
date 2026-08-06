@@ -76,6 +76,45 @@ def is_regular_market_hours() -> bool:
     return market_open <= now_et < market_close
 
 
+# Session boundaries for the auto-trader's optional session-scoped mode — treats
+# premarket (4:00-9:30 ET), regular hours (9:30-16:00 ET), and after-hours
+# (16:00-20:00 ET) as three separate sessions instead of one rolling trading day.
+_SESSION_BOUNDARIES_ET = [(4, 0), (9, 30), (16, 0)]
+
+
+def get_current_session_start_utc() -> datetime:
+    """
+    Naive UTC datetime (matches price_history's `ts` field) of the most recent
+    session boundary — 4:00, 9:30, or 16:00 ET — at or before now. Used to bound
+    density/correlation lookback windows to "since this session started" instead
+    of a fixed rolling duration, only when AUTO_SESSION_SCOPED_ENABLED is on.
+    """
+    now_utc   = datetime.now(timezone.utc)
+    et_offset = timedelta(hours=-4) if 3 <= now_utc.month <= 11 else timedelta(hours=-5)
+    now_et    = now_utc + et_offset
+
+    boundary_et = now_et.replace(hour=4, minute=0, second=0, microsecond=0)
+    for h, m in _SESSION_BOUNDARIES_ET:
+        candidate = now_et.replace(hour=h, minute=m, second=0, microsecond=0)
+        if candidate <= now_et:
+            boundary_et = candidate
+
+    return (boundary_et - et_offset).replace(tzinfo=None)
+
+
+def get_current_session_name() -> str:
+    """'premarket', 'market', or 'afterhours' — whichever of the three auto-trade
+    sessions (4:00-9:30, 9:30-16:00, 16:00-20:00 ET) covers the current moment."""
+    now_utc   = datetime.now(timezone.utc)
+    et_offset = timedelta(hours=-4) if 3 <= now_utc.month <= 11 else timedelta(hours=-5)
+    now_et    = now_utc + et_offset
+    if now_et.hour < 9 or (now_et.hour == 9 and now_et.minute < 30):
+        return "premarket"
+    if now_et.hour < 16:
+        return "market"
+    return "afterhours"
+
+
 # ── TICKER LOADER ──
 
 def load_tickers_from_finviz() -> list:
