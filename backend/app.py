@@ -1244,6 +1244,13 @@ def get_ticker_detail(ticker):
     density_config_d    = WINDOW_CONFIG.get(density_window_key, rolling_config)
     density_rolling_min = density_config_d["minutes"]
     density_start       = get_window_start_iso(window_min + density_rolling_min)
+    # Session-anchored windows deliberately skip that priming — messages from before
+    # the session started shouldn't feed the rolling density line, so it visibly ramps
+    # up from the session open instead of already being elevated at the left edge.
+    # This mirrors what AUTO_SESSION_SCOPED_ENABLED's entry_window_1h actually sees,
+    # so the chart matches what the bot itself is evaluating.
+    if window_key in SESSION_WINDOW_BOUNDS:
+        density_start = max(density_start, window_start)
 
     pipeline_query = [
         {
