@@ -209,9 +209,7 @@ Catalyst keyword detection (FDA, earnings, squeeze, merger, clinical trial) is a
 
 ## Correlation Signal
 
-The CORR column and Correlation view use a **30-minute rolling Pearson coefficient** between message density (posts per minute from Stocktwits) and price. During regular market hours (9:30am–4pm ET), price snapshots come from the Finviz screener CSV, written to the database at the start of every pipeline loop. Finviz's screener price is a regular-session-only quote and freezes at the close, so outside those hours — pre-market, after-hours, or if Finviz simply hasn't priced a given ticker yet this loop — the price embedded in that ticker's own Stocktwits messages is used instead, keeping the signal alive around the clock rather than going flat every afternoon.
-
-This is an intentional tradeoff worth being upfront about: during regular hours, price (Finviz) and density (Stocktwits) come from fully independent sources, which is what makes the correlation meaningful rather than an artifact of reusing the same data on both sides. Outside regular hours, both series derive from the same underlying Stocktwits stream, so the signal is noisier there — still useful, but weaker evidence than during market hours.
+The CORR column and Correlation view use a 30-minute coefficient between message density (posts per minute from Stocktwits) and price. During regular market hours (9:30am–4pm ET), price snapshots come from the Finviz screener CSV, written to the database at the start of every pipeline loop.
 
 A value near +1 means crowd activity and price are moving together — the earliest detectable signal of a momentum setup. Values are recomputed on every score refresh cycle, and require at least 5 price snapshots in the last 30 minutes before a ticker shows a value at all.
 

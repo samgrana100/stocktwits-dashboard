@@ -1290,6 +1290,23 @@
             </div>
           </div>
           <div class="auto-settings-row">
+            <label class="auto-settings-label" title="How far back to sum message density when computing the correlation above. Same setting as the main dashboard's 'Msg Density Rolling' — this is the default for any ticker without its own individually-set window (see the per-row selector on the main table).">Correlation Density Window</label>
+            <div class="auto-settings-ctrl">
+              <select id="auto-density-window-default" class="win-sel" onchange="applyDefaultDensityWindow(this.value)">
+                <option value="1m">1m</option>
+                <option value="3m">3m</option>
+                <option value="5m">5m</option>
+                <option value="15m">15m</option>
+                <option value="30m">30m</option>
+                <option value="1h">1h</option>
+                <option value="2h">2h</option>
+                <option value="4h">4h</option>
+                <option value="1d">1d</option>
+              </select>
+              <span id="auto-density-window-status" class="auto-settings-status"></span>
+            </div>
+          </div>
+          <div class="auto-settings-row">
             <label class="auto-settings-label" title="Minimum messages/hour (1h rolling) required to enter">Entry Min Density ≥</label>
             <div class="auto-settings-ctrl">
               <input id="auto-entry-min-dens" type="number" min="0" max="200" step="1" onchange="applyAutoMinDens()">
@@ -2126,14 +2143,23 @@
   }
   function saveSentimentWindows() { localStorage.setItem("tickerSentimentWindows", JSON.stringify(tickerSentimentWindows)); }
 
+  // Two controls share this one default: the main filter bar's "Set Default" button and
+  // the Correlation tab's "Correlation Density Window" row. Keep both <select>s in sync
+  // whenever either one changes, so neither shows a stale value.
+  function _syncDensityDefaultSelects() {
+    ["global-density-sel", "auto-density-window-default"].forEach(id => {
+      const sel = document.getElementById(id);
+      if (sel) sel.value = defaultDensityWindowKey;
+    });
+  }
+
   async function fetchDensityWindowConfig() {
     try {
       const res = await fetch("/api/density-window-config");
       if (!res.ok) return;
       const data = await res.json();
       defaultDensityWindowKey = _minutesToWindowKey(data.default_minutes);
-      const sel = document.getElementById("global-density-sel");
-      if (sel) sel.value = defaultDensityWindowKey;
+      _syncDensityDefaultSelects();
       tickerDensityWindows = {};
       Object.entries(data.overrides || {}).forEach(([ticker, mins]) => {
         tickerDensityWindows[ticker] = _minutesToWindowKey(mins);
@@ -2205,6 +2231,7 @@
   // behavior this replaced.
   async function applyDefaultDensityWindow(w) {
     defaultDensityWindowKey = w;
+    _syncDensityDefaultSelects();
     applyFiltersAndRender();
     scheduleDensityDisplay();
     try {
@@ -2214,6 +2241,7 @@
       });
       if (!res.ok) return;
       const data = await res.json();
+      _flashStatus(document.getElementById("auto-density-window-status"), `✓ ${w}`, true);
       tickerDensityWindows = {};
       Object.entries(data.overrides || {}).forEach(([ticker, mins]) => {
         tickerDensityWindows[ticker] = _minutesToWindowKey(mins);
@@ -5636,7 +5664,7 @@
   async function loadNewsCard(card) {
     card.dataset.loaded = "true";
     const ticker  = card.dataset.ticker;
-    const densityRollingW   = tickerDensityWindows[ticker]  || "5m";
+    const densityRollingW   = tickerDensityWindows[ticker]  || defaultDensityWindowKey;
     const sentimentRollingW = tickerSentimentWindows[ticker] || "5m";
     try {
       // Fire all independent fetches immediately in parallel
