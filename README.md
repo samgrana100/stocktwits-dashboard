@@ -283,6 +283,29 @@ Every trade — auto or manual — lives in one of two MongoDB collections (`aut
 
 ---
 
+## Data Retention
+
+Every collection has a TTL (time-to-live) policy — nothing grows unbounded:
+
+| Collection | Retention |
+|---|---|
+| `screener_snapshots` | 1 day |
+| `pipeline_events` | 14 days |
+| `price_history` | 7 days |
+| `upcoming_catalysts` | 30 days |
+| `scored_messages` | 3 days |
+| `message_density` | 3 days |
+| `completed_auto_trades` | 3 days |
+| `auto_trades` (open positions) | none — only ever holds currently-open trades, self-limiting |
+
+`scored_messages` and `message_density` didn't previously store a real BSON date field — only formatted strings, which MongoDB's TTL monitor can't act on — so both now write a `ts` field on every insert (`pipeline.py`). `completed_auto_trades` already had one (`exited_at`, set at exit time), so it only needed the index itself.
+
+Because a TTL index never touches a document missing its indexed field, the pre-existing backlog on `scored_messages`/`message_density` needed a one-time purge: `POST /api/admin/cleanup-old-data` (`?dry_run=true` previews counts first) deletes anything older than 3 days using each document's own `ObjectId` — which embeds its creation time — so it works regardless of which timestamp fields an old document happens to have. This has already been run once; from here forward, MongoDB's background TTL sweep (every ~60s) handles cleanup automatically, no scheduled job or manual step required.
+
+**One tradeoff worth knowing**: the dashboard's "1w" chart window requests 7 days of history, but message-derived data (density, sentiment) is now only kept for 3 — selecting "1w" will show a real price line with gaps in density/sentiment beyond day 3. Trade records themselves are unaffected regardless of age, since every stat is snapshotted onto the trade document at the time it happened — but a trade's own price-chart popup will show an empty density line if the trade is more than 3 days old.
+
+---
+
 ## Pipeline & Auto-Trade Reliability
 
 Running unattended, 24/7 background loops surfaces a class of failure that never shows up as a normal Python exception — a thread going silent with nothing logged anywhere. Every layer below covers **both** the ingestion pipeline and the auto-trade loop; they're independent threads, monitored by the same mechanisms so there's one system to reason about instead of two.
