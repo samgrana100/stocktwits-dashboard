@@ -3776,10 +3776,6 @@
     btn.textContent = "Applying…";
 
     const cfg = _gatherScreenerConfig();
-    // Tracks whether we've actually issued a stop, so the catch block below can
-    // make a best-effort restart attempt if anything fails after that point —
-    // a single flaky request here used to leave the pipeline stopped indefinitely.
-    let didStop = false;
 
     try {
       const res  = await fetch("/api/apply-screener", {
@@ -3789,25 +3785,16 @@
       const data = await res.json();
 
       if (data.was_running) {
-        btn.textContent = "Stopping pipeline…";
-        await fetch("/api/pipeline/stop", {method: "POST"});
-        didStop = true;
-        for (let i = 0; i < 20; i++) {
-          await new Promise(r => setTimeout(r, 500));
-          try {
-            const sr = await fetch("/api/pipeline/status");
-            const sd = await sr.json();
-            if (!sd.running) break;
-          } catch(_) { /* transient blip — keep polling, don't abort the whole flow */ }
-        }
+        // One atomic server-side call — stop+start both happen in the same
+        // request, so a dropped connection here can't strand the pipeline
+        // stopped the way the old two-step stop/poll/start flow could.
+        btn.textContent = "Restarting pipeline…";
+        await fetch("/api/pipeline/restart", {method: "POST"});
+        pipelineRunning = true;
+        const pBtn = document.getElementById("pipeline-btn");
+        pBtn.textContent = "Stop Pipeline";
+        pBtn.className   = "pipeline-btn stop";
       }
-
-      btn.textContent = "Starting pipeline…";
-      await fetch("/api/pipeline/start", {method: "POST"});
-      pipelineRunning = true;
-      const pBtn = document.getElementById("pipeline-btn");
-      pBtn.textContent = "Stop Pipeline";
-      pBtn.className   = "pipeline-btn stop";
 
       // Sync Finviz-level filters to dashboard filter bar
       document.getElementById("filter-change").value  = cfg.change;
@@ -3824,11 +3811,9 @@
     } catch(e) {
       btn.textContent = "Error — Try Again";
       btn.disabled    = false;
-      // We already stopped the pipeline before whatever failed — make sure it
-      // comes back up rather than sitting stopped until someone notices.
-      if (didStop) {
-        try { await fetch("/api/pipeline/start", {method: "POST"}); } catch(_) {}
-      }
+      // Nothing to recover here anymore — /api/pipeline/restart is atomic, so
+      // either it completed (pipeline is back up) or this failed before we
+      // ever sent it (pipeline untouched). No half-finished stop to fix.
     }
   }
 

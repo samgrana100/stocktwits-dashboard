@@ -313,6 +313,26 @@ def _launch_pipeline_thread():
     pipeline_thread = threading.Thread(target=_run, daemon=True)
     pipeline_thread.start()
 
+
+@app.route("/api/pipeline/restart", methods=["POST"])
+def restart_pipeline():
+    """Atomic stop+start, entirely server-side — replaces the old client-driven
+    two-step flow (POST /stop, poll /status until stopped, POST /start) used by
+    "Update Filters". That flow had a real failure mode: if the browser tab
+    closed, lost network, or was navigated away between the stop call and the
+    start call, the pipeline was left stopped with nothing to bring it back —
+    the watchdog deliberately never auto-restarts an intentional stop. Doing
+    both halves in one request means a dropped client connection can't strand
+    it mid-restart; the request either lands with the pipeline back up, or it
+    never got the stop signal to begin with."""
+    global pipeline_stop_flag
+    if pipeline_thread and pipeline_thread.is_alive():
+        pipeline_stop_flag[0] = True
+        _log_pipeline_event("restart_requested")
+        pipeline_thread.join(timeout=10)
+    _launch_pipeline_thread()
+    return jsonify({"status": "restarted"})
+
 # ── RUNTIME CACHES ──
 # Finviz screener data cache — shared across all /api/scores and /api/bubble-screener calls
 finviz_cache      = {}
@@ -2737,7 +2757,7 @@ def pipeline_status():
 
 @app.route("/api/debug/pipeline-events")
 def debug_pipeline_events():
-    """TEMP diagnostic — recent pipeline lifecycle events (started/crashed/watchdog_restart/stopped_manually)."""
+    """TEMP diagnostic — recent pipeline lifecycle events (started/crashed/watchdog_restart/stopped_manually/restart_requested)."""
     docs = list(pipeline_events.find({}, {"_id": 0}).sort("ts", -1).limit(50))
     for d in docs:
         if isinstance(d.get("ts"), datetime):
