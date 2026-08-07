@@ -147,6 +147,7 @@ def store_messages(ticker: str, messages: list, rolling_window: int):
     for msg in messages:
         document = {
             "timestamp": get_timestamp(),
+            "ts": datetime.now(timezone.utc),  # real BSON date — needed for the TTL index (see db.py)
             "ticker": ticker,
             "message_id": msg.get("id"),
             "body": msg.get("body", ""),
@@ -238,7 +239,8 @@ def update_density(ticker: str, message_count: int, rolling_window: int):
                 "$inc": {"message_count": message_count},
                 "$set": {
                     "rolling_window_minutes": rolling_window,
-                    "last_updated": get_timestamp()
+                    "last_updated": get_timestamp(),
+                    "ts": datetime.now(timezone.utc)  # real BSON date — needed for the TTL index (see db.py)
                 }
             },
             upsert=True

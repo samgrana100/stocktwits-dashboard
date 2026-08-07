@@ -25,7 +25,8 @@ from curl_cffi import requests as cffi_requests
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from flask import Flask, jsonify, request, render_template
-from db import scored_messages, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots, pipeline_events
+from db import scored_messages, message_density, ensure_indexes, upcoming_catalysts, auto_trades, completed_auto_trades, price_history, screener_snapshots, pipeline_events
+from bson import ObjectId
 from score_calculator import aggregate_ticker_scores, score_unscored_messages
 import score_calculator  # module-qualified access for density-window config (see
                           # /api/density-window-config) — a plain `from X import NAME`
@@ -2763,6 +2764,33 @@ def debug_pipeline_events():
         if isinstance(d.get("ts"), datetime):
             d["ts"] = d["ts"].isoformat()
     return jsonify({"count": len(docs), "events": docs})
+
+
+# One-time (repeatable) purge of the existing backlog older than 3 days. The new TTL
+# indexes on scored_messages.ts / message_density.ts (see db.py) only catch documents
+# going forward — a TTL index never touches a document that's missing its indexed
+# field, and every doc inserted before that field existed predates it entirely. Uses
+# each document's ObjectId (which embeds its own creation time) as the cutoff for
+# those two collections, since it works regardless of which timestamp fields a given
+# doc happens to have. completed_auto_trades already had a real "exited_at" date, so
+# its TTL index alone will eventually clear its backlog too, but this clears it
+# immediately rather than waiting on Mongo's periodic TTL sweep.
+@app.route("/api/admin/cleanup-old-data", methods=["POST"])
+def cleanup_old_data():
+    dry_run = request.args.get("dry_run", "").lower() == "true"
+    cutoff     = datetime.now(timezone.utc) - timedelta(days=3)
+    cutoff_oid = ObjectId.from_datetime(cutoff)
+
+    targets = [
+        ("scored_messages",       scored_messages,       {"_id": {"$lt": cutoff_oid}}),
+        ("message_density",       message_density,       {"_id": {"$lt": cutoff_oid}}),
+        ("completed_auto_trades", completed_auto_trades, {"exited_at": {"$lt": cutoff}}),
+    ]
+    results = {}
+    for name, coll, query in targets:
+        results[name] = coll.count_documents(query) if dry_run else coll.delete_many(query).deleted_count
+
+    return jsonify({"dry_run": dry_run, "cutoff": cutoff.isoformat(), "deleted": results})
 
 
 @app.route("/api/debug/auto-trade/<ticker>")
